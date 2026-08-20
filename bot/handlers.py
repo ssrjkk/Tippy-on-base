@@ -11,7 +11,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from eth_utils import is_address, to_checksum_address
 
-from . import base, config
+from . import base, config, wallets
 from . import qr as qrlib
 from .ledger import ledger
 
@@ -58,7 +58,8 @@ HELP = (
     "• /paywall list · /paywall buy &lt;id&gt; — купить и открыть\n"
     "• /paywall subscribe @канал — доступ к платному каналу\n\n"
     "🟦 <b>На Base</b> · 🪙 USDC (ERC-20) · 🔍 все транзакции в блокчейне\n"
-    "🏗️ <b>Base</b> — безопасная, дешёвая, развивающаяся L2 от Coinbase: base.org"
+    "🏗️ <b>Base</b> — безопасная, дешёвая, развивающаяся L2 от Coinbase: base.org\n"
+    "👛 Свой кошелёк: /wallet · выгрузить ключ и сид: /wallet export · импорт по сид-фразе: /import"
 )
 
 KIND_EMOJI = {
@@ -181,7 +182,8 @@ async def cmd_start(message: types.Message, command: CommandObject) -> None:
             "• <b>/bets</b> — поставить на рынок\n"
             "• <b>/tip 1 @ник</b> — кинуть чаевые\n"
             "• <b>/help</b> — все команды\n\n"
-            "🏗️ Работает на <b>Base</b> — дешёвой L2 от Coinbase · base.org"
+            "🏗️ Работает на <b>Base</b> — дешёвой L2 от Coinbase · base.org\n"
+            "🧑‍💻 Автор: @b2wmain · @ssrjkk · x.com/ludych1 · github.com/ssrjkk"
         )
         await message.answer(welcome, reply_markup=_menu_kb())
         return
@@ -530,7 +532,9 @@ async def _deposit_text(tg_id: int) -> str:
             f"🟦 <b>Сеть Base</b> · монета USDC (ERC-20)\n\n"
             f"<code>{addr}</code>\n\n"
             f"С твоего привязанного кошелька <code>{_esc(linked)}</code> — зачислится автоматически ✅\n"
-f"🏗️ Операция в блокчейне, видна всем: basescan.org"
+            f"🏗️ Операция в блокчейне, видна всем: basescan.org\n\n"
+            f"⚠️ <b>Дисклеймер:</b> средства хранит бот (кастодиальный кошелёк). "
+            f"Свой ключ и сид-фразу можно забрать в любой момент: /wallet export"
         )
     return (
         f"💳 Отправь USDC на адрес бота\n"
@@ -538,7 +542,9 @@ f"🏗️ Операция в блокчейне, видна всем: basescan.
         f"<code>{addr}</code>\n\n"
         f"После отправки пришли /claim <i>&lt;tx_hash&gt;</i>.\n"
         f"<b>Удобнее:</b> привяжи кошелёк — /link, и депозиты будут зачисляться сами.\n"
-        f"🏗️ Операция в блокчейне, видна всем: basescan.org"
+        f"🏗️ Операция в блокчейне, видна всем: basescan.org\n\n"
+        f"⚠️ <b>Дисклеймер:</b> средства хранит бот (кастодиальный кошелёк). "
+        f"Свой ключ и сид-фразу можно забрать в любой момент: /wallet export"
     )
 
 
@@ -669,6 +675,98 @@ async def cmd_confirm(message: types.Message) -> None:
         f"✅ Кошелёк <code>{_esc(address)}</code> привязан.\n"
         f"Теперь депозиты с него зачисляются автоматически.{extra}"
     )
+
+
+@router.message(Command("wallet"))
+async def cmd_wallet(message: types.Message) -> None:
+    """Personal wallet: /wallet (address) or /wallet export (key + seed)."""
+    ledger.ensure_user(message.from_user.id, message.from_user.username)
+    parts = message.text.strip().split()
+    if len(parts) > 1 and parts[1].lower() == "export":
+        row = ledger.get_wallet(message.from_user.id)
+        if not row:
+            row = _ensure_wallet(message.from_user.id)
+        key = wallets.decrypt(row["key_enc"])
+        seed = wallets.decrypt(row["seed_enc"])
+        await message.answer(
+            f"🔑 <b>Твой кошелёк</b>\n\n"
+            f"Адрес: <code>{row['address']}</code>\n"
+            f"Приватный ключ: <code>{key}</code>\n"
+            f"Сид-фраза: <code>{seed}</code>\n\n"
+            f"⚠️ <b>Не показывай это никому.</b> Кто знает ключ — тот владеет средствами. "
+            f"Экспортнув ключ, ты можешь забрать баланс на любой кошелёк (/withdraw)."
+        )
+        return
+    row = ledger.get_wallet(message.from_user.id)
+    if not row:
+        row = _ensure_wallet(message.from_user.id)
+    await message.answer(
+        f"👛 <b>Твой кошелёк</b>\n\n"
+        f"Адрес: <code>{row['address']}</code>\n"
+        f"🟦 Сеть Base · монета USDC\n\n"
+        f"Ключ и сид-фраза доступны: /wallet export\n"
+        f"Привязать свой кошелёк сид-фразой: /import &lt;фраза&gt;"
+    )
+
+
+@router.message(Command("import"))
+async def cmd_import(message: types.Message) -> None:
+    """Attach an existing wallet by BIP-39 seed phrase (self-custody import)."""
+    ledger.ensure_user(message.from_user.id, message.from_user.username)
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        await message.answer("Формат: /import <i>&lt;12 или 24 слова&gt;</i>")
+        return
+    seed = " ".join(parts[1:])
+    if not wallets.is_valid_seed(seed):
+        await message.answer("❌ Сид-фраза должна содержать 12 или 24 слова.")
+        return
+    try:
+        address, key = wallets.wallet_from_seed(seed)
+    except Exception:
+        await message.answer("❌ Не удалось восстановить кошелёк из этой сид-фразы.")
+        return
+    own = ledger.wallet_address(message.from_user.id)
+    if own and own.lower() != address.lower():
+        await message.answer(
+            f"⚠️ У тебя уже есть кошелёк <code>{_esc(own)}</code>. "
+            f"Сначала выведи с него средства (/withdraw), затем импортируй новый."
+        )
+        return
+    if not own and ledger.wallet_address_exists(address):
+        await message.answer(
+            f"❌ Кошелёк <code>{_esc(address)}</code> уже привязан к другому пользователю."
+        )
+        return
+    ledger.save_wallet(message.from_user.id, address, wallets.encrypt(key), wallets.encrypt(seed))
+    await message.answer(
+        f"✅ Кошелёк <code>{_esc(address)}</code> импортирован.\n"
+        f"Ключ и сид хранятся зашифрованными, выгрузить: /wallet export"
+    )
+
+
+@router.message(Command("export"))
+async def cmd_export(message: types.Message) -> None:
+    """Owner only: hot-wallet private key (operational access)."""
+    if message.from_user.id != config.ADMIN_TG_ID:
+        await message.answer("❌ Только владелец бота.")
+        return
+    await message.answer(
+        f"🟦 <b>Hot wallet бота</b>\n\n"
+        f"Адрес: <code>{base.hot_wallet()}</code>\n"
+        f"Приватный ключ: <code>{config.HOT_WALLET_KEY}</code>\n\n"
+        f"⚠️ Это ключ, который держит балансы пользователей. Никому не передавай."
+    )
+
+
+def _ensure_wallet(tg_id: int) -> dict:
+    """Create a personal wallet for the user if missing; returns the row."""
+    row = ledger.get_wallet(tg_id)
+    if row:
+        return row
+    address, key, seed = wallets.new_wallet()
+    ledger.save_wallet(tg_id, address, wallets.encrypt(key), wallets.encrypt(seed))
+    return ledger.get_wallet(tg_id)
 
 
 @router.message(Command("tip"))

@@ -41,7 +41,9 @@ from bot.handlers import (
     cmd_confirm,
     cmd_deposit,
     cmd_donate,
+    cmd_export,
     cmd_history,
+    cmd_import,
     cmd_link,
     cmd_menu,
     cmd_mybets,
@@ -53,6 +55,7 @@ from bot.handlers import (
     cmd_stats,
     cmd_tip,
     cmd_top,
+    cmd_wallet,
     cmd_withdraw,
     on_menu,
     on_reaction,
@@ -1884,3 +1887,107 @@ def test_paywall_channels_lists_my_subs(ledger):
     m3 = Message("/paywall channels", bot=bot)
     run(cmd_paywall(m3, CommandObject(command="paywall", args="channels")))
     assert "🔑" in m3.answers[0][0]
+
+
+# ---------- per-user wallets ----------
+
+
+def test_wallet_creates_and_shows_address(ledger):
+    m = Message("/wallet", from_id=ALICE)
+    run(cmd_wallet(m))
+    assert "0x" in m.answers[0][0]
+    addr = ledger.wallet_address(ALICE)
+    assert addr and addr.startswith("0x") and len(addr) == 42
+
+
+def test_wallet_export_returns_key_and_seed(ledger):
+    m = Message("/wallet export", from_id=ALICE)
+    run(cmd_wallet(m))
+    text = m.answers[0][0]
+    assert "Приватный ключ" in text
+    assert "Сид-фраза" in text
+    assert "0x" in text
+    assert "⚠️" in text  # disclaimer
+
+
+def test_wallet_encrypted_at_rest(ledger):
+    run(cmd_wallet(Message("/wallet", from_id=ALICE)))
+    row = ledger.get_wallet(ALICE)
+    from bot import wallets as wmod
+
+    assert wmod.decrypt(row["key_enc"]).startswith("0x")
+    assert len(wmod.decrypt(row["seed_enc"]).split()) == 12
+    assert row["key_enc"] != wmod.decrypt(row["key_enc"])  # not plaintext
+
+
+def test_wallet_export_is_stable(ledger):
+    run(cmd_wallet(Message("/wallet", from_id=ALICE)))
+    first = ledger.get_wallet(ALICE)["address"]
+    run(cmd_wallet(Message("/wallet", from_id=ALICE)))
+    assert ledger.wallet_address(ALICE) == first  # no regeneration
+
+
+def test_import_seed_attaches_existing_wallet(ledger):
+    from eth_account import Account
+
+    Account.enable_unaudited_hdwallet_features()
+    acct, mnemonic = Account.create_with_mnemonic()
+    m = Message(f"/import {mnemonic}", from_id=ALICE)
+    run(cmd_import(m))
+    assert ledger.wallet_address(ALICE).lower() == acct.address.lower()
+    row = ledger.get_wallet(ALICE)
+    from bot import wallets as wmod
+
+    assert wmod.decrypt(row["key_enc"]).lower() == ("0x" + acct.key.hex()).lower()
+
+
+def test_import_rejects_bad_seed(ledger):
+    m = Message("/import one two three", from_id=ALICE)
+    run(cmd_import(m))
+    assert "12 или 24" in m.answers[0][0]
+    assert ledger.wallet_address(ALICE) is None
+
+
+def test_import_rejects_taken_wallet(ledger):
+    from eth_account import Account
+
+    Account.enable_unaudited_hdwallet_features()
+    acct, mnemonic = Account.create_with_mnemonic()
+    run(cmd_import(Message(f"/import {mnemonic}", from_id=ALICE)))
+    m2 = Message(f"/import {mnemonic}", from_id=BOB)
+    run(cmd_import(m2))
+    assert "другому пользователю" in m2.answers[0][0]
+    assert ledger.wallet_address(BOB) is None
+
+
+def test_import_rejects_switching_existing_wallet(ledger):
+    from eth_account import Account
+
+    Account.enable_unaudited_hdwallet_features()
+    run(cmd_wallet(Message("/wallet", from_id=ALICE)))
+    acct, mnemonic = Account.create_with_mnemonic()
+    m = Message(f"/import {mnemonic}", from_id=ALICE)
+    run(cmd_import(m))
+    assert "уже есть кошелёк" in m.answers[0][0]
+    assert ledger.wallet_address(ALICE) != acct.address
+
+
+def test_export_owner_only(ledger, monkeypatch):
+    from bot import config as cfg
+
+    monkeypatch.setattr(cfg, "ADMIN_TG_ID", BOB)
+    m = Message("/export", from_id=ALICE)
+    run(cmd_export(m))
+    assert "Только владелец" in m.answers[0][0]
+    m2 = Message("/export", from_id=BOB)
+    run(cmd_export(m2))
+    assert "Hot wallet" in m2.answers[0][0]
+
+
+def test_deposit_has_disclaimer(ledger):
+    m = Message("/deposit", from_id=ALICE)
+    run(cmd_deposit(m))
+    assert m.photos  # QR is sent
+    caption = m.photos[0][1]
+    assert "Дисклеймер" in caption
+    assert "кастодиальный" in caption

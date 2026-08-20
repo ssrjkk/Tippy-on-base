@@ -185,6 +185,13 @@ class Ledger:
                     reaction_tips BIGINT NOT NULL DEFAULT 1,  -- allow emoji-reaction tips
                     notify_deposits BIGINT NOT NULL DEFAULT 1 -- DM on credited deposit
                 );
+                CREATE TABLE IF NOT EXISTS user_wallets (
+                    tg_id      BIGINT PRIMARY KEY,
+                    address    TEXT NOT NULL UNIQUE,
+                    key_enc    TEXT NOT NULL,
+                    seed_enc   TEXT NOT NULL,
+                    created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+                );
                 CREATE TABLE IF NOT EXISTS x402_payments (
                     tx_hash      TEXT PRIMARY KEY,
                     recipient_tg BIGINT NOT NULL,
@@ -1193,6 +1200,42 @@ class Ledger:
             self._conn.execute(
                 f"UPDATE user_settings SET {key} = %s WHERE tg_id = %s",
                 (1 if value else 0, tg_id),
+            )
+            self._conn.commit()
+
+    # ---------- per-user wallets (self-custody export/import) ----------
+
+    def get_wallet(self, tg_id: int) -> dict | None:
+        """Encrypted wallet row for a user, or None if not created yet."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT tg_id, address, key_enc, seed_enc FROM user_wallets WHERE tg_id = %s",
+                (tg_id,),
+            ).fetchone()
+
+    def wallet_address(self, tg_id: int) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT address FROM user_wallets WHERE tg_id = %s", (tg_id,)
+            ).fetchone()
+        return row["address"] if row else None
+
+    def wallet_address_exists(self, address: str) -> bool:
+        """True if another user already attached this wallet address."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM user_wallets WHERE address = %s", (address,)
+            ).fetchone()
+        return row is not None
+
+    def save_wallet(self, tg_id: int, address: str, key_enc: str, seed_enc: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO user_wallets (tg_id, address, key_enc, seed_enc) "
+                "VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (tg_id) DO UPDATE SET address = EXCLUDED.address, "
+                "key_enc = EXCLUDED.key_enc, seed_enc = EXCLUDED.seed_enc",
+                (tg_id, address, key_enc, seed_enc),
             )
             self._conn.commit()
 

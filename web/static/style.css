@@ -366,6 +366,17 @@ main { max-width: 1080px; margin: 0 auto; padding: 20px; }
   color: var(--muted); font-size: 12px; font-weight: 600;
 }
 
+.author-links {
+  display: flex; align-items: center; justify-content: center;
+  gap: 14px; flex-wrap: wrap; margin: 0 0 12px; font-size: 12px;
+}
+.author-links span { color: var(--muted2); }
+.author-links a {
+  color: var(--muted); text-decoration: none; font-weight: 600;
+  transition: color 0.2s;
+}
+.author-links a:hover { color: var(--accent-soft); }
+
 .empty { color: var(--muted); padding: 20px; text-align: center; animation: fadeIn 0.4s both; }
 
 .m-link { color: var(--accent-soft); text-decoration: none; font-weight: 600; transition: color 0.2s; }
