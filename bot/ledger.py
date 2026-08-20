@@ -19,13 +19,93 @@ from . import config
 MICRO = 10**config.USDC_DECIMALS
 
 
+class ReconnectingConn:
+    """psycopg proxy that transparently reconnects after a server restart.
+
+    PostgreSQL (docker restart, failover, idle timeout) kills pooled
+    connections; a dead connection would make every later ledger call raise
+    forever. This wrapper detects closed/broken connections and reconnects
+    before the next statement.
+
+    Reconnect/retry happens only while the connection is IDLE (no open
+    transaction): retrying mid-transaction could drop an earlier statement of
+    the same transaction (e.g. the debit in reserve_withdraw). Mid-transaction
+    failures propagate to the caller, whose watchers/handlers already refund
+    and retry from a clean state.
+    """
+
+    def __init__(self, database: str) -> None:
+        self._database = database
+        self._conn = psycopg.connect(
+            database, row_factory=dict_row, connect_timeout=15
+        )
+
+    def _connect(self) -> None:
+        self._conn = psycopg.connect(
+            self._database, row_factory=dict_row, connect_timeout=15
+        )
+
+    def _ensure(self) -> None:
+        if self._conn.closed or self._conn.broken:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._connect()
+
+    @property
+    def closed(self) -> bool:
+        return self._conn.closed
+
+    @property
+    def broken(self) -> bool:
+        return self._conn.broken
+
+    def execute(self, query, params=None, **kwargs):
+        self._ensure()
+        try:
+            return self._conn.execute(query, params, **kwargs)
+        except psycopg.OperationalError:
+            # Retry once only on a dead connection with nothing to roll back
+            # (no open transaction). Other operational errors propagate.
+            if self._conn.broken or self._conn.closed:
+                self._connect()
+                return self._conn.execute(query, params, **kwargs)
+            if self._conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+                raise
+            self._connect()
+            return self._conn.execute(query, params, **kwargs)
+
+    def commit(self) -> None:
+        self._ensure()
+        try:
+            self._conn.commit()
+        except psycopg.OperationalError:
+            # The server rolled back our uncommitted transaction when the
+            # connection dropped; there is nothing left to commit.
+            pass
+
+    def rollback(self) -> None:
+        self._ensure()
+        try:
+            self._conn.rollback()
+        except psycopg.OperationalError:
+            pass
+
+    def close(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+
 class Ledger:
     def __init__(self, database: str = config.DATABASE_URL) -> None:
         # One shared connection, serialized by an RLock (the bot and the web
         # dashboard run in the same process). PostgreSQL handles the actual
         # concurrency; the lock keeps statement ordering deterministic.
         self._lock = threading.RLock()
-        self._conn = psycopg.connect(database, row_factory=dict_row, connect_timeout=15)
+        self._conn = ReconnectingConn(database)
         with self._lock:
             self._conn.execute(
                 """

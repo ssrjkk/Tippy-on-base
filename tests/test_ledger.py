@@ -869,3 +869,28 @@ def test_grace_warning_skips_resolved(ledger):
     ledger._conn.commit()
     ledger.mark_deadline_notified(bid)
     assert ledger.bets_need_grace_warning(12 * 3600) == []
+
+
+def test_reconnect_after_connection_drop(ledger):
+    # Simulate a PostgreSQL restart: kill the socket from the client side.
+    ledger._conn.close()
+    assert ledger._conn.closed
+    # The next call must transparently reconnect and work.
+    fund(ledger, ALICE, 10_000_000)
+    assert ledger.balance(ALICE) == Decimal("10.000000")
+    # The connection is live again (a subsequent call also works).
+    assert ledger.user_exists(ALICE)
+
+
+def test_reconnect_after_server_side_drop(ledger):
+    # Force the server to drop the connection (pg_terminate_backend) — the
+    # proxy must notice the broken socket and reconnect on the next call.
+    import psycopg
+
+    pid = ledger._conn.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
+    with psycopg.connect(
+        "postgresql://tipbot:tipbot@localhost:5433/tipbot_test", autocommit=True
+    ) as admin:
+        admin.execute("SELECT pg_terminate_backend(%s)", (pid,))
+    fund(ledger, BOB, 5_000_000)
+    assert ledger.balance(BOB) == Decimal("5.000000")
