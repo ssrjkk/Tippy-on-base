@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt
+
+      - name: Install solc (EVM contract tests)
+        run: python -c "import solcx; solcx.install_solc('0.8.24')"
+
+      - name: Lint (ruff)
+        run: ruff check bot web tests scripts
+
+      - name: Test with coverage
+        run: |
+          coverage run -m pytest tests -q
+          coverage report --skip-covered -m

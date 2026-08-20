@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Base TipBot — Community economy on Base</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%230052ff'/%3E%3Ctext x='50' y='71' font-size='58' font-weight='800' text-anchor='middle' fill='white'%3Eb%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" aria-hidden="true"></div>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/">
+        <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+        <span class="brand-name"><b>Base</b>&nbsp;TipBot</span>
+      </a>
+      <a class="btn btn-ghost" href="https://t.me/TIPBOT_USERNAME" data-tg-link>Открыть в Telegram →</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <a class="hero-badge" href="https://buildonbase.com" target="_blank" rel="noopener">
+        <span class="base-mark pulse-ring"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+        Built on Base · Mainnet
+      </a>
+      <h1>Экономика сообщества<br />в USDC на <span class="accent">Base</span></h1>
+      <p class="hero-sub">
+        Чаевые, донат-страницы и рынки предсказаний прямо в Telegram.
+        Мгновенные транзакции, парамутюэль-выплаты, прозрачный кошелёк.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="https://t.me/TIPBOT_USERNAME" data-tg-link>Начать в Telegram</a>
+        <a class="btn btn-ghost" href="#markets">Смотреть рынки ↓</a>
+      </div>
+    </section>
+
+    <section class="stats" id="stats">
+      <div class="stat-card"><div class="stat-value skeleton" id="stat-volume">–</div><div class="stat-label">Объём, USDC</div></div>
+      <div class="stat-card"><div class="stat-value skeleton" id="stat-vol30">–</div><div class="stat-label">Объём за 30 дней, USDC</div></div>
+      <div class="stat-card"><div class="stat-value skeleton" id="stat-users">–</div><div class="stat-label">Пользователей</div></div>
+      <div class="stat-card"><div class="stat-value skeleton" id="stat-markets">–</div><div class="stat-label">Открытых рынков</div></div>
+      <div class="stat-card"><div class="stat-value skeleton" id="stat-tx">–</div><div class="stat-label">Транзакций</div></div>
+      <div class="stat-card"><div class="stat-value skeleton" id="stat-fees">–</div><div class="stat-label">Собрано комиссий, USDC</div></div>
+    </section>
+
+    <section class="section reveal" id="volume-chart-section">
+      <h2>📈 Активность за 14 дней</h2>
+      <div class="chart" id="volume-chart">
+        <div class="skeleton-bar" style="height:38%"></div>
+        <div class="skeleton-bar" style="height:62%"></div>
+        <div class="skeleton-bar" style="height:45%"></div>
+        <div class="skeleton-bar" style="height:78%"></div>
+        <div class="skeleton-bar" style="height:55%"></div>
+        <div class="skeleton-bar" style="height:90%"></div>
+        <div class="skeleton-bar" style="height:70%"></div>
+      </div>
+    </section>
+
+    <section class="section reveal" id="markets">
+      <h2>🎯 Открытые рынки</h2>
+      <div class="markets" id="markets-list">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
+    </section>
+
+    <section class="section reveal" id="closed-markets">
+      <h2>🏁 Закрытые рынки</h2>
+      <div class="markets" id="closed-markets-list">
+        <div class="skeleton-card"></div>
+      </div>
+    </section>
+
+    <section class="section reveal how">
+      <h2>Как это работает</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3>Открой бота</h3>
+          <p>Нажми «Начать в Telegram» и получи свой баланс, страницу донатов и доступ к рынкам.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3>Пополни в USDC</h3>
+          <p>Отправь USDC на адрес бота в сети Base — средства зачисляются мгновенно.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3>Кидай чаевые и ставь</h3>
+          <p>Чаевые, реакции и ставки — мгновенно, без газа. Вывод в любой момент с комиссией 1%.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section grid-2">
+      <div class="reveal">
+        <h2>🏆 Топ чаевых</h2>
+        <div class="leaderboard" id="leaderboard">
+          <div class="skeleton-card" style="height:56px"></div>
+          <div class="skeleton-card" style="height:56px"></div>
+          <div class="skeleton-card" style="height:56px"></div>
+        </div>
+      </div>
+      <div class="reveal">
+        <h2>💼 Прозрачный кошелёк</h2>
+        <div class="wallet" id="wallet">
+          <div class="wallet-row"><span>USDC на горячем кошельке</span><b id="wallet-balance">–</b></div>
+          <div class="wallet-row" id="wallet-vault-row" style="display:none">
+            <span>Резервы в TipBotVault (on-chain)</span><b id="wallet-vault">–</b>
+          </div>
+          <div class="wallet-row"><span>Обязательства бота</span><b id="wallet-liabilities">–</b></div>
+          <div class="wallet-row"><span>Платёжеспособность</span><b id="wallet-solvent">–</b></div>
+          <div class="wallet-addr" id="wallet-address">загрузка…</div>
+          <div class="wallet-addr" id="wallet-vault-addr" style="display:none">загрузка…</div>
+          <p class="hint">
+            Все депозиты, чаевые и пулы рынков хранятся в USDC (сеть Base) —
+            в смарт-контракте TipBotVault или на горячем кошельке до его
+            деплоя. Резервы читаются напрямую из блокчейна и автоматически
+            сверяются с обязательствами бота.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+        <div>
+          <b>Base TipBot</b>
+          <span class="footer-tag">USDC-экономика в Telegram</span>
+        </div>
+      </div>
+      <div class="footer-meta">
+        <span class="chain-chip">🟦 Base Mainnet</span>
+        <span class="chain-chip">🪙 USDC 0x8335…2913</span>
+        <span class="chain-chip">🔒 Vault-резервы on-chain</span>
+      </div>
+    </div>
+    <a class="powered" href="https://buildonbase.com" target="_blank" rel="noopener">
+      <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+      Built on Base · buildonbase.com
+    </a>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

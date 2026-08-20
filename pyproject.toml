@@ -1,0 +1,24 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = [
+  "E501",   # long lines are fine here
+  "BLE001", # deliberate: bot handlers catch broad exceptions defensively
+  "S110",   # deliberate: silent try/except-pass for non-critical notifications
+  "S112",
+  "S101",
+  "SIM105", # deliberate: explicit try/except-pass reads better than suppress()
+  "DTZ006", # naive datetimes used only for display formatting
+  "FURB157",
+  "RUF100",
+  "RUF001",
+  "RUF002",
+  "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F841", "RUF059"]  # unused vars kept for setup clarity

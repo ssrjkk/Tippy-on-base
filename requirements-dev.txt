@@ -1,0 +1,8 @@
+# Development / CI / contract tooling (NOT needed in the production image)
+-r requirements.txt
+py-solc-x==2.0.5
+eth-tester==0.13.0b1
+py-evm==0.12.1b1
+ruff
+coverage
+pytest

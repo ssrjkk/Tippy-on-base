@@ -1,0 +1,67 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tipbot
+      POSTGRES_PASSWORD: tipbot
+      POSTGRES_DB: tipbot
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"  # 5433: a local postgres may already own 5432 on dev machines
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tipbot -d tipbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bot:
+    build: .
+    command: python -m bot.main
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://tipbot:tipbot@db:5432/tipbot
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build: .
+    command: python -m uvicorn web.server:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://tipbot:tipbot@db:5432/tipbot
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: tipbot
+    command: >
+      sh -c 'while true; do
+        pg_dump -U tipbot -h db -d tipbot | gzip > /backups/tipbot-$(date +%F-%H%M).sql.gz;
+        find /backups -name "*.sql.gz" -mtime +13 -delete;
+        sleep 21600;
+      done'
+    volumes:
+      - backups_data:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  backups_data:

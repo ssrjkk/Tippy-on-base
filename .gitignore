@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Secrets & local config
+.env
+
+# SQLite databases (dev artifacts, never commit)
+*.db
+*.db-wal
+*.db-shm
+data/
+dbg.db
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+backups/

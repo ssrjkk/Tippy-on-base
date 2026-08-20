@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Рынок — Base TipBot</title>
+  <meta property="og:title" content="Рынок — Base TipBot" />
+  <meta property="og:description" content="Рынок предсказаний в USDC на Base. Смотри пулы и вероятности, ставь прямо в Telegram." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%230052ff'/%3E%3Ctext x='50' y='71' font-size='58' font-weight='800' text-anchor='middle' fill='white'%3Eb%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" aria-hidden="true"></div>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/">
+        <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+        <span class="brand-name"><b>Base</b>&nbsp;TipBot</span>
+      </a>
+      <a class="btn btn-ghost" href="/#markets">← Все рынки</a>
+    </div>
+  </header>
+
+  <main>
+    <section id="market" class="section reveal" style="max-width: 720px; margin: 0 auto;">
+      <div class="market-card">
+        <div class="market-head">
+          <span class="market-question" id="m-question">Загрузка…</span>
+          <span class="market-meta" id="m-meta"></span>
+        </div>
+        <div id="m-options"></div>
+        <div class="market-footer">
+          <span class="pot" id="m-pot"></span>
+          <span class="pot" id="m-creator"></span>
+        </div>
+      </div>
+      <p class="hint" style="margin-top: 14px; text-align: center;">
+        Ставка — в два тапа прямо в Telegram: открой бота по кнопке ниже или вручную
+        /bet &lt;id&gt; &lt;номер&gt; &lt;сумма&gt;.
+      </p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+        <div>
+          <b>Base TipBot</b>
+          <span class="footer-tag">Рынки предсказаний на USDC</span>
+        </div>
+      </div>
+      <div class="footer-meta">
+        <span class="chain-chip">🟦 Base Mainnet</span>
+        <span class="chain-chip">🪙 USDC 0x8335…2913</span>
+      </div>
+    </div>
+    <a class="powered" href="https://buildonbase.com" target="_blank" rel="noopener">
+      <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+      Built on Base · buildonbase.com
+    </a>
+  </footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    document.body.classList.add("js");
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const fmtUSDC = (x) =>
+      (x ?? 0).toLocaleString("ru-RU", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
+    const escapeHtml = (s) =>
+      String(s).replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      })[c]);
+
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add("is-visible"); io.unobserve(e.target); }
+    }, { threshold: 0.1 });
+    document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+
+    const betId = location.pathname.split("/").filter(Boolean).pop();
+    const relDeadline = (ts) => {
+      const left = ts * 1000 - Date.now();
+      if (left <= 0) return "дедлайн прошёл";
+      const s = Math.floor(left / 1000);
+      const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+      if (d) return "осталось " + d + "д " + h + "ч";
+      if (h) return "осталось " + h + "ч " + m + "м";
+      return "осталось " + m + "м";
+    };
+
+    (async () => {
+      try {
+        const m = await (await fetch("/api/market/" + betId)).json();
+        $("m-question").textContent = "#" + m.id + " " + m.question;
+        const winnerIdx = m.status === "resolved" && m.winner !== null && m.winner !== undefined ? m.winner : null;
+        const meta = [];
+        if (m.close_at) meta.push("⏰ <span id='m-countdown' data-close-at=\"" + m.close_at + "\">" + relDeadline(m.close_at) + "</span>");
+        meta.push(m.status === "open"
+          ? '<span class="chip chip-open">● открыт</span>'
+          : m.status === "resolved"
+            ? '<span class="chip chip-resolved">закрыт</span>'
+            : '<span class="chip chip-cancelled">отменён</span>');
+        $("m-meta").innerHTML = meta.join(" · ");
+        $("m-options").innerHTML = m.options.map((o, i) => {
+          const isWinner = winnerIdx !== null && o.index === winnerIdx;
+          return `
+          <div class="option${isWinner ? " option-winner" : ""}">
+            <div class="option-top">
+              <span class="option-label">${isWinner ? "🏆 " : ""}${escapeHtml(o.label)}</span>
+              <span class="option-val">${fmtUSDC(o.pool_usdc)} USDC · ${o.probability}% · ${o.backers}👤</span>
+            </div>
+            <div class="bar"><div class="bar-fill${isWinner ? " bar-fill-win" : ""}" style="width:${Math.max(o.probability, 2)}%;animation-delay:${Math.min(i * 130, 600)}ms"></div></div>
+          </div>`;
+        }).join("");
+        $("m-pot").innerHTML = "Пул: <b>" + fmtUSDC(m.pot_usdc) + " USDC</b> · " + m.total_backers + "👤";
+        $("m-creator").textContent = "@" + (m.creator.username || ("id" + m.creator.id));
+        document.title = "#" + m.id + " " + m.question + " — Base TipBot";
+        document.querySelector('meta[property="og:title"]').content = "#" + m.id + " " + m.question;
+
+        if (m.status === "resolved" && winnerIdx !== null) {
+          $("m-meta").innerHTML += " · 🏆 " + escapeHtml(m.options[winnerIdx].label);
+        }
+
+        let info = { bot_username: "" };
+        try {
+          info = await (await fetch("/api/info")).json();
+        } catch (e) { /* ignore */ }
+        if (info.bot_username) {
+          const deep = "https://t.me/" + encodeURIComponent(info.bot_username) +
+            "?start=bet_" + encodeURIComponent(betId);
+          $("market").insertAdjacentHTML("beforeend",
+            '<div style="display:flex; gap:10px; margin-top:16px; animation:fadeUp .6s cubic-bezier(.22,1,.36,1) .15s both;">' +
+            '<a class="btn btn-primary" style="flex:2; text-align:center;" href="' + deep + '" target="_blank" rel="noopener">🎯 Поставить в Telegram</a>' +
+            '<button class="btn btn-ghost" style="flex:1; cursor:pointer;" id="m-share">🔗 Поделиться</button>' +
+            '</div>');
+          $("m-share").addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(location.href);
+              $("m-share").textContent = "✅ Скопировано";
+              setTimeout(() => { $("m-share").textContent = "🔗 Поделиться"; }, 2000);
+            } catch (e) { /* ignore */ }
+          });
+        }
+        if (m.close_at) {
+          const tick = () => {
+            const el = $("m-countdown");
+            if (el) {
+              el.textContent = relDeadline(m.close_at);
+              el.classList.toggle("countdown-urgent", !reduceMotion && m.close_at * 1000 - Date.now() < 3600 * 1000);
+            }
+          };
+          tick();
+          setInterval(tick, 10000);
+        }
+      } catch (e) {
+        $("market").innerHTML = '<div class="empty">Рынок не найден</div>';
+      }
+    })();
+  </script>
+</body>
+</html>

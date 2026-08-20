@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Профиль — Base TipBot</title>
+  <meta property="og:title" content="Профиль — Base TipBot" />
+  <meta property="og:description" content="Донат-страница пользователя Base TipBot: адрес для USDC, статистика, открытые позиции." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%230052ff'/%3E%3Ctext x='50' y='71' font-size='58' font-weight='800' text-anchor='middle' fill='white'%3Eb%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" aria-hidden="true"></div>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/">
+        <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+        <span class="brand-name"><b>Base</b>&nbsp;TipBot</span>
+      </a>
+      <a class="btn btn-ghost" href="https://t.me/TIPBOT_USERNAME" data-tg-link>Открыть в Telegram →</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="user-hero" id="user-hero">
+      <div class="avatar pulse-ring" id="user-avatar">?</div>
+      <h1 id="user-name">Загрузка…</h1>
+      <p class="hero-sub" id="user-meta"></p>
+    </section>
+
+    <section class="section grid-2">
+      <div class="reveal">
+        <h2>💰 Статистика</h2>
+        <div class="leaderboard">
+          <div class="lb-row"><span class="lb-place">◉</span><span class="lb-name">Баланс</span><span class="lb-amt" id="u-balance">–</span></div>
+          <div class="lb-row"><span class="lb-place">◉</span><span class="lb-name">Получено чаевых</span><span class="lb-amt" id="u-received">–</span></div>
+          <div class="lb-row"><span class="lb-place">◉</span><span class="lb-name">Отправлено чаевых</span><span class="lb-amt" id="u-sent">–</span></div>
+          <div class="lb-row"><span class="lb-place">◉</span><span class="lb-name">Выиграно на рынках</span><span class="lb-amt" id="u-won">–</span></div>
+          <div class="lb-row"><span class="lb-place">◉</span><span class="lb-name">Поставлено на рынках</span><span class="lb-amt" id="u-placed">–</span></div>
+          <div class="lb-row"><span class="lb-place">◉</span><span class="lb-name">Заработано на рынках</span><span class="lb-amt" id="u-fees">–</span></div>
+        </div>
+      </div>
+      <div class="reveal">
+        <h2>💳 Поддержать</h2>
+        <div class="wallet deposit-box">
+          <div class="wallet-row"><span>Адрес бота (Base / USDC)</span><b id="u-deposit">–</b></div>
+          <div class="wallet-addr" id="u-address">загрузка…</div>
+          <button class="btn btn-ghost" id="u-copy" style="margin-top: 10px; width: 100%;">📋 Скопировать адрес</button>
+          <div class="qr"><img id="u-qr" alt="QR-код депозита" /></div>
+          <p class="hint">
+            Отправь USDC на этот адрес в сети Base, затем нажми <b>/claim</b> в боте,
+            чтобы средства зачислились на баланс этого пользователя. Или просто напишите
+            ему в Telegram: <span id="u-tip-link">–</span>
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal" id="positions" hidden>
+      <h2>🎯 Открытые позиции</h2>
+      <div class="markets" id="positions-list"></div>
+    </section>
+
+    <section class="section reveal" id="history" hidden>
+      <h2>🧾 Последние операции</h2>
+      <div class="leaderboard" id="history-list"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+        <div>
+          <b>Base TipBot</b>
+          <span class="footer-tag">Донаты и чаевые на USDC</span>
+        </div>
+      </div>
+      <div class="footer-meta">
+        <span class="chain-chip">🟦 Base Mainnet</span>
+        <span class="chain-chip">🪙 USDC 0x8335…2913</span>
+      </div>
+    </div>
+    <a class="powered" href="https://buildonbase.com" target="_blank" rel="noopener">
+      <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+      Built on Base · buildonbase.com
+    </a>
+  </footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    document.body.classList.add("js");
+    const fmtUSDC = (x) =>
+      (x ?? 0).toLocaleString("ru-RU", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
+    const escapeHtml = (s) =>
+      String(s).replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      })[c]);
+
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add("is-visible"); io.unobserve(e.target); }
+    }, { threshold: 0.1 });
+    document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+
+    const tgId = location.pathname.split("/").filter(Boolean).pop();
+
+    (async () => {
+      let info = { bot_username: "" };
+      try {
+        info = await (await fetch("/api/info")).json();
+      } catch (e) { /* ignore */ }
+      const username = info.bot_username;
+      const tgLink = username ? "https://t.me/" + encodeURIComponent(username) : "";
+      document.querySelectorAll("[data-tg-link]").forEach((a) => { a.href = tgLink || a.href; });
+
+      try {
+        const u = await (await fetch("/api/user/" + tgId)).json();
+        $("user-avatar").textContent = (u.username || "?")[0].toUpperCase();
+        $("user-name").textContent = "@" + u.username;
+        $("user-meta").textContent = "Пользователь Base TipBot · " + u.balance_usdc + " USDC на балансе";
+        $("u-balance").textContent = fmtUSDC(u.balance_usdc) + " USDC";
+        $("u-received").textContent = fmtUSDC(u.tips_received_usdc) + " USDC";
+        $("u-sent").textContent = fmtUSDC(u.tips_sent_usdc) + " USDC";
+        $("u-won").textContent = fmtUSDC(u.bets_won_usdc) + " USDC";
+        $("u-placed").textContent = fmtUSDC(u.bets_placed_usdc) + " USDC";
+        $("u-fees").textContent = fmtUSDC(u.creator_fees_usdc) + " USDC";
+        $("u-deposit").textContent = "USDC";
+        $("u-address").textContent = u.deposit_address;
+        $("u-qr").src = "/qr?size=220&data=" + encodeURIComponent("base:" + u.deposit_address);
+        $("u-copy").addEventListener("click", () => {
+          navigator.clipboard.writeText(u.deposit_address).then(() => {
+            $("u-copy").textContent = "✅ Скопировано";
+            setTimeout(() => { $("u-copy").textContent = "📋 Скопировать адрес"; }, 2000);
+          });
+        });
+        if (username) {
+          $("u-tip-link").innerHTML =
+            '<a class="btn btn-primary" href="https://t.me/' + encodeURIComponent(username) +
+            '?start=donate_' + encodeURIComponent(tgId) + '" target="_blank" rel="noopener">💸 Чаевые в Telegram</a>';
+        }
+
+        if (u.positions && u.positions.length) {
+          const fmt = (x) => fmtUSDC(x) + " USDC";
+          const esc = escapeHtml;
+          const html = u.positions.map((p, i) => `
+            <div class="market-card" style="animation-delay:${Math.min(i * 80, 400)}ms">
+              <div class="market-head">
+                <span class="market-question">#${esc(p.bet_id)} ${esc(p.question)}</span>
+                <span class="market-meta">${esc(p.option)}</span>
+              </div>
+              <div class="market-footer">
+                <span class="pot">Поставлено: <b>${fmt(p.stake_usdc)}</b></span>
+                <span class="pot">Потенциально: <b>${fmt(p.potential_usdc)}</b></span>
+              </div>
+            </div>`).join("");
+          $("positions-list").innerHTML = html;
+          $("positions").hidden = false;
+        }
+
+        if (u.history && u.history.length) {
+          const icons = {
+            deposit: "⬇️", tip: "💸", withdraw: "⬆️", fee: "🧾",
+            bet: "🎲", bet_win: "🏆", bet_cancel: "↩️",
+          };
+          const names = {
+            deposit: "Пополнение", tip: "Чаевые", withdraw: "Вывод", fee: "Комиссия",
+            bet: "Ставка", bet_win: "Выигрыш", bet_cancel: "Возврат",
+          };
+          const html = u.history.map((h, i) => {
+            const isRain = h.kind === "tip" && h.note === "rain";
+            const icon = isRain ? "🌧️" : (icons[h.kind] || "•");
+            const name = isRain ? "Дождь" : (names[h.kind] || h.kind);
+            return `
+            <div class="lb-row" style="animation-delay:${Math.min(i * 50, 400)}ms">
+              <span class="lb-place">${icon}</span>
+              <span class="lb-name">${name}</span>
+              <span class="lb-amt">${h.amount_usdc > 0 ? "+" : ""}${fmtUSDC(h.amount_usdc)} USDC</span>
+            </div>`;
+          }).join("");
+          $("history-list").innerHTML = html;
+          $("history").hidden = false;
+        }
+      } catch (e) {
+        $("user-hero").innerHTML = '<div class="empty">Пользователь не найден</div>';
+      }
+    })();
+  </script>
+</body>
+</html>
