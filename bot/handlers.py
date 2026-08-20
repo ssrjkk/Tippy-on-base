@@ -31,7 +31,7 @@ DEADLINE_RE = re.compile(r"^(\d{1,3})([hd])$")
 QUICK_AMOUNTS = ("5", "10", "25", "50")
 
 HELP = (
-    "🤖 <b>Base TipBot</b> — экономика сообщества в USDC на <b>Base</b>.\n"
+    "🤖 <b>Tippy</b> — экономика сообщества в USDC на <b>Base</b>.\n"
     "🟦 Сеть Base · монета USDC · все переводы в блокчейне\n\n"
     "💸 <b>Чаевые</b>\n"
     "• /tip 5 @nick — кинуть 5 USDC\n"
@@ -174,7 +174,7 @@ async def cmd_start(message: types.Message, command: CommandObject) -> None:
         bal = ledger.balance(message.from_user.id)
         welcome = (
             f"👋 Привет, <b>@{name}</b>!\n\n"
-            f"🟦 <b>Base TipBot</b> — USDC-экономика прямо в Telegram:\n"
+            f"🟦 <b>Tippy</b> — USDC-экономика прямо в Telegram:\n"
             f"💸 чаевые и реакции · 🎁 донат-страницы · 🎯 рынки предсказаний\n\n"
             f"💰 Баланс: <b>{bal:.6f}".rstrip("0").rstrip(".") + " USDC</b>\n\n"
             "Что попробовать?\n"
@@ -629,7 +629,7 @@ async def cmd_link(message: types.Message) -> None:
         return
     address = to_checksum_address(parts[1])
     nonce = ledger.new_link_nonce(message.from_user.id, address)
-    sign_text = f"Base TipBot: link {message.from_user.id}:{nonce}"
+    sign_text = f"Tippy: link {message.from_user.id}:{nonce}"
     await message.answer(
         "🔗 <b>Привязка кошелька</b>\n\n"
         "Подпиши сообщение в своём кошельке (WalletConnect / MetaMask / любой)\n\n"
@@ -656,7 +656,7 @@ async def cmd_confirm(message: types.Message) -> None:
             f"Начни заново: /link <i>&lt;адрес&gt;</i>"
         )
         return
-    sign_text = f"Base TipBot: link {message.from_user.id}:{nonce}"
+    sign_text = f"Tippy: link {message.from_user.id}:{nonce}"
     try:
         recovered = base.recover_signer(sign_text, parts[1])
     except Exception:

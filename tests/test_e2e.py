@@ -280,7 +280,7 @@ def test_e2e_user_journey_deposit_tip_withdraw(e2e, monkeypatch):
     m = Message(f"/link {ACC.address}", from_id=ALICE, bot=bot)
     run(cmd_link(m))
     row = e2e.get_link_nonce(ALICE)
-    sign_text = f"Base TipBot: link {ALICE}:{row['nonce']}"
+    sign_text = f"Tippy: link {ALICE}:{row['nonce']}"
     sig = ACC.sign_message(encode_defunct(text=sign_text)).signature.hex()
     m = Message(f"/confirm 0x{sig}", from_id=ALICE, bot=bot)
     run(cmd_confirm(m))
@@ -715,7 +715,7 @@ def test_e2e_wallet_security(e2e, monkeypatch):
     m = Message(f"/link {ACC.address}", from_id=ALICE, bot=bot)
     run(cmd_link(m))
     row = e2e.get_link_nonce(ALICE)
-    sign_text = f"Base TipBot: link {ALICE}:{row['nonce']}"
+    sign_text = f"Tippy: link {ALICE}:{row['nonce']}"
     wrong_sig = ACC2.sign_message(encode_defunct(text=sign_text)).signature.hex()
     m = Message(f"/confirm 0x{wrong_sig}", from_id=ALICE, bot=bot)
     run(cmd_confirm(m))
@@ -750,7 +750,7 @@ def test_e2e_wallet_security(e2e, monkeypatch):
     m = Message(f"/link {ACC2.address}", from_id=BOB, bot=bot)
     run(cmd_link(m))
     row = e2e.get_link_nonce(BOB)
-    sig = ACC2.sign_message(encode_defunct(text=f"Base TipBot: link {BOB}:{row['nonce']}")).signature.hex()
+    sig = ACC2.sign_message(encode_defunct(text=f"Tippy: link {BOB}:{row['nonce']}")).signature.hex()
     m = Message(f"/confirm 0x{sig}", from_id=BOB, bot=bot)
     run(cmd_confirm(m))
     assert "привязан" in m.answers[0][0]
@@ -777,7 +777,7 @@ def test_e2e_wallet_security(e2e, monkeypatch):
         (int(time.time()) - config.LINK_NONCE_TTL_SECONDS - 10, CAROL),
     )
     e2e._conn.commit()
-    sig = ACC2.sign_message(encode_defunct(text=f"Base TipBot: link {CAROL}:{row['nonce']}")).signature.hex()
+    sig = ACC2.sign_message(encode_defunct(text=f"Tippy: link {CAROL}:{row['nonce']}")).signature.hex()
     m = Message(f"/confirm 0x{sig}", from_id=CAROL, bot=bot)
     run(cmd_confirm(m))
     assert "устарел" in m.answers[0][0]
@@ -789,7 +789,7 @@ def test_e2e_wallet_security(e2e, monkeypatch):
     m = Message(f"/link {ACC2.address}", from_id=BOB, bot=bot)
     run(cmd_link(m))
     row = e2e.get_link_nonce(BOB)
-    sig = ACC2.sign_message(encode_defunct(text=f"Base TipBot: link {BOB}:{row['nonce']}")).signature.hex()
+    sig = ACC2.sign_message(encode_defunct(text=f"Tippy: link {BOB}:{row['nonce']}")).signature.hex()
     m = Message(f"/confirm 0x{sig}", from_id=BOB, bot=bot)
     run(cmd_confirm(m))
     assert "Сразу зачислено: 1" in m.answers[0][0]
@@ -812,7 +812,7 @@ def test_e2e_dashboard_values(e2e, monkeypatch, api):
     m = Message(f"/link {ACC.address}", from_id=ALICE, bot=bot)
     run(cmd_link(m))
     row = e2e.get_link_nonce(ALICE)
-    sig = ACC.sign_message(encode_defunct(text=f"Base TipBot: link {ALICE}:{row['nonce']}")).signature.hex()
+    sig = ACC.sign_message(encode_defunct(text=f"Tippy: link {ALICE}:{row['nonce']}")).signature.hex()
     m = Message(f"/confirm 0x{sig}", from_id=ALICE, bot=bot)
     run(cmd_confirm(m))
 

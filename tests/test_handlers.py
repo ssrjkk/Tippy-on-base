@@ -202,7 +202,7 @@ def test_to_micro_rounding_ceiling():
 def test_cmd_start_help(ledger):
     m = Message("/start")
     run(cmd_start(m, CommandObject(command="start", args=None)))
-    assert m.answers and "Base TipBot" in m.answers[0][0]
+    assert m.answers and "Tippy" in m.answers[0][0]
     assert ledger.user_exists(ALICE)
 
 
@@ -223,7 +223,7 @@ def test_cmd_start_donate_landing(ledger, monkeypatch):
 def test_cmd_start_non_donate_args(ledger):
     m = Message("/start", from_id=ALICE)
     run(cmd_start(m, CommandObject(command="start", args="garbage")))
-    assert "Base TipBot" in m.answers[0][0]
+    assert "Tippy" in m.answers[0][0]
 
 
 def test_cmd_start_market_deep_link(ledger):
@@ -354,7 +354,7 @@ def test_cmd_claim_unknown(ledger):
 def _sign_text_from_answer(text):
     import re
 
-    m = re.search(r"<code>(Base TipBot: link \d+:[0-9a-f]+)</code>", text)
+    m = re.search(r"<code>(Tippy: link \d+:[0-9a-f]+)</code>", text)
     assert m, f"sign text not found in: {text!r}"
     return m.group(1)
 

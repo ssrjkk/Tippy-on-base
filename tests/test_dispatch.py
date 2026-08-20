@@ -177,7 +177,7 @@ def test_dispatch_start_shows_menu(ledger):
     assert ledger.user_exists(ALICE)
     assert "sendMessage" in [n for n, _ in s.calls]
     text = next(p["text"] for n, p in s.calls if n == "sendMessage")
-    assert "Base TipBot" in text
+    assert "Tippy" in text
 
 
 def test_dispatch_balance(ledger):

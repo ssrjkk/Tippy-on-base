@@ -1,4 +1,4 @@
-"""Test fixtures: a fresh Postgres test database, patched into bot modules.
+﻿"""Test fixtures: a fresh Postgres test database, patched into bot modules.
 
 Requires a running PostgreSQL server (docker compose up -d db — the default
 credentials below match the compose service). A dedicated test database is

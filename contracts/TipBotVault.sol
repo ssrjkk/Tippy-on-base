@@ -9,7 +9,7 @@ interface IERC20 {
 }
 
 /// @title TipBotVault
-/// @notice On-chain treasury for Base TipBot: users send USDC directly to this
+/// @notice On-chain treasury for Tippy: users send USDC directly to this
 ///         contract, the bot (relayer) distributes payouts under a daily cap,
 ///         and the owner (multisig) holds full control. Anyone can verify
 ///         solvency on-chain: totalReserves() vs. the bot's liabilities.

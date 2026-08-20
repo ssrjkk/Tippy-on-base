@@ -1,4 +1,4 @@
-"""Base TipBot entrypoint. Run: python -m bot.main"""
+"""Tippy entrypoint. Run: python -m bot.main"""
 
 import asyncio
 import logging

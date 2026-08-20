@@ -25,7 +25,7 @@ from web.frame import router as frame_router  # noqa: E402
 from web.hook import router as tg_webhook  # noqa: E402
 from web.x402 import x402_paywall, x402_tip  # noqa: E402
 
-app = FastAPI(title="Base TipBot", version="1.0.0", description="Community economy on Base")
+app = FastAPI(title="Tippy", version="1.0.0", description="Community economy on Base")
 app.include_router(tg_webhook)
 app.include_router(frame_router)
 

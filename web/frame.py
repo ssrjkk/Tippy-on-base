@@ -46,7 +46,7 @@ def frame_page(item_id: int) -> str:
 <head>
 <meta charset="utf-8">
 <meta property="og:title" content="{title} — {price:g} USDC on Base">
-<meta property="og:description" content="Paywalled USDC content via Base TipBot. Pay with x402 or inside Telegram.">
+<meta property="og:description" content="Paywalled USDC content via Tippy. Pay with x402 or inside Telegram.">
 <meta property="og:image" content="{image_url}">
 <meta property="fc:frame" content="vNext">
 <meta property="fc:frame:image" content="{image_url}">

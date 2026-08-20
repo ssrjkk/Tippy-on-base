@@ -57,7 +57,7 @@ def test_hot_wallet_is_checksummed():
 
 
 def test_recover_signer_roundtrip(real_account):
-    msg = "Base TipBot: link 42:deadbeef"
+    msg = "Tippy: link 42:deadbeef"
     sig = base.w3.eth.account.sign_message(
         encode_defunct(text=msg), private_key=real_account.key
     ).signature.hex()

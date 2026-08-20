@@ -1,4 +1,4 @@
-# Base TipBot — Base Builder Grant Program Application
+# Tippy — Base Builder Grant Program Application
 
 Copy-paste package for the **Base Builder Grant Program** form (owned by
 Coinbase/Base). Grants: **up to $5,000** in seed capital + **monthly product &
@@ -26,7 +26,7 @@ Agents · Asset creation · Consumer apps.
 | **Email** | `TODO: e-mail под реальным аккаунтом` |
 | **X (Twitter) handle** | `TODO: @Nickname` (создать + активность, см. §7) |
 | **Telegram username** | `TODO: @username` |
-| **Project name + one-line description** | `Base TipBot — turn any Telegram community into a USDC economy on Base: instant tips, QR donation pages, and parimutuel prediction markets with automatic payouts.` |
+| **Project name + one-line description** | `Tippy — turn any Telegram community into a USDC economy on Base: instant tips, QR donation pages, and parimutuel prediction markets with automatic payouts.` |
 | **Tell us about the founding team** | см. §2 |
 | **Link to your live product** | `TODO: https://<домен дашборда>` — публичный дашборд + `/api/solvency` |
 | **Link to a Product Demo (Loom)** | `TODO: ссылка на Loom` — сценарий §3 |
@@ -37,7 +37,7 @@ Agents · Asset creation · Consumer apps.
 | **GTM plan for the next 3 months** | см. §7 |
 | **Base Builder Code** | `TODO: код пригласившего (если есть)` |
 | **Primary challenge or bottleneck** | `User acquisition` — продукт готов (368 автотеста, 94% покрытие), нужны сообщества и рост |
-| **Project description (без трекшна — формулировка)** | `Base TipBot is a monetization layer for Telegram communities and AI agents on Base. We enable creators to gate content behind USDC paywalls using the x402 protocol, with fully on-chain Proof of Reserves via TipBotVault. While currently in pre-launch phase, the technical foundation is production-ready with 368 automated tests and 94% coverage. We are targeting the 900M Telegram user base and the rapidly growing AI agent economy on Base.` |
+| **Project description (без трекшна — формулировка)** | `Tippy is a monetization layer for Telegram communities and AI agents on Base. We enable creators to gate content behind USDC paywalls using the x402 protocol, with fully on-chain Proof of Reserves via TipBotVault. While currently in pre-launch phase, the technical foundation is production-ready with 368 automated tests and 94% coverage. We are targeting the 900M Telegram user base and the rapidly growing AI agent economy on Base.` |
 | **Why Base?** | `Base is the only chain with native x402 support, which is critical for our AI-agent-to-agent commerce model. Additionally, Base's Smart Wallets enable gasless onboarding for Telegram users who have never used crypto before. We are building exclusively on Base to leverage these primitives.` |
 | **Use of Funds ($5,000)** | `$2,000 — Smart Contract Audit (TipBotVault.sol), critical for handling user deposits. $1,500 — GTM & Partnership Development: onboarding the first 10 crypto-signal Telegram channels and integrating with Virtuals Protocol agents. $1,500 — Infrastructure scaling (PostgreSQL optimization, Alchemy Webhooks) for 10k+ daily active users.` |
 | **Traction (честно, с фокусом на потенциал)** | `Currently pre-launch with a fully tested MVP. Technical milestones achieved: x402 integration, Vault Proof of Reserves, 368 tests. Next step: Launch on Base mainnet and secure the first 100 users through Farcaster Frames and AI agent partnerships.` |
@@ -53,7 +53,7 @@ Agents · Asset creation · Consumer apps.
 
 ## 3. The one-line-adjacent pitch (154 words — reuse for "tell us about your product" if the form asks)
 
-> Base TipBot turns any Telegram community into a USDC economy on Base:
+> Tippy turns any Telegram community into a USDC economy on Base:
 > instant tips, QR donation pages, and parimutuel prediction markets with
 > automatic payouts. Everything settles instantly inside the bot's ledger
 > (zero gas), while every balance is backed by a public, on-chain auditable
@@ -155,7 +155,7 @@ trusts.*
 
 ### The solution
 
-Base TipBot uses **USDC — the dollar on Base** — as the single primitive.
+Tippy uses **USDC — the dollar on Base** — as the single primitive.
 Everything is settled instantly *inside the bot's ledger* (zero gas, zero
 waiting), and the hot wallet that backs every balance is **public and
 auditable on-chain** (see the web dashboard).
