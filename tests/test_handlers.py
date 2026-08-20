@@ -212,7 +212,7 @@ def test_cmd_start_donate_landing(ledger, monkeypatch):
     def fake_qr(data):
         return b"\x89PNG"
 
-    monkeypatch.setattr(handlers, "_qr_bytes", fake_qr)
+    monkeypatch.setattr(handlers._common, "_qr_bytes", fake_qr)
     m = Message("/start", from_id=ALICE, username="alice")
     run(cmd_start(m, CommandObject(command="start", args="donate_2002")))
     assert m.photos, "expected a photo with QR"
@@ -1597,7 +1597,7 @@ def test_cb_menu_no_user_ignored(ledger):
 
 
 def test_cmd_rain_throttled(ledger, monkeypatch):
-    monkeypatch.setattr(handlers, "_now", lambda: 1000.0)
+    monkeypatch.setattr(handlers._common, "_now", lambda: 1000.0)
     m = Message("/rain 10", from_id=BOB, chat=Chat(id=-1000, type="group"))
     run(cmd_rain(m))
     m2 = Message("/rain 10", from_id=BOB, chat=Chat(id=-1000, type="group"))

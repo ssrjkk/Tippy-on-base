@@ -36,6 +36,15 @@ SOLC = "0.8.24"
 VAULT_ABI = None  # filled by _compile
 
 
+def _fee_params(w3: Web3) -> dict:
+    """EIP-1559 fees for Base (same strategy as bot/base.py): 2x latest base
+    fee + 0.01 gwei priority tip — without these, web3 falls back to legacy
+    gasPrice pricing."""
+    base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
+    tip = w3.to_wei(0.01, "gwei")
+    return {"maxPriorityFeePerGas": tip, "maxFeePerGas": base_fee * 2 + tip}
+
+
 def _compile():
     global VAULT_ABI
     solcx.set_solc_version(SOLC)
@@ -85,7 +94,7 @@ def main() -> int:
     daily_micro = int(args.daily_usdc * 10**config.USDC_DECIMALS)
     contract = w3.eth.contract(abi=VAULT_ABI, bytecode=art["bin"])
     tx = contract.constructor(usdc_addr, owner, relayer, daily_micro).build_transaction(
-        {"from": owner, "nonce": nonce, "chainId": w3.eth.chain_id}
+        {"from": owner, "nonce": nonce, "chainId": w3.eth.chain_id, **_fee_params(w3)}
     )
     signed = owner_acct.sign_transaction(tx)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -101,7 +110,7 @@ def main() -> int:
     v = w3.eth.contract(address=vault, abi=VAULT_ABI)
     nonce = w3.eth.get_transaction_count(owner, "pending")
     tx = v.functions.setDailyLimit(daily_micro).build_transaction(
-        {"from": owner, "nonce": nonce, "chainId": w3.eth.chain_id}
+        {"from": owner, "nonce": nonce, "chainId": w3.eth.chain_id, **_fee_params(w3)}
     )
     signed = owner_acct.sign_transaction(tx)
     w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(signed.raw_transaction))

@@ -108,9 +108,7 @@ async def housekeeping_watcher() -> None:
         await asyncio.sleep(86400)
 
 
-async def _run_webhook(
-    tasks: list[asyncio.Task], stop: asyncio.Event | None = None
-) -> None:
+async def _run_webhook(stop: asyncio.Event | None = None) -> None:
     """Register the webhook with Telegram, then keep the watchers alive.
 
     The FastAPI app (web/server.py, which hosts the hook endpoint) runs as a
@@ -146,7 +144,7 @@ async def main() -> None:
     ]
     try:
         if config.WEBHOOK_URL:
-            await _run_webhook(tasks)
+            await _run_webhook()
         else:
             await dp.start_polling(bot, skip_updates=True)
     finally:

@@ -59,7 +59,12 @@ async def telegram_webhook(request: Request) -> Response:
     provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if not provided or not hmac.compare_digest(provided, webhook_secret()):
         return JSONResponse(status_code=403, content={"detail": "forbidden"})
-    update = await request.json()
+    try:
+        update = await request.json()
+    except Exception:
+        # Not JSON (scanner noise, misconfigured proxy): 200 so Telegram does
+        # not retry forever, nothing is fed to the dispatcher.
+        return Response(status_code=200)
     try:
         await _dispatcher().feed_webhook_update(bot, update)
     except Exception:

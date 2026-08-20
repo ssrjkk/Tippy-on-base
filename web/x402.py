@@ -13,8 +13,10 @@ The tx hash is the PK of x402_payments and the deposit scanner skips it,
 so a payment is never credited twice and liabilities stay exact.
 """
 
+import re
 import time
 import uuid
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -27,6 +29,10 @@ MICRO = 10**config.USDC_DECIMALS
 
 MAX_TIP_USDC = 1000
 PAYMENT_TTL_SECONDS = 300
+
+# A payment header must be a real transaction hash BEFORE it hits the RPC:
+# arbitrary strings would otherwise be forwarded to get_transaction_receipt.
+_TX_HASH_RE = re.compile(r"^0x[0-9a-f]{64}$")
 
 
 def _invoice_headers(amount_micro: int) -> dict:
@@ -71,14 +77,18 @@ def _verify_payment(tx_hash: str, expected_micro: int) -> dict | None:
 
 
 def _parse_amount(raw_amount: str) -> int | None:
-    """Parse a USDC amount from the query string into micro-units or None."""
+    """Parse a USDC amount from the query string into micro-units or None.
+
+    Decimal (not float): no binary rounding surprises; fractional micros are
+    rounded up like everywhere else in the bot (_to_micro).
+    """
     try:
-        amount = float(raw_amount)
-        if amount <= 0 or amount > MAX_TIP_USDC:
-            return None
-    except ValueError:
+        amount = Decimal(raw_amount)
+    except InvalidOperation:
         return None
-    return round(amount * MICRO)
+    if not amount.is_finite() or amount <= 0 or amount > MAX_TIP_USDC:
+        return None
+    return int((amount * MICRO).to_integral_value(rounding=ROUND_CEILING))
 
 
 def _invoice_response(amount_micro: int, **extra) -> JSONResponse:
@@ -118,12 +128,14 @@ async def x402_tip(request: Request) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": "unknown recipient"})
 
     tx_hash = (request.headers.get("x-402-payment") or "").strip().lower()
-    if not tx_hash.startswith("0x"):
+    if not tx_hash:
         # First leg of the handshake: here is the invoice, pay it.
         return _invoice_response(
             amount_micro,
             recipient=recipient,
         )
+    if not _TX_HASH_RE.match(tx_hash):
+        return JSONResponse(status_code=400, content={"detail": "invalid x-402-payment header"})
 
     if ledger_mod.ledger.x402_paid(tx_hash):
         return JSONResponse(status_code=409, content={"detail": "payment already processed"})
@@ -169,8 +181,10 @@ async def x402_paywall(request: Request) -> JSONResponse:
         return _invoice_response(price_micro, item=raw_item)
 
     tx_hash = (request.headers.get("x-402-payment") or "").strip().lower()
-    if not tx_hash.startswith("0x"):
+    if not tx_hash:
         return _invoice_response(price_micro, item=raw_item)
+    if not _TX_HASH_RE.match(tx_hash):
+        return JSONResponse(status_code=400, content={"detail": "invalid x-402-payment header"})
 
     if ledger_mod.ledger.x402_paid(tx_hash):
         return JSONResponse(status_code=409, content={"detail": "payment already processed"})

@@ -64,7 +64,7 @@ async def rate_limit(request: Request, call_next):
     # connection never pins table locks for long (this blocked schema DDL
     # from other processes). Rollback is safe: writes commit in ledger.
     try:
-        ledger._conn.rollback()
+        ledger.rollback()
     except Exception:
         pass
     return response

@@ -107,6 +107,11 @@ class Ledger:
         self._lock = threading.RLock()
         self._conn = ReconnectingConn(database)
         with self._lock:
+            # Schema DDL needs ACCESS EXCLUSIVE locks, which a concurrent
+            # process holding read locks (e.g. the web dashboard) can block
+            # indefinitely. Fail fast instead of hanging forever — this must
+            # be set BEFORE any DDL runs.
+            self._conn.execute("SET lock_timeout = '15s'")
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS users (
@@ -232,12 +237,10 @@ class Ledger:
                     created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
                     PRIMARY KEY (chat_id, tg_id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_paywall_subscriptions_expires
+                    ON paywall_subscriptions (expires_at);
                 """
             )
-            # Schema DDL needs ACCESS EXCLUSIVE locks, which a concurrent
-            # process holding read locks (e.g. the web dashboard) can block
-            # indefinitely. Fail fast instead of hanging forever.
-            self._conn.execute("SET lock_timeout = '15s'")
             self._conn.execute("ALTER TABLE bets ADD COLUMN IF NOT EXISTS close_at BIGINT")
             self._conn.execute("ALTER TABLE tx_log ADD COLUMN IF NOT EXISTS status TEXT")
             self._conn.execute(
@@ -1547,6 +1550,12 @@ class Ledger:
                 (block,)
             )
             self._conn.commit()
+
+    def rollback(self) -> None:
+        """Drop any open read transaction so the shared connection never pins
+        table locks (web request middleware calls this after every request)."""
+        with self._lock:
+            self._conn.rollback()
 
     def close(self) -> None:
         with self._lock:

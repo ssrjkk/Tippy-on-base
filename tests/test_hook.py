@@ -140,7 +140,7 @@ def test_webhook_registers_with_telegram_on_start(monkeypatch):
     stop = asyncio.Event()
 
     async def run():
-        task = asyncio.create_task(main._run_webhook([], stop))
+        task = asyncio.create_task(main._run_webhook(stop))
         await asyncio.sleep(0.01)
         stop.set()
         await task

@@ -55,7 +55,7 @@ def ledger(monkeypatch):
     fresh = ledger_mod.Ledger(TEST_DB_URL)
     _reset_db(fresh)
     monkeypatch.setattr(ledger_mod, "ledger", fresh)
-    monkeypatch.setattr(handlers, "ledger", fresh)
-    handlers._money_cmd_last.clear()
+    monkeypatch.setattr(handlers._common, "ledger", fresh)
+    handlers._common._money_cmd_last.clear()
     yield fresh
     fresh.close()  # release the open transaction, or TRUNCATE in the next test hangs
