@@ -1,304 +1,192 @@
-# 🤖 Tippy — экономика сообщества в USDC на Base
+# Tippy — Community Economy in USDC on Base
 
-Telegram-бот, который превращает любой чат/сообщество в финансовую экосистему: **чаевые, донат-страницы, рынки предсказаний** — всё в USDC на Base. Без своих смарт-контрактов: только проверенный официальный контракт USDC, остальное — мгновенная внутренняя бухгалтерия.
+[![CI](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml/badge.svg)](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml)
+![Tests](https://img.shields.io/badge/tests-419%20passed-brightgreen)
+![Python](https://img.shields.io/badge/python-3.12+-blue)
+![Network](https://img.shields.io/badge/network-Base-0052FF)
 
-**Автор:** [@b2wmain](https://t.me/b2wmain) · [@ssrjkk](https://t.me/ssrjkk) · [X / Twitter](https://x.com/ludych1) · [GitHub](https://github.com/ssrjkk)
+A Telegram bot that turns any chat or community into a financial ecosystem:
+**instant USDC tips, Polymarket-style prediction markets with live AMM odds,
+an AI assistant, paywalled content, and per-user wallets** — all on Base.
+No custom contracts in the hot path: only the official USDC contract plus an
+optional audited-style treasury vault; everything else is instant internal
+accounting backed by public proof-of-reserves.
 
-## Что умеет
+**Author:** [@ssrjkk](https://t.me/ssrjkk) · [@b2wmain](https://t.me/b2wmain) · [X / Twitter](https://x.com/ludych1) · [GitHub](https://github.com/ssrjkk)
 
-### 💸 Чаевые (мгновенно, без газа)
-- `/tip 5 @nick` или `/tip 5` ответом на сообщение
-- Получатель получает уведомление в ЛС
+---
 
-### 💛 Донат-страницы
-- `/donate` → у тебя есть персональная ссылка `t.me/<бот>?start=donate_<id>`
-- По ней открывается твой адрес + QR — кидай ссылку куда угодно
-- Депозиты зачисляются автоматически, без посредников
-- **При зачислении юзер получает push-уведомление в Telegram** (watcher шлёт DM)
+## Features
 
-### 🎲 Рынки предсказаний (parimutuel)
-- `/bet create Кто победит? | Трамп | Харрис [24h|7d]` — создать рынок с опциональным дедлайном
-- `/bets` — компактный список рынков: строка на рынок + кнопки (карточки — по нажатию)
-- `/bet 3 1 25` — поставить 25 USDC на вариант 1
-- **Карточка рынка**: для создателя — кнопка «🏁 Закрыть рынок» (резолюция в 2 тапа без `/resolve`),
-  для всех — число бэкеров, «твоя ставка», относительный дедлайн
-- `/resolve 3 1` — закрыть (создатель). Победители делят весь пул пропорционально ставке
-- `/cancel 3` — отмена с возвратом всем
-- Создатель рынка получает **2%** с чистого выигрыша победителей
-- Чистая математика, ноль потерь — проверено консервацией средств
-- Watcher-ы: пинг создателю в момент дедлайна + **повторное предупреждение за 12 ч до
-  автовозврата денег** (grace-период 72 ч) — забытый рынок не теряет комиссию
+### 💸 Instant tips (zero gas)
+- `/tip 5 @nick` — or reply `/tip 5` to any message
+- Recipient gets an immediate DM notification
+- 🌧️ `/rain 10 [N]` — scatter USDC across active group members
+- 🔥❤️⚡👏🎉 emoji reactions tip the message author (groups)
 
-### 🔗 Кошелёк
-- `/link <адрес>` + подпись → депозиты зачисляются сами (без /claim)
-- `/deposit` — адрес пополнения · `/claim <tx>` — ручной фолбэк для привязанного кошелька
-- **Безопасность**: депозит зачисляется только владельцу кошелька-отправителя —
-  транзакции в Base публичны, и без этой проверки `/claim` позволил бы
-  украсть чужой депозит по tx-хэшу. Непривязанному отправителю `/claim`
-  вежливо подскажет сначала сделать `/link`.
-- `/withdraw <адрес> <сумма>` — вывод, комиссия **1%** (бизнес-модель)
-- При ошибке вывода — **полный возврат, включая комиссию**
-- Зависшие/reverted транзакции вывода **автоматически возвращаются** (watcher, таймаут 10 мин)
-- Защита от газ-грейфинга: минимум вывода **1 USDC**, лимит **5 выводов/сутки**
-- Чаевые: максимум **1000 USDC** за раз · Ставки: максимум **500 USDC** за рынок
-- Анти-спам: пауза **5 сек** между денежными командами на юзера (`/tip`, `/bet`, `/withdraw`, реакции)
+### 📈 Prediction markets v2 — Polymarket analog (LMSR AMM)
+- `/market create 50 Who wins? | Alice | Bob 7d` — creator funds the AMM liquidity
+- **Live odds that move with demand** — Hanson's Logarithmic Market Scoring Rule,
+  exact `Decimal` math (`b = subsidy / ln(n)`)
+- `/trade <id> <opt> <amount>` — buy outcome shares at the live price
+- **`/sell <id> <opt> [50%]` — sell back any time before resolution** (exit anytime,
+  not locked until the end like parimutuel pools)
+- `/positions` — your portfolio with live mark-to-market value and PnL
+- Resolution pays **1 USDC per winning share**; the market creator keeps the
+  remaining liquidity pool as their earnings
+- **Guaranteed solvency by the LMSR funding theorem**: the escrow can always
+  cover the worst-case payout, verified by property tests along aggressive
+  random trading paths
+- Deadline pings + grace-period auto-refund protection for forgotten markets
 
-### 📊 Статистика и виральность
-- `/top` — лидерборд чаевых
-- `/stats` — твоя аналитика (отправил / получил / выиграл / поставил)
-- `/history [n]` — полная история операций (до 50 записей)
-- Inline-меню в `/start` · кнопка «⚙️ Настройки» — реакции-чаевые и уведомления
-- 🌧️ **`/rain 10 [N]`** в группах — раздать USDC активным участникам (лимит 100 USDC, 25 чел.)
+### 🎲 Parimutuel polls (quick group games)
+- `/bet create Question | Option 1 | Option 2 [24h|7d]`, `/bet <id> <opt> <amount>`
+- Winners split the whole pot proportionally (2% fee on net profit to the creator)
+- Inline cards, quick-amount buttons, two-tap resolution, cancel/refund paths
 
-### 🖥 Web-дашборд (публичная прозрачность)
-- `/api/stats` — объём (всего и за 30 дней), юзеры, открытые рынки, транзакции
-- `/api/volume_history` — график объёма по дням (на главной)
-- `/api/markets`, `/api/market/{id}` — рынки с пулами, вероятностями и **числом бэкеров**
-- `/api/leaderboard` — топ чаевых · `/api/user/{tg_id}` — профиль юзера (статы, позиции, история)
-- `/api/wallet` — адрес и баланс горячего кошелька
-- `/api/solvency` — **платёжеспособность**: обязательства бота (все балансы + незачтённые
-  депозиты) против on-chain резервов. Когда развёрнут `TipBotVault` — резервы читаются
-  напрямую из контракта (**Proof of Reserves**), иначе — с горячего кошелька.
-  Баланс должен покрывать всё, что бот должен.
-- `/api/health` — статус для мониторинга · `/qr?data=…` — локальная генерация QR
-- **x402**: `POST /api/x402/tip?recipient=<username|id>&amount=<usdc>` — AI-агенты
-  платят чаевые через HTTP: первый запрос → `402 Payment Required` + инвойс
-  (заголовки `x-402-*`, адрес и сумма); после on-chain платежа повторный запрос
-  с `x-402-payment: <tx_hash>` → 200 и чаевые на балансе получателя. Replay
-  того же tx → 409; сканер депозитов пропускает x402-транзакции (без двойного
-  учёта), вид `x402` в `/api/stats`
-- **x402 Paywall**: `POST /api/x402/paywall?item=<id>&amount=<usdc>` — агенты
-  платят за платный контент тем же рукопожатием и получают контент в теле 200.
-  В Telegram: `/paywall create 5 Заголовок` → контент одним сообщением →
-  `/paywall list` / `/paywall buy <id>`. Продавец получает USDC сразу на баланс
-- **Платные каналы**: админ включает продажу доступа в самом канале
-  (`/paywall channel 5` — 5 USDC/30 дней), подписчики покупают
-  (`/paywall subscribe @канал`) — бот выдаёт одноразовый invite-линк,
-  продлевает активные подписки, и watcher **кикает истёкших** (ban+unban,
-  уведомление в ЛС). Владельцу канала — уведомление о каждой продаже
-- `/api/stats` показывает **собранные комиссии** (1% вывод + 2% выигрыш) — наглядная
-  бизнес-модель: бот «зарабатывает» на реальном USDC-обороте
-- Публичные API rate-limited по IP (защита RPC-квоты от скрейперов), статика не ограничивается
-- `/u/{tg_id}` — публичная страница профиля/донатов с QR и историей (QR теперь локальный,
-  без внешних сервисов)
-- Интерфейс по **Base design system**: Base Black `#0A0B0D`, Primary Blue `#0052FF`,
-  Base White `#F0F0F0`, шрифт Inter, марка Base (круг + «b»), бадж «Built on Base»
-  и футер «Powered by Base» — ссылка на buildonbase.com
-- `/m/{id}` — страница отдельного рынка: winner-подсветка 🏆, countdown, число бэкеров,
-  кнопка «Поделиться» (копия ссылки)
-- Главная: карточки рынков с бэкерами и живым countdown, график объёма за 14 дней
-- Открывается: `python -m uvicorn web.server:app --host 0.0.0.0 --port 8000`
+### 🧠 AI assistant
+- `/ask <question>` — ask about crypto, Base, market strategy, bot usage
+- Works with **any OpenAI-compatible API** (OpenAI, OpenRouter, local vLLM/llama.cpp)
+  via `AI_API_URL` / `AI_API_KEY` / `AI_MODEL`
+- Reply to a message with `/ask` to use it as context; rate-limited, typing indicator
 
-## Запуск
+### 💛 Donations & wallets
+- `/donate` — personal donation page with QR (`t.me/<bot>?start=donate_<id>`)
+- Deposits auto-credit with push notifications (Basescan tx link included)
+- `/link <address>` + signature → automatic deposit crediting (ecrecover-verified;
+  a deposit can only be claimed by the wallet's owner — never by tx-hash sniping)
+- `/wallet` — built-in custodial wallet, export/import by seed phrase
+- `/withdraw <address> <amount>` — on-chain payout (1% fee, min 1 USDC, ≤5/day),
+  full auto-refund for stuck/reverted transactions
+- `/tx <hash>` — look up any Base transaction and decode its USDC transfer
 
-1. `pip install -r requirements.txt` (для тестов/EVM-контрактов: `requirements-dev.txt`)
-2. Создать бота у @BotFather
-3. RPC для Base: **Alchemy / Infura / QuickNode** (бесплатный тариф). Публичный `mainnet.base.org` нестабилен для логов — для боя нужен свой.
-4. `.env` из `.env.example`: `BOT_TOKEN`, `BASE_RPC_URL`, `HOT_WALLET_KEY`
-5. Закинуть на горячий кошелёк ~$5 ETH (газ для выводов)
-6. `python -m bot.main`
+### 🔐 Paid content & channels
+- `/paywall create 5 Title` → sell posts for USDC (buyers read instantly)
+- `/paywall channel 5` → paid Telegram channel access, 5 USDC / 30 days,
+  one-time invite links, expired subscribers auto-kicked
+- **x402 HTTP payments**: `POST /api/x402/tip` and `POST /api/x402/paywall` —
+  AI agents pay on-chain via the 402 handshake (invoice → pay → replay-proof credit)
+
+### 🖥 Web dashboard (public transparency)
+- Live stats, volume chart, markets with odds/backers, leaderboards, user profiles
+- **Proof of Reserves** `/api/solvency`: bot liabilities vs on-chain USDC
+  (read from the TipBotVault contract when deployed, else the hot wallet)
+- Base design system UI (Base Black `#0A0B0D`, Primary Blue `#0052FF`)
+- Public JSON API: `/api/stats`, `/api/markets`, `/api/predictions`,
+  `/api/prediction/{id}`, `/api/leaderboard`, `/api/health`, `/qr`, rate-limited per IP
+
+### ⛓ On-chain treasury (TipBotVault)
+- Users deposit USDC into the vault contract — visible to anyone on Base
+- Relayer distributes under a daily limit; owner (multisig) keeps full control
+- `Distributed` events make every payout publicly auditable
+- Deploy: `python scripts/deploy_vault.py` (compiles with solc 0.8.24, EIP-1559 fees)
+
+## Quick start
+
+```bash
+pip install -r requirements.txt          # + requirements-dev.txt for tests
+cp .env.example .env                     # fill BOT_TOKEN, BASE_RPC_URL, HOT_WALLET_KEY
+python -m bot.main                       # bot
+python -m uvicorn web.server:app --host 0.0.0.0 --port 8000   # dashboard
+```
+
+1. Create a bot with [@BotFather](https://t.me/BotFather)
+2. Get a Base RPC (Alchemy / Infura / QuickNode free tier — the public
+   `mainnet.base.org` is unstable for `eth_getLogs`)
+3. Fund the hot wallet with ~$5 ETH for withdrawal gas
+4. Optional: set `AI_API_KEY` to enable `/ask`
 
 ### Docker
 
 ```bash
-cp .env.example .env   # заполни секреты
-docker compose up -d --build   # postgres + бот + веб-дашборд + бэкапы
+docker compose up -d --build   # postgres + bot + dashboard + hourly backups
 ```
 
-Сервисы в `docker-compose.yml`: `db` (PostgreSQL 16, volume `pg_data`), `bot`,
-`web` (healthcheck на `/api/health`) и `backup` (pg_dump каждые 6ч, ротация 14
-дней, volume `backups_data`). Локально порт 5433, чтобы не конфликтовать с
-установленным локально PostgreSQL на 5432.
+Services: `db` (PostgreSQL 16), `bot`, `web` (healthcheck on `/api/health`),
+`backup` (pg_dump every 6h, 14-day rotation). Local port 5433 to avoid clashing
+with a system Postgres.
 
-### Деплой на Base mainnet (для заявки на грант)
+Full production walkthrough: **[DEPLOY.md](DEPLOY.md)**.
 
-Пошаговая инструкция от подготовки до работающего бота: **`DEPLOY.md`**.
+## Commands
 
-1. RPC: Alchemy/Infura/QuickNode (бесплатный тариф) — публичный `mainnet.base.org` нестабилен для `eth_getLogs`.
-2. `.env`: `BOT_TOKEN`, `BASE_RPC_URL`, `HOT_WALLET_KEY`, `BOT_USERNAME` (нужен для ссылок `t.me/...` на дашборде).
-3. Закинуть на горячий кошелёк немного ETH (газ) и стартовый пул USDC для ликвидности.
-4. `docker compose up -d --build`
-5. Прогон end-to-end: депозит → авто-зачисление → `/tip` → `/withdraw` (вернуть тестовые средства на свой кошелёк).
-6. Убедиться, что `/api/solvency` публично отвечает и обязательства покрыты балансом.
-
-## Заявка на грант (Base Builder Grant)
-
-Грантовая программа Base: **1–5 ETH** на ранние прототипы. Форма номинаций
-(Google, домен Coinbase) позволяет самономинацию. Пакет заявки — все поля
-формы, 150-словный ответ, сценарий демо и чек-лист — в **[GRANT.md](GRANT.md)**.
-
-## On-chain казначейство (TipBotVault)
-
-Смарт-контракт `contracts/TipBotVault.sol` — публичная казна бота:
-
-- Пользователи отправляют USDC **на адрес контракта** (не на EOA) — депозит
-  сразу виден любому на Base
-- Бот-релайер (горячий кошелёк) раздаёт выплаты через `batchDistribute` под
-  **дневным лимитом** (`setDailyLimit`, owner)
-- Владелец (мультисиг) — полный контроль: смена relayer/лимита, вывод излишка,
-  передача владения
-- `totalReserves()` читается любым без газа — это и есть **Proof of Reserves**:
-  дашборд сверяет баланс контракта с обязательствами бота автоматически
-- Развёртывание: `python scripts/deploy_vault.py` (компиляция + деплой + `.env`)
-- Контракт без зависимостей (интерфейс IERC20, CEI, nonReentrant), 12 тестов
-  на реальной локальной EVM (`tests/test_vault.py`, компилируется solc 0.8.24)
-- Событие `Distributed` — каждая выплата публично аудируема
-
-## Команды
-
-| Команда | Что делает |
+| Command | What it does |
 |---|---|
-| `/start` | Меню со всеми разделами |
-| `/tip 5 @nick` | Чаевые (или ответом) |
-| `/donate` | Твоя донат-страница + QR |
-| `/bet create <вопрос> \| <в1> \| <в2> [24h\|7d]` | Создать рынок (+дедлайн) |
-| `/bets` | Открытые рынки |
-| `/bet <id> <номер> <сумма>` | Поставить |
-| `/resolve <id> <номер>` | Закрыть (создатель) |
-| `/cancel <id>` | Отменить (создатель) |
-| `/deposit` / `/claim <tx>` | Пополнение (QR-фото; claim — только для привязанного кошелька) |
-| `/link <адрес>` / `/confirm <sig>` | Привязка кошелька (авто-зачисление) |
-| `/withdraw <адрес> <сумма>` | Вывод (комиссия 1%, мин. 1 USDC, ≤5/сутки) |
-| `/rain 10 [N]` | Дождь в группах: раздать USDC активным участникам |
-| `/settings` | Реакции-чаевые и уведомления о депозитах вкл/выкл |
-| `/broadcast <текст>` | Рассылка всем пользователям (только владелец) |
-| `/balance` / `/stats` / `/top` / `/history [n]` | Кошелёк и аналитика |
+| `/start` | Menu with all sections |
+| `/tip 5 @nick` | Instant USDC tip (or reply to a message) |
+| `/market create 50 Q \| A \| B [24h]` | Create an AMM prediction market |
+| `/markets` · `/trade` · `/sell` · `/positions` | Trade shares at live odds |
+| `/bet create Q \| A \| B [24h]` · `/bets` · `/resolve` · `/cancel` | Parimutuel polls |
+| `/ask <question>` | AI assistant |
+| `/deposit` / `/claim <tx>` / `/link` / `/confirm` | Fund your account |
+| `/withdraw <addr> <amt>` | On-chain withdrawal (1% fee) |
+| `/tx <hash>` | Decode a Base transaction |
+| `/rain 10 [N]` | Group giveaway |
+| `/paywall ...` | Paid posts and channels |
+| `/balance` / `/stats` / `/top` / `/history` | Analytics |
 
-## Структура
+## Architecture
 
 ```
-tipbot/
-├─ bot/
-│  ├─ main.py       — точка входа, фоновый сканер депозитов
-│  ├─ handlers.py   — все команды, меню, QR, уведомления, inline-ставки
-│  ├─ ledger.py     — бухгалтерия: балансы, привязки, рынки, история, solvency
-│  ├─ base.py       — web3: USDC, депозиты, вывод, подписи
-│  ├─ qr.py         — локальная генерация QR (без внешних сервисов)
-│  └─ config.py     — конфиг
-├─ web/
-│  ├─ server.py     — FastAPI: /api/*, /qr, публичные страницы
-│  └─ static/       — index.html, user.html, market.html, style.css, app.js
-├─ tests/           — pytest: консервация, комиссии, безопасность, инлайн-флоу, веб-API
-├─ GRANT.md         — питч для Base Builder Grant
-├─ Dockerfile · docker-compose.yml — postgres + бот + дашборд в контейнерах
-├─ .env.example
-├─ requirements.txt — прод-зависимости (бот, веб, web3, psycopg)
-├─ requirements-dev.txt — тесты, EVM-контракты (solc), ruff/coverage
+bot/
+├─ main.py        entrypoint, background watchers (deposits, withdrawals, deadlines)
+├─ handlers/      aiogram handlers by domain (_common, menu, wallet, tips, bets, markets, stats, paywall, ai)
+├─ ledger.py      PostgreSQL accounting + LMSR AMM engine (Decimal-exact)
+├─ base.py        web3 layer: USDC transfers, deposit scanning, tx decoding
+├─ ai.py          OpenAI-compatible client (stdlib urllib, no new deps)
+├─ qr.py          local QR generation
+└─ config.py      env-driven configuration
+web/
+├─ server.py      FastAPI: public API, proof-of-reserves, x402 endpoints
+└─ static/        Base-design dashboard
+contracts/TipBotVault.sol    on-chain treasury (proof of reserves)
+tests/           419 tests: real Postgres, real dispatcher, real crypto, local EVM
 ```
 
-## Тесты
+## Testing
 
 ```bash
-docker compose up -d db   # PostgreSQL для тестов (локально порт 5433)
-python -m pytest tests -q
+docker compose up -d db       # PostgreSQL for tests (port 5433)
+python -m pytest tests -q     # 419 passed
 ```
 
-**380 тестов, покрытие ~94% строк.** Главное — что проверяется *по-настоящему*,
-а не замокано. Пограничный принцип: мокается только внешняя сеть
-(Telegram transport, web3 RPC), вся логика выполняется реально.
+What is tested *for real* (not mocked): money conservation across every flow
+(tips, fees, refunds, parimutuel payouts, rain, **AMM buy/sell/resolve/cancel**
+— balances + escrows always sum to deposits), deposit-security (claiming
+someone else's tx is rejected), fee math, real signature recovery, the full
+aiogram dispatcher with real Update objects, USDC ABI decoding, the FastAPI
+dashboard against a real ledger, background watchers, 14 end-to-end scenarios,
+and 12 TipBotVault tests on a local EVM (eth-tester + py-evm). Only external
+networks are mocked (Telegram transport, RPC).
 
-Что проверяется реально:
+The LMSR engine additionally has a property test proving the funding theorem:
+along randomized aggressive trading paths the escrow never drops below the
+worst-case payout.
 
-- **Консервация средств** — главный инвариант: комиссии, рефанды, parimutuel-выплаты,
-  **дождь** ничего не создают и не теряют (полные балансы сходятся). PostgreSQL, без моков.
-- **Безопасность депозитов** — попытка `/claim` чужого депозита отклоняется
-  (tx-хэш публичен в сети); TTL nonce привязки кошелька истёкшего отклоняется.
-- **Математика комиссий** — `withdraw_fee` (потолок 1%, минимум 1 микро-юнит).
-- **Реальная криптография** — подпись/восстановление адреса (eth_account),
-  неправильная и кривая подписи отклоняются.
-- **Диспетчер целиком** — реальный `Dispatcher` + роутер + фильтры aiogram
-  (`Command`, `CallbackQuery`, `MessageReaction`), реальные объекты `Update`;
-  замокан только транспорт Telegram (`RecorderSession`). Проверяются: `/start`,
-  `/balance`, `/tip`, меню-кнопки (editMessageText), `/bets` (клавиатура),
-  реакции-чаевые, donate-страница с QR.
-- **ABI-декодирование USDC Transfer** — реальный web3-контракт (`process_log`),
-  замокан только `get_logs` (RPC).
-- **Веб-дашборд** — реальный FastAPI TestClient + реальный ledger: статы, рынки,
-  профили, платёжеспособность `/api/solvency`, healthcheck, локальный `/qr`.
-- **Хендлеры** — все ветки команд/коллбэков на фейковых объектах Message/Bot
-  (логика реальная, сеть фейковая). Deep-link `?start=bet_<id>` открывает
-  карточку рынка с кнопками ставок.
-- **Фоновые watcher-ы** — депозит-сканер (credited-список для push-уведомлений),
-  напоминание создателю рынка после дедлайна (разовое, `deadline_notified`),
-  платёжеспособность `/api/health` отдаёт `chain_head` / `last_scanned_block` /
-  `deposit_lag` (при падении RPC — `null`, без 500).
-- **E2E-сценарии** (`tests/test_e2e.py`, 14 сценариев) — полные пользовательские
-  пути на реальных хендлерах + watcher-ах + дашборде с точными суммами:
-  депозит→DM→тип→вывод (включая refund-пути: send fail / stuck / reverted /
-  done / pending / legacy NULL), жизненный цикл рынка (ставки→дедлайн-пинг→
-  **grace-предупреждение→**parimutuel-выплаты→cancel→grace-рефанд), реакции-чаевые,
-  deep-links, безопасность кошелька (чужая подпись, TTL nonce, auto-claim при
-  привязке), тихий депозит при выключенных уведомлениях, дашборд на реальных
-  данных, лимиты, rate-limit 429, конкурентность
-  (threads: перевод+ставка), все 3 watcher-а вместе с фейковым RPC.
-- **Новые фичи под тестами** — `/rain` (раздача в группах: точный сплит,
-  остаток остаётся отправителю, лимиты, только группы), `/settings`
-  (реакции-чаевые и уведомления о депозитах вкл/выкл), `/broadcast` (только
-  владелец), QR-фото в `/deposit`, **inline-резолюция рынка в 2 тапа** (кнопка
-  «🏁 Закрыть рынок» на карточке создателя), компактный `/bets` (строка на
-  рынок + кнопки), DM о результатах рынка с суммами
-  (`payouts_for` = та же математика, что у `resolve_bet`), backers/объём
-  в дашборде (`/api/volume_history`, `volume_30d` в `/api/stats`).
-- Реальные тесты на локальной EVM (eth-tester + py-evm): 12 тестов TipBotVault,
-  Solidity-контракты компилируются настоящим solc 0.8.24
-- **x402 для AI-агентов**: `POST /api/x402/tip` — рукопожатие (402 + `x-402-*`
-  инвойс) → оплата USDC на Base → повторный запрос с `x-402-payment: <tx_hash>` →
-  зачисление; replay → 409, сканер депозитов пропускает x402-платежи
-- **x402 Paywall — платный контент**: `/paywall create 5 Заголовок` → контент →
-  `/paywall buy <id>` (с баланса) или `POST /api/x402/paywall` (агент платит
-  on-chain и получает контент в 200). Продавец получает USDC сразу; повторная
-  покупка показывает контент бесплатно; атомарность и replay-proof в ledger
-- **Платные каналы**: `/paywall channel 5` в канале (бот — админ) → доступ
-  за 5 USDC/30 дней; `/paywall subscribe @канал` — покупка/продление
-  (invite-линк или продление срока), watcher кикает истёкших подписчиков
-- **Webhook-режим**: `WEBHOOK_URL=https://домен` — Telegram шлёт апдейты на
-  `POST /telegram-webhook` (секрет через `X-Telegram-Bot-Api-Secret-Token`,
-  авто-вывод из `BOT_TOKEN` при пустом `WEBHOOK_SECRET`), FastAPI и watchers
-  работают из одного процесса
-- **CI** — `.github/workflows/ci.yml`: ruff + pytest + coverage на push/PR.
+## Security
 
-Что остаётся за автоматическими тестами (нужна сеть) — см. «Проверено»:
+- `HOT_WALLET_KEY` is money — never commit `.env`
+- Recommended treasury setup: hot wallet = relayer only (daily-limit capped by
+  TipBotVault), owner = multisig
+- Official USDC only: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+- Prediction markets rely on the creator resolving honestly; deadline + grace
+  auto-refund bounds the damage of abandoned markets
+- Anti-spam cooldowns, per-day withdrawal limits, gas-griefing protection
 
-- реальный RPC Base mainnet (публичный `mainnet.base.org` нестабилен для
-  `eth_getLogs`; для прода — Alchemy/Infura/QuickNode),
-- поднятый uvicorn и реальный polling бота.
+## Roadmap
 
-Не покрыты (намеренно): чисто защитные `except`-ветки, в которые реальный поток
-попасть не может (гонки, отсутствие ставки в БД) — и `sys.path` guard / `__main__`
-в `web/server.py`.
+- Per-user deposit addresses (CREATE2 vaults)
+- Withdrawal batching for gas savings
+- Order-book style CLOB on top of the AMM
+- On-chain market escrow (trustless resolution via UMA-style oracle)
 
-```bash
-python -m coverage run -m pytest tests -q
-python -m coverage report --skip-covered -m
-```
+## Grant
 
-## Проверено
+Prepared for the [Base Builder Grants](https://www.base.io/ecosystem/grants)
+program — pitch and application package in **[GRANT.md](GRANT.md)**.
 
-- Base mainnet (8453): RPC, баланс USDC, сканер Transfer-логов
-- Привязка кошелька реальной подписью → ecrecover → автозачисление
-- Parimutuel-выплаты: 3 ставки, 2 стороны — точная математика, **консервация средств** (0 потерь/создания)
-- **TipBotVault** (контракт): депозиты в контракт, relayer-выплаты под дневным лимитом,
-  owner-контроль, Proof of Reserves — 12 тестов на реальной локальной EVM
-- Отмена рынка → возврат всем · защита от повторного /claim и перерасхода
-- Вывод: полный рефанд с комиссией при ошибке
-- Все команды пройдены end-to-end (реальный диспетчер aiogram + 380 автотестов)
-- Сканер депозитов: холодный старт с lookback ~2000 блоков (депозиты во время простоя не теряются) + перескан последних 10 блоков против реорга
-- Жизненный цикл вывода: pending → done/refunded; авто-возврат зависших/reverted транзакций и краш-остатков
+---
 
-## Дорожная карта
+**Author:** [@ssrjkk](https://t.me/ssrjkk) · [@b2wmain](https://t.me/b2wmain) · [X / Twitter](https://x.com/ludych1) · [GitHub](https://github.com/ssrjkk)
 
-- Отдельный депозитный адрес на юзера (CREATE2 vault)
-- Batching выводов для экономии газа
-- Реакции-чаевые в группах
-- Escrow-рынки с перепродажей позиций
-
-## ⚠️ Безопасность
-
-- `HOT_WALLET_KEY` — это деньги. Не коммить `.env`, не свети ключ.
-- **Рекомендуемая схема казначейства**: горячий кошелёк = только relayer контракта
-  `TipBotVault` (дневной лимит выплат), владелец = мультисиг. Ключ релайера сам
-  по себе не может вывести больше лимита в сутки.
-- Не держи большие суммы на боте на старте.
-- Только официальный контракт USDC (0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913).
-- Рынки офф-чейн: полагаются на честность создателя рынка (он решает исход);
-  grace-таймаут с авто-рефандом ограничивает ущерб.
+Built on [Base](https://base.org) · Powered by USDC

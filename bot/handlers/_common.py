@@ -70,18 +70,27 @@ HELP = (
     "• /tip 5 (ответом на сообщение) — кинуть автору\n"
     "• 🔥/❤️/⚡/👏/🎉 на сообщение — реакция-чаевые (в группах)\n"
     "• /rain 10 — разбросать 10 USDC случайным участникам группы 🌧️\n\n"
-    "🎲 <b>Ставки</b>\n"
+    "📈 <b>Рынки предсказаний (AMM)</b>\n"
+    "• /market create &lt;банк&gt; &lt;вопрос&gt; | &lt;в1&gt; | &lt;в2&gt; [24h] — создать рынок с живыми котировками\n"
+    "• /markets — открытые рынки (кнопки)\n"
+    "• /trade &lt;id&gt; &lt;номер&gt; &lt;сумма&gt; — купить доли по живой цене\n"
+    "• /sell &lt;id&gt; &lt;номер&gt; [50%] — продать доли в любой момент\n"
+    "• /positions — твои позиции и PnL\n\n"
+    "🎲 <b>Ставки (пулы)</b>\n"
     "• /bet create &lt;вопрос&gt; | &lt;в1&gt; | &lt;в2&gt; [24h] — создать\n"
     "• /bets — открытые ставки (кнопки)\n"
     "• /bet &lt;id&gt; &lt;номер&gt; &lt;сумма&gt; — поставить\n"
     "• /mybets — твои позиции\n"
-    "• /resolve &lt;id&gt; &lt;номер&gt; — закрыть (создатель; на карточке рынка есть кнопка 🏁)\n"
+    "• /resolve &lt;id&gt; &lt;номер&gt; — закрыть (создатель)\n"
     "• /cancel &lt;id&gt; — отменить / вернуть деньги после истечения\n\n"
+    "🧠 <b>ИИ-ассистент</b>\n"
+    "• /ask &lt;вопрос&gt; — спросить ИИ о чём угодно (можно ответом на сообщение)\n\n"
     "💰 <b>Кошелёк</b>\n"
     "• /donate — твоя страница донатов с QR\n"
     "• /deposit — QR + адрес для пополнения\n"
     "• /link &lt;адрес&gt; — привязать кошелёк (авто-зачисление)\n"
-    "• /withdraw &lt;адрес&gt; &lt;сумма&gt; — вывод (комиссия 1%, мин. 1 USDC)\n\n"
+    "• /withdraw &lt;адрес&gt; &lt;сумма&gt; — вывод (комиссия 1%, мин. 1 USDC)\n"
+    "• /tx &lt;hash&gt; — проверить транзакцию в Base\n\n"
     "📊 <b>Ещё</b>\n"
     "• /menu — меню · /balance · /stats · /top · /history\n"
     "• /settings — уведомления и реакции ⚙️\n\n"
@@ -107,6 +116,12 @@ KIND_EMOJI = {
     "paywall_earn": "💰",
     "channel_pay": "🔑",
     "channel_earn": "💰",
+    "market_create": "🏦",
+    "market_buy": "📈",
+    "market_sell": "📉",
+    "market_win": "🏆",
+    "market_cancel": "↩️",
+    "market_refund": "↩️",
 }
 
 _bot_username: str | None = None
@@ -169,15 +184,18 @@ def _menu_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="💳 Пополнить", callback_data="dep"),
             ],
             [
+                InlineKeyboardButton(text="📈 Рынки", callback_data="markets_amm"),
                 InlineKeyboardButton(text="🎲 Ставки", callback_data="bets"),
+            ],
+            [
                 InlineKeyboardButton(text="💛 Донаты", callback_data="donate"),
-            ],
-            [
                 InlineKeyboardButton(text="🏆 Топ", callback_data="top"),
-                InlineKeyboardButton(text="🧾 История", callback_data="hist"),
             ],
             [
+                InlineKeyboardButton(text="🧾 История", callback_data="hist"),
                 InlineKeyboardButton(text="📊 Статы", callback_data="stats"),
+            ],
+            [
                 InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings"),
             ],
         ]

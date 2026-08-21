@@ -343,9 +343,40 @@ async def cmd_withdraw(message: types.Message) -> None:
         await message.answer(
             f"✅ Отправлено <b>{common._fmt(amount_micro)} USDC</b> "
             f"(комиссия {common._fmt(fee_micro)})\n"
-            f"Tx: <code>https://basescan.org/tx/{tx_hash}</code>"
+            f"Tx: <a href=\"{common.config.BASESCAN_URL}/tx/{tx_hash}\"><code>{tx_hash[:22]}…</code></a>"
         )
     except Exception as e:
         # Full refund (incl. fee) on failure — never charge for a failed send.
         common.ledger.refund_withdraw(wd_id, message.from_user.id, total_micro)
         await message.answer(f"❌ Ошибка отправки: {e}")
+
+
+@common.router.message(Command("tx"))
+async def cmd_tx(message: types.Message) -> None:
+    """Look up any Base transaction and decode a USDC transfer from it."""
+    parts = message.text.strip().split()
+    if len(parts) != 2 or not common.TX_HASH_RE.match(parts[1]):
+        await message.answer("Формат: /tx <i>&lt;0x:tx_hash&gt;</i>")
+        return
+    info = common.base.tx_info(parts[1])
+    if not info:
+        await message.answer("Транзакция не найдена (ещё не mined или неверный хэш).")
+    else:
+        lines = [
+            "⛓️ <b>Транзакция на Base</b>",
+            f"От: <code>{info['from']}</code>",
+            f"Кому: <code>{info['to'] or 'создание контракта'}</code>",
+        ]
+        if info["status"] is None:
+            lines.append("Статус: ⏳ ещё не mined")
+        else:
+            lines.append("Статус: ✅ подтверждена" if info["status"] else "Статус: ❌ reverted")
+        if info["value_micro"] is not None:
+            lines.append(
+                f"🪙 USDC перевод: <b>{common._fmt(info['value_micro'])} USDC</b> → "
+                f"<code>{info['usdc_to']}</code>"
+            )
+        lines.append(
+            f"🔍 <a href=\"{common.config.BASESCAN_URL}/tx/{info['hash']}\">Basescan</a>"
+        )
+        await message.answer("\n".join(lines))

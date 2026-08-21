@@ -136,6 +136,29 @@ def api_market(bet_id: int) -> dict:
     return view
 
 
+@app.get("/api/predictions")
+def api_predictions(status: str = "open") -> list[dict]:
+    """LMSR AMM prediction markets with live odds (Polymarket-style)."""
+    out = []
+    for m in ledger.open_markets(20) if status == "open" else []:
+        view = ledger.amm_market_view(int(m["id"]))
+        if view:
+            view["liquidity_usdc"] = _usdc(view["liquidity_micro"])
+            for o in view["options"]:
+                o.pop("shares", None)
+            out.append(view)
+    return out
+
+
+@app.get("/api/prediction/{market_id}")
+def api_prediction(market_id: int) -> dict:
+    view = ledger.amm_market_view(market_id)
+    if not view:
+        raise HTTPException(status_code=404, detail="Prediction market not found")
+    view["liquidity_usdc"] = _usdc(view["liquidity_micro"])
+    return view
+
+
 @app.get("/api/leaderboard")
 def api_leaderboard() -> list[dict]:
     return [

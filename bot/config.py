@@ -69,6 +69,26 @@ WITHDRAW_STUCK_TIMEOUT_SECONDS: int = int(os.environ.get("WITHDRAW_STUCK_TIMEOUT
 MARKET_GRACE_HOURS: int = int(os.environ.get("MARKET_GRACE_HOURS", "72"))
 GRACE_WARN_BEFORE_HOURS: int = int(os.environ.get("GRACE_WARN_BEFORE_HOURS", "12"))
 
+# Prediction markets v2 (Polymarket-style LMSR AMM, see bot/ledger.py).
+# The creator deposits a subsidy; b = subsidy / ln(n_options) guarantees the
+# AMM can always cover the worst-case payout (b*ln(n) funding theorem).
+MARKET_MIN_SUBSIDY_USDC: Decimal = Decimal(os.environ.get("MARKET_MIN_SUBSIDY_USDC", "10"))
+MARKET_MAX_SUBSIDY_USDC: Decimal = Decimal(os.environ.get("MARKET_MAX_SUBSIDY_USDC", "1000"))
+MARKET_MAX_TRADE_USDC: Decimal = Decimal(os.environ.get("MARKET_MAX_TRADE_USDC", "500"))
+
+# AI assistant (/ask): any OpenAI-compatible chat-completions endpoint works
+# (OpenAI, OpenRouter, local llama/vLLM server, ...). Empty key disables /ask.
+AI_API_URL: str = os.environ.get("AI_API_URL", "https://api.openai.com/v1").rstrip("/")
+AI_API_KEY: str | None = os.environ.get("AI_API_KEY", "").strip() or None
+AI_MODEL: str = os.environ.get("AI_MODEL", "gpt-4o-mini")
+AI_TIMEOUT_SECONDS: int = int(os.environ.get("AI_TIMEOUT_SECONDS", "45"))
+AI_COOLDOWN_SECONDS: int = int(os.environ.get("AI_COOLDOWN_SECONDS", "15"))
+AI_MAX_QUESTION_LEN: int = int(os.environ.get("AI_MAX_QUESTION_LEN", "1000"))
+AI_MAX_ANSWER_CHARS: int = int(os.environ.get("AI_MAX_ANSWER_CHARS", "3500"))
+
+# Block explorer for tx links (Base mainnet)
+BASESCAN_URL: str = os.environ.get("BASESCAN_URL", "https://basescan.org").rstrip("/")
+
 # Reaction tips (emoji -> USDC amount). Requires bot admin in the group and
 # privacy mode off (BotFather -> /setprivacy -> Disable) to index messages.
 REACTION_TIPS: dict[str, Decimal] = {

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 
 from . import base, config
@@ -32,7 +32,7 @@ async def deposit_watcher() -> None:
                 await bot.send_message(
                     d["tg_id"],
                     f"✅ Депозит зачислен: <b>{d['amount_micro'] / 10**config.USDC_DECIMALS:g} USDC</b>\n"
-                    f"Tx: <code>{d['tx_hash'][:18]}…</code>\nБаланс: /balance",
+                    f"Tx: <a href=\"{config.BASESCAN_URL}/tx/{d['tx_hash']}\"><code>{d['tx_hash'][:18]}…</code></a>\nБаланс: /balance",
                 )
             except Exception as e:
                 log.warning("deposit notify failed for %s: %s", d["tg_id"], e)
@@ -50,10 +50,10 @@ async def withdraw_watcher() -> None:
 
 async def market_watcher() -> None:
     """Once per cycle: remind market creators to resolve markets whose deadline
-    passed. Without resolution the backers' money sits locked until the grace
-    refund, so one nudge prevents 'forgotten markets'. A second, final nudge
-    goes out shortly before the grace period ends (after that anyone can
-    refund the market and the creator loses the 2% fee)."""
+    passed (both parimutuel bets and LMSR AMM markets). Without resolution the
+    traders' money sits locked until the grace refund, so one nudge prevents
+    'forgotten markets'. A second, final nudge goes out shortly before the
+    grace period ends (after that anyone can refund)."""
     while True:
         try:
             for bet in ledger.open_bets_past_deadline():
@@ -79,6 +79,29 @@ async def market_watcher() -> None:
                 except Exception as e:
                     log.warning("grace warn failed for #%s: %s", bet["id"], e)
                 ledger.mark_grace_warned(int(bet["id"]))
+            # LMSR AMM markets: same deadline/grace protection.
+            for m in ledger.open_markets_past_deadline():
+                try:
+                    await bot.send_message(
+                        m["creator"],
+                        f"⏰ Рынок #{m['id']} — «{m['question']}» достиг дедлайна.\n"
+                        f"Закрой его кнопкой 🏁 на карточке (/markets) — остаток пула вернётся тебе.",
+                    )
+                except Exception as e:
+                    log.warning("market deadline notify failed for #%s: %s", m["id"], e)
+                ledger.mark_market_deadline_notified(int(m["id"]))
+            for m in ledger.markets_need_grace_warning(config.GRACE_WARN_BEFORE_HOURS * 3600):
+                hours_left = max(1, round((m["close_at"] + config.MARKET_GRACE_HOURS * 3600 - time.time()) / 3600))
+                try:
+                    await bot.send_message(
+                        m["creator"],
+                        f"⚠️ Рынок #{m['id']} — «{m['question']}» не закрыт!\n"
+                        f"До автовозврата ликвидности осталось ~{hours_left} ч.\n"
+                        f"Закрой сейчас и забери остаток пула: /markets.",
+                    )
+                except Exception as e:
+                    log.warning("market grace warn failed for #%s: %s", m["id"], e)
+                ledger.mark_market_grace_warned(int(m["id"]))
         except Exception as e:
             log.warning("market deadline check failed: %s", e)
         await asyncio.sleep(config.POLL_SECONDS * 4)
@@ -133,6 +156,26 @@ async def main() -> None:
     # consume `handlers.router` (it would break other dispatchers in tests).
     dp = Dispatcher()
     dp.include_router(router)
+    # Publish the command menu (Telegram client autocomplete). Non-fatal:
+    # a transient Telegram hiccup must not keep the bot offline.
+    try:
+        from .handlers import AI_BOT_COMMAND
+
+        await bot.set_my_commands(
+            [
+                AI_BOT_COMMAND,
+                types.BotCommand(command="tip", description="Чаевые USDC"),
+                types.BotCommand(command="markets", description="Рынки предсказаний"),
+                types.BotCommand(command="bets", description="Ставки-пулы"),
+                types.BotCommand(command="deposit", description="Пополнить"),
+                types.BotCommand(command="withdraw", description="Вывести"),
+                types.BotCommand(command="balance", description="Баланс"),
+                types.BotCommand(command="ask", description="Спросить ИИ"),
+                types.BotCommand(command="menu", description="Меню"),
+            ]
+        )
+    except Exception as e:
+        log.warning("set_my_commands failed: %s", e)
     # Keep strong references so the watcher tasks are never garbage-collected
     # (a lost asyncio.Task can be cancelled silently, stopping deposits/refunds).
     tasks = [

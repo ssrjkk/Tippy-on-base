@@ -9,7 +9,7 @@ import secrets
 import threading
 import time
 from datetime import UTC, datetime
-from decimal import ROUND_CEILING, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 
 import psycopg
 from psycopg.rows import dict_row
@@ -17,6 +17,88 @@ from psycopg.rows import dict_row
 from . import config
 
 MICRO = 10**config.USDC_DECIMALS
+
+
+# ---------- LMSR AMM math (prediction markets v2) ----------
+#
+# The Logarithmic Market Scoring Rule (Hanson 2003) prices outcome shares:
+#   cost(q)   = b * ln(sum(exp(q_i / b)))
+#   price_i   = exp(q_i / b) / sum(exp(q_j / b))
+# Buying d shares of i costs cost(q + d*e_i) - cost(q).
+#
+# Funding theorem: with initial subsidy S = b*ln(n), the maker's worst-case
+# loss is bounded — escrow after any trading path is always >= max_i(q_i),
+# the payout if outcome i wins. So resolution can always pay winning shares
+# at 1 USDC each and the creator keeps the leftover. Rounding is house-
+# favorable on every trade (buy cost ceil, sell proceeds floor), so the
+# escrow only grows relative to the ideal curve — conservation is exact.
+
+_LMSR_PREC = 40
+
+
+def _d(x) -> Decimal:
+    return Decimal(x) if not isinstance(x, Decimal) else x
+
+
+def lmsr_cost(q_micro: list[int], b_micro: int) -> Decimal:
+    """LMSR cost function in micro-USDC for integer micro-share quantities."""
+    with localcontext() as ctx:
+        ctx.prec = _LMSR_PREC
+        b = _d(b_micro)
+        m = max(q_micro)  # shift by max for numerical stability of exp
+        s = sum(((_d(q) - m) / b).exp() for q in q_micro)
+        return b * ((s).ln() + _d(m) / b)
+
+
+def lmsr_prices(q_micro: list[int], b_micro: int) -> list[Decimal]:
+    """Current probability per option (0..1)."""
+    with localcontext() as ctx:
+        ctx.prec = _LMSR_PREC
+        b = _d(b_micro)
+        m = max(q_micro)
+        exps = [((_d(q) - m) / b).exp() for q in q_micro]
+        total = sum(exps)
+        return [e / total for e in exps]
+
+
+def lmsr_buy_shares(q_micro: list[int], b_micro: int, option_idx: int, spend_micro: int) -> int:
+    """Max whole micro-shares of `option_idx` buyable for exactly `spend_micro`.
+
+    Binary search on the monotone cost curve; result floored so the user never
+    pays more than `spend_micro` (the difference stays in the escrow).
+    """
+    with localcontext() as ctx:
+        ctx.prec = _LMSR_PREC
+        base_cost = lmsr_cost(q_micro, b_micro)
+
+        def cost_after(delta: int) -> Decimal:
+            q2 = list(q_micro)
+            q2[option_idx] += delta
+            return lmsr_cost(q2, b_micro)
+
+        lo, hi = 0, 1
+        while cost_after(hi) - base_cost <= _d(spend_micro):
+            lo = hi
+            hi *= 2
+            if hi > 10**18:
+                break
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if cost_after(mid) - base_cost <= _d(spend_micro):
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo
+
+
+def lmsr_sell_value(q_micro: list[int], b_micro: int, option_idx: int, shares: int) -> int:
+    """Micro-USDC received for selling `shares` back to the AMM (floored)."""
+    with localcontext() as ctx:
+        ctx.prec = _LMSR_PREC
+        q2 = list(q_micro)
+        q2[option_idx] -= shares
+        val = lmsr_cost(q_micro, b_micro) - lmsr_cost(q2, b_micro)
+        return int(val.to_integral_value(rounding=ROUND_FLOOR))
 
 
 class ReconnectingConn:
@@ -239,6 +321,30 @@ class Ledger:
                 );
                 CREATE INDEX IF NOT EXISTS idx_paywall_subscriptions_expires
                     ON paywall_subscriptions (expires_at);
+                CREATE TABLE IF NOT EXISTS markets (
+                    id            BIGSERIAL PRIMARY KEY,
+                    creator       BIGINT NOT NULL,
+                    question      TEXT NOT NULL,
+                    options       TEXT NOT NULL,            -- JSON array
+                    status        TEXT NOT NULL DEFAULT 'open', -- open | resolved | cancelled
+                    winner        BIGINT,
+                    close_at      BIGINT,
+                    subsidy_micro BIGINT NOT NULL,          -- creator deposit (AMM funding)
+                    b_micro       BIGINT NOT NULL,          -- LMSR liquidity param (micro-USDC)
+                    escrow_micro  BIGINT NOT NULL DEFAULT 0,-- AMM cash held (subsidy + buys - sells)
+                    deadline_notified BIGINT NOT NULL DEFAULT 0,
+                    grace_warned  BIGINT NOT NULL DEFAULT 0,
+                    created_at    BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+                );
+                CREATE TABLE IF NOT EXISTS market_shares (
+                    market_id  BIGINT NOT NULL,
+                    tg_id      BIGINT NOT NULL,
+                    option_idx BIGINT NOT NULL,
+                    shares     BIGINT NOT NULL DEFAULT 0,     -- micro-shares (1e6 shares = 1 USDC payout)
+                    cost_micro BIGINT NOT NULL DEFAULT 0,     -- net paid; negative = realized profit
+                    PRIMARY KEY (market_id, tg_id, option_idx)
+                );
+                CREATE INDEX IF NOT EXISTS idx_market_shares_user ON market_shares (tg_id);
                 """
             )
             self._conn.execute("ALTER TABLE bets ADD COLUMN IF NOT EXISTS close_at BIGINT")
@@ -1112,6 +1218,415 @@ class Ledger:
             if refunded_by_creator:
                 return True, "Ставка отменена, деньги возвращены."
             return True, "Рынок истёк — деньги возвращены всем участникам."
+
+    # ---------- prediction markets v2 (LMSR AMM) ----------
+
+    def create_market(
+        self,
+        creator_tg_id: int,
+        question: str,
+        options: list[str],
+        subsidy_micro: int,
+        close_at: int | None = None,
+    ) -> int | str:
+        """Creator funds the AMM with `subsidy_micro`; b = subsidy / ln(n).
+
+        Returns the market id, or 'balance' if the creator can't fund it.
+        """
+        n = len(options)
+        with localcontext() as ctx:
+            ctx.prec = _LMSR_PREC
+            b = int((_d(subsidy_micro) / _d(n).ln()).to_integral_value(rounding=ROUND_FLOOR))
+        if b <= 0:
+            return "subsidy"
+        with self._lock:
+            self.ensure_user(creator_tg_id, None)
+            if not self.debit(creator_tg_id, subsidy_micro):
+                return "balance"
+            cur = self._conn.execute(
+                "INSERT INTO markets (creator, question, options, close_at, subsidy_micro, b_micro, escrow_micro) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (creator_tg_id, question, json.dumps(options), close_at,
+                 subsidy_micro, b, subsidy_micro),
+            )
+            market_id = int(cur.fetchone()["id"])
+            self._conn.execute(
+                "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                "VALUES ('market_create', %s, %s, %s, %s)",
+                (creator_tg_id, str(market_id), subsidy_micro, question),
+            )
+            self._conn.commit()
+            return market_id
+
+    def get_market(self, market_id: int) -> dict | None:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM markets WHERE id = %s", (market_id,)
+            ).fetchone()
+
+    def open_markets(self, limit: int = 20) -> list[dict]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM markets WHERE status = 'open' ORDER BY id DESC LIMIT %s",
+                (limit,),
+            ).fetchall()
+
+    def open_markets_past_deadline(self) -> list[dict]:
+        """Open AMM markets whose deadline passed and whose creator wasn't yet
+        asked to resolve (same protection as parimutuel bets)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT id, creator, question FROM markets "
+                "WHERE status = 'open' AND close_at IS NOT NULL "
+                "AND close_at <= %s AND deadline_notified = 0",
+                (int(time.time()),),
+            ).fetchall()
+
+    def mark_market_deadline_notified(self, market_id: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE markets SET deadline_notified = 1 WHERE id = %s", (market_id,)
+            )
+            self._conn.commit()
+
+    def markets_need_grace_warning(self, warn_before: int) -> list[dict]:
+        grace = config.MARKET_GRACE_HOURS * 3600
+        with self._lock:
+            return self._conn.execute(
+                "SELECT id, creator, question, close_at FROM markets "
+                "WHERE status = 'open' AND close_at IS NOT NULL "
+                "AND deadline_notified = 1 AND grace_warned = 0 "
+                "AND %s >= close_at + %s - %s",
+                (int(time.time()), grace, warn_before),
+            ).fetchall()
+
+    def mark_market_grace_warned(self, market_id: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE markets SET grace_warned = 1 WHERE id = %s", (market_id,)
+            )
+            self._conn.commit()
+
+    def market_is_expired(self, market: dict) -> bool:
+        if market["close_at"] is None:
+            return False
+        grace = config.MARKET_GRACE_HOURS * 3600
+        return int(time.time()) > market["close_at"] + grace
+
+    def market_quantities(self, market_id: int) -> list[int]:
+        """Total outstanding micro-shares per option."""
+        m = self.get_market(market_id)
+        if not m:
+            return []
+        n = len(json.loads(m["options"]))
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT option_idx, SUM(shares) AS s FROM market_shares "
+                "WHERE market_id = %s GROUP BY option_idx",
+                (market_id,),
+            ).fetchall()
+        totals = {int(r["option_idx"]): int(r["s"]) for r in rows}
+        return [totals.get(i, 0) for i in range(n)]
+
+    def market_prices(self, market_id: int) -> list[Decimal] | None:
+        """Live probability per option (0..1), or None if the market is gone."""
+        m = self.get_market(market_id)
+        if not m:
+            return None
+        return lmsr_prices(self.market_quantities(market_id), int(m["b_micro"]))
+
+    def amm_market_view(self, market_id: int) -> dict | None:
+        """Dashboard-friendly snapshot of one LMSR market."""
+        m = self.get_market(market_id)
+        if not m:
+            return None
+        q = self.market_quantities(market_id)
+        prices = lmsr_prices(q, int(m["b_micro"]))
+        options = json.loads(m["options"])
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(DISTINCT tg_id) AS n FROM market_shares "
+                "WHERE market_id = %s AND shares > 0",
+                (market_id,),
+            ).fetchone()
+        return {
+            "id": int(m["id"]),
+            "question": m["question"],
+            "status": m["status"],
+            "winner": m["winner"],
+            "close_at": m["close_at"],
+            "creator": int(m["creator"]),
+            "liquidity_micro": int(m["escrow_micro"]),
+            "subsidy_micro": int(m["subsidy_micro"]),
+            "traders": int(row["n"]) if row else 0,
+            "volume_micro": sum(q),  # outstanding shares ≈ USDC that flowed in
+            "options": [
+                {
+                    "index": i,
+                    "label": o,
+                    "price_pct": float(round(prices[i] * 100, 2)),
+                    "shares": q[i],
+                }
+                for i, o in enumerate(options)
+            ],
+        }
+
+    def open_amm_markets(self, limit: int = 20) -> list[dict]:
+        return self.open_markets(limit)
+
+    def _market_share_rows(self, market_id: int) -> list[dict]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT tg_id, option_idx, shares, cost_micro FROM market_shares "
+                "WHERE market_id = %s AND (shares > 0 OR cost_micro <> 0)",
+                (market_id,),
+            ).fetchall()
+
+    def user_market_position(self, market_id: int, tg_id: int) -> dict[int, dict]:
+        """option_idx -> {'shares': micro, 'cost': net paid micro} for one user."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT option_idx, shares, cost_micro FROM market_shares "
+                "WHERE market_id = %s AND tg_id = %s AND (shares > 0 OR cost_micro <> 0)",
+                (market_id, tg_id),
+            ).fetchall()
+        return {
+            int(r["option_idx"]): {"shares": int(r["shares"]), "cost": int(r["cost_micro"])}
+            for r in rows
+        }
+
+    def user_market_positions(self, tg_id: int) -> list[dict]:
+        """All open AMM positions of a user, enriched with live prices."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT ms.market_id, ms.option_idx, ms.shares, ms.cost_micro, "
+                "m.question, m.options, m.status, m.b_micro "
+                "FROM market_shares ms JOIN markets m ON m.id = ms.market_id "
+                "WHERE ms.tg_id = %s AND ms.shares > 0 AND m.status = 'open' "
+                "ORDER BY ms.market_id DESC",
+                (tg_id,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            options = json.loads(r["options"])
+            prices = lmsr_prices(self.market_quantities(int(r["market_id"])), int(r["b_micro"]))
+            out.append(
+                {
+                    "market_id": int(r["market_id"]),
+                    "question": r["question"],
+                    "option": options[int(r["option_idx"])],
+                    "shares": int(r["shares"]),
+                    "cost": int(r["cost_micro"]),
+                    "price": prices[int(r["option_idx"])],
+                    "value": int(r["shares"]) * prices[int(r["option_idx"])],
+                }
+            )
+        return out
+
+    def buy_shares(
+        self, market_id: int, tg_id: int, option_idx: int, spend_micro: int
+    ) -> tuple[str, dict]:
+        """Spend up to `spend_micro` USDC on outcome shares at the live price.
+
+        Returns ('ok', info) or ('closed'|'deadline'|'badopt'|'balance'|'toosmall', {}).
+        The share count is floored against the exact LMSR cost curve, so the
+        user never overpays; the sub-micro remainder stays in the escrow.
+        Trades below MARKET_MIN_TRADE_MICRO are rejected before any debit
+        (dust orders would move prices by nothing but spam the tx log).
+        """
+        if spend_micro < 10_000:  # 0.01 USDC
+            return "toosmall", {}
+        with self._lock:
+            m = self.get_market(market_id)
+            if not m or m["status"] != "open":
+                return "closed", {}
+            if m["close_at"] is not None and int(time.time()) > m["close_at"]:
+                return "deadline", {}
+            options = json.loads(m["options"])
+            if option_idx < 0 or option_idx >= len(options):
+                return "badopt", {}
+            if not self.debit(tg_id, spend_micro):
+                return "balance", {}
+            q = self.market_quantities(market_id)
+            shares = lmsr_buy_shares(q, int(m["b_micro"]), option_idx, spend_micro)
+            if shares <= 0:
+                self.credit(tg_id, spend_micro, "market_refund", counterparty=str(market_id),
+                            note="trade too small")
+                return "toosmall", {}
+            prices = lmsr_prices([*q[:option_idx], q[option_idx] + shares, *q[option_idx + 1:]],
+                                 int(m["b_micro"]))
+            self.ensure_user(tg_id, None)
+            self._conn.execute(
+                "INSERT INTO market_shares (market_id, tg_id, option_idx, shares, cost_micro) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (market_id, tg_id, option_idx) DO UPDATE "
+                "SET shares = market_shares.shares + EXCLUDED.shares, "
+                "cost_micro = market_shares.cost_micro + EXCLUDED.cost_micro",
+                (market_id, tg_id, option_idx, shares, spend_micro),
+            )
+            self._conn.execute(
+                "UPDATE markets SET escrow_micro = escrow_micro + %s WHERE id = %s",
+                (spend_micro, market_id),
+            )
+            self._conn.execute(
+                "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                "VALUES ('market_buy', %s, %s, %s, %s)",
+                (tg_id, str(market_id), spend_micro, options[option_idx]),
+            )
+            self._conn.commit()
+            return "ok", {
+                "shares": shares,
+                "cost": spend_micro,
+                "price": prices[option_idx],
+                "label": options[option_idx],
+            }
+
+    def sell_shares(
+        self, market_id: int, tg_id: int, option_idx: int, shares_micro: int
+    ) -> tuple[str, dict]:
+        """Sell whole micro-shares back to the AMM at the live price (floored).
+
+        Returns ('ok', info) or ('closed'|'deadline'|'badopt'|'noshare'|'toosmall', {}).
+        """
+        with self._lock:
+            m = self.get_market(market_id)
+            if not m or m["status"] != "open":
+                return "closed", {}
+            if m["close_at"] is not None and int(time.time()) > m["close_at"]:
+                return "deadline", {}
+            options = json.loads(m["options"])
+            if option_idx < 0 or option_idx >= len(options):
+                return "badopt", {}
+            pos = self.user_market_position(market_id, tg_id)
+            held = pos.get(option_idx, {}).get("shares", 0)
+            if held <= 0:
+                return "noshare", {}
+            shares = min(shares_micro, held)
+            if shares <= 0:
+                return "toosmall", {}
+            q = self.market_quantities(market_id)
+            value = lmsr_sell_value(q, int(m["b_micro"]), option_idx, shares)
+            if value <= 0:
+                return "toosmall", {}
+            new_cost = pos[option_idx]["cost"] - value  # realized profit lowers basis
+            self._conn.execute(
+                "UPDATE market_shares SET shares = shares - %s, cost_micro = %s "
+                "WHERE market_id = %s AND tg_id = %s AND option_idx = %s",
+                (shares, new_cost, market_id, tg_id, option_idx),
+            )
+            self._conn.execute(
+                "UPDATE markets SET escrow_micro = escrow_micro - %s WHERE id = %s",
+                (value, market_id),
+            )
+            self.credit(tg_id, value, "market_sell", counterparty=str(market_id),
+                        note=options[option_idx])
+            prices = lmsr_prices(q, int(m["b_micro"]))
+            self._conn.commit()
+            return "ok", {
+                "shares": shares,
+                "value": value,
+                "price": prices[option_idx],
+                "label": options[option_idx],
+            }
+
+    def resolve_market(
+        self, market_id: int, winning_idx: int, resolver_id: int
+    ) -> tuple[bool, str, list[dict]]:
+        """Pay every winning share 1 USDC from the escrow; creator keeps the rest.
+
+        The LMSR funding theorem guarantees escrow >= winning shares, so this
+        never goes insolvent. Returns (ok, message, payouts) where payouts is
+        [{'tg_id', 'net_micro', 'win'}] for DM notifications.
+        """
+        with self._lock:
+            m = self.get_market(market_id)
+            if not m or m["status"] != "open":
+                return False, "Рынок не найден или уже закрыт.", []
+            if m["creator"] != resolver_id:
+                return False, "Закрыть может только создатель рынка.", []
+            options = json.loads(m["options"])
+            if winning_idx < 0 or winning_idx >= len(options):
+                return False, "Неверный номер варианта.", []
+
+            winner_rows = self._conn.execute(
+                "SELECT tg_id, SUM(shares) AS s FROM market_shares "
+                "WHERE market_id = %s AND option_idx = %s AND shares > 0 "
+                "GROUP BY tg_id",
+                (market_id, winning_idx),
+            ).fetchall()
+
+            escrow = int(m["escrow_micro"])
+            # 1 micro-share pays 1 micro-USDC (1e6 shares = 1 USDC payout)
+            payout_total = sum(int(w["s"]) for w in winner_rows)
+            if payout_total > escrow:  # cannot happen per funding theorem; belt & braces
+                payout_total = escrow
+
+            payouts: list[dict] = []
+            distributed = 0
+            for w in winner_rows:
+                gross = int(w["s"])
+                if distributed + gross > payout_total:
+                    gross = payout_total - distributed
+                if gross <= 0:
+                    continue
+                distributed += gross
+                self.credit(int(w["tg_id"]), gross, "market_win",
+                            counterparty=str(market_id), note=m["question"])
+                payouts.append({"tg_id": int(w["tg_id"]), "net_micro": gross, "win": True})
+
+            leftover = escrow - distributed
+            if leftover > 0:
+                self.credit(int(m["creator"]), leftover, "fee",
+                            counterparty=str(market_id), note="market fees")
+            # holders of losing outcomes get nothing (their cost was spent into
+            # the escrow when they bought).
+            for r in self._market_share_rows(market_id):
+                if int(r["option_idx"]) != winning_idx and int(r["shares"]) > 0:
+                    payouts.append({"tg_id": int(r["tg_id"]), "net_micro": 0, "win": False})
+
+            self._conn.execute(
+                "UPDATE markets SET status = 'resolved', winner = %s, escrow_micro = 0 "
+                "WHERE id = %s",
+                (winning_idx, market_id),
+            )
+            self._conn.commit()
+            return True, f"Победил вариант {winning_idx + 1} — {options[winning_idx]}", payouts
+
+    def cancel_market(self, market_id: int, resolver_id: int) -> tuple[bool, str]:
+        """Refund net cost basis to holders; creator gets the escrow leftover.
+
+        Anyone may cancel once the deadline + grace passed (dead-market
+        protection, same as parimutuel bets).
+        """
+        with self._lock:
+            m = self.get_market(market_id)
+            if not m or m["status"] != "open":
+                return False, "Рынок не найден или уже закрыт."
+            if m["creator"] != resolver_id and not self.market_is_expired(m):
+                return False, "Отменить может только создатель рынка (или после дедлайна + grace)."
+            escrow = int(m["escrow_micro"])
+            rows = sorted(
+                self._market_share_rows(market_id),
+                key=lambda r: int(r["cost_micro"]),
+                reverse=True,
+            )
+            available = escrow
+            for r in rows:
+                refund = min(max(int(r["cost_micro"]), 0), available)
+                if refund <= 0:
+                    continue
+                available -= refund
+                self.credit(int(r["tg_id"]), refund, "market_cancel",
+                            counterparty=str(market_id), note=m["question"])
+            if available > 0:
+                self.credit(int(m["creator"]), available, "fee",
+                            counterparty=str(market_id), note="market subsidy back")
+            self._conn.execute(
+                "UPDATE markets SET status = 'cancelled', escrow_micro = 0 WHERE id = %s",
+                (market_id,),
+            )
+            self._conn.commit()
+            return True, "Рынок отменён — ставки возвращены по цене входа."
 
     # ---------- reaction tips ----------
 

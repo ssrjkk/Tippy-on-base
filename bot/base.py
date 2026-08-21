@@ -36,6 +36,42 @@ def hot_balance() -> float:
     return micro / 10**config.USDC_DECIMALS
 
 
+def tx_info(tx_hash: str) -> dict | None:
+    """Fetch a transaction and decode a USDC transfer out of its input data.
+
+    Returns {'hash', 'from', 'to', 'status', 'value_micro', 'usdc_to'} —
+    value/usdc_to are None when the tx is not a plain USDC transfer, status
+    is None while the tx is not mined yet.
+    """
+    try:
+        tx = w3.eth.get_transaction(tx_hash)
+    except Exception:
+        return None
+    receipt = None
+    try:
+        receipt = w3.eth.get_transaction_receipt(tx_hash)
+    except Exception:
+        pass  # not mined yet
+    out = {
+        "hash": tx_hash,
+        "from": str(tx["from"]),
+        "to": str(tx["to"]) if tx["to"] else None,
+        "status": bool(receipt.get("status")) if receipt is not None else None,
+        "value_micro": None,
+        "usdc_to": None,
+    }
+    # decode transfer(address,uint256) selector 0xa9059cbb
+    raw = tx.get("input") or b""
+    data = bytes(raw).hex() if isinstance(raw, (bytes, bytearray)) else str(raw)
+    data = data.lower().removeprefix("0x")
+    if data.startswith("a9059cbb") and len(data) >= 8 + 64 * 2 and out["to"] and out["to"].lower() == USDC.lower():
+        to_addr = "0x" + data[8 + 24 : 8 + 64][-40:]
+        value = int(data[8 + 64 : 8 + 128], 16)
+        out["usdc_to"] = Web3.to_checksum_address(to_addr)
+        out["value_micro"] = value
+    return out
+
+
 def vault_balance() -> float | None:
     """On-chain USDC held by the TipBotVault treasury, or None if not deployed.
 
