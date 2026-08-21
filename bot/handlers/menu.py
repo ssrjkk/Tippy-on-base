@@ -239,6 +239,7 @@ async def on_menu(cb: types.CallbackQuery) -> None:
     user = cb.from_user
     if not user:
         return
+    lang = _lang(user.id)
     if cb.data == "bal":
         await common._edit_menu(cb, await _balance_text(user.id))
     elif cb.data == "dep":
