@@ -15,7 +15,10 @@ jobs:
         env:
           POSTGRES_USER: tipbot
           POSTGRES_PASSWORD: tipbot
-          POSTGRES_DB: postgres
+          # web/server.py opens a Ledger connection at import time using the
+          # default DATABASE_URL (.../tipbot); without this db the import
+          # itself fails and pytest exits 2 during collection.
+          POSTGRES_DB: tipbot
         ports:
           - 5433:5432
         options: >-
@@ -53,17 +56,21 @@ jobs:
       - name: Dump failure details
         if: failure()
         run: |
-          echo "=== pytest junit summary ==="
           python - <<'EOF'
           import xml.etree.ElementTree as ET
           try:
               root = ET.parse("pytest-result.xml").getroot()
+              n = 0
               for case in root.iter("testcase"):
                   for tag in ("failure", "error"):
                       node = case.find(tag)
-                      if node is not None:
-                          print(f"--- {case.attrib.get('classname')}.{case.attrib.get('name')} [{tag}] ---")
-                          print((node.text or "")[-3000:])
+                      if node is not None and n < 10:
+                          name = f"{case.attrib.get('classname')}.{case.attrib.get('name')}"
+                          msg = (node.attrib.get("message") or "")[:300]
+                          print(f"::error title={name[:80]}::{msg}")
+                          print(f"--- {name} ---")
+                          print((node.text or "")[-1500:])
+                          n += 1
           except FileNotFoundError:
-              print("no junit file; test process died before reporting")
+              print("::error title=pytest::no junit file; test process died before reporting")
           EOF

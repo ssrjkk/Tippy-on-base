@@ -1,4 +1,4 @@
-﻿"""Test fixtures: a fresh Postgres test database, patched into bot modules.
+"""Test fixtures: a fresh Postgres test database, patched into bot modules.
 
 Requires a running PostgreSQL server (docker compose up -d db — the default
 credentials below match the compose service). A dedicated test database is
@@ -56,6 +56,13 @@ def ledger(monkeypatch):
     _reset_db(fresh)
     monkeypatch.setattr(ledger_mod, "ledger", fresh)
     monkeypatch.setattr(handlers._common, "ledger", fresh)
+    # Web modules bind the singleton at import time; rebind them so web
+    # tests are hermetic (test database, not whatever DATABASE_URL points to).
+    import web.auth
+    import web.server
+
+    monkeypatch.setattr(web.server, "ledger", fresh)
+    monkeypatch.setattr(web.auth, "ledger", fresh)
     handlers._common._money_cmd_last.clear()
     yield fresh
     fresh.close()  # release the open transaction, or TRUNCATE in the next test hangs

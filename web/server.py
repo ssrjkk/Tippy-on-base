@@ -21,6 +21,7 @@ from bot import base, config  # noqa: E402
 from bot import qr as qrlib  # noqa: E402
 from bot.base import hot_balance, hot_wallet, vault_balance  # noqa: E402
 from bot.ledger import ledger  # noqa: E402
+from web.auth import router as auth_router  # noqa: E402
 from web.frame import router as frame_router  # noqa: E402
 from web.hook import router as tg_webhook  # noqa: E402
 from web.x402 import x402_paywall, x402_tip  # noqa: E402
@@ -57,6 +58,7 @@ app = FastAPI(
 )
 app.include_router(tg_webhook)
 app.include_router(frame_router)
+app.include_router(auth_router)
 
 STATIC = Path(__file__).resolve().parent / "static"
 MICRO = 10**config.USDC_DECIMALS

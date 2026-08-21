@@ -16,6 +16,8 @@ data/
 dbg.db
 
 # Tests / coverage
+pytest-result.xml
+coverage.xml
 .pytest_cache/
 .coverage
 htmlcov/

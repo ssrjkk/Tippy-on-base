@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tippy — My Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%230052ff'/%3E%3Ctext x='50' y='71' font-size='58' font-weight='800' text-anchor='middle' fill='white'%3Eb%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    .me-wrap { max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    .balance-card { background: linear-gradient(135deg, #0052ff, #003399);
+      border-radius: 16px; padding: 28px; color: #fff; margin-bottom: 20px; }
+    .balance-card .label { font-size: 13px; opacity: .8; text-transform: uppercase; letter-spacing: .08em; }
+    .balance-card .amount { font-size: 42px; font-weight: 800; margin-top: 6px; }
+    .card { background: #0a0b0d; border: 1px solid #1f2125; border-radius: 14px;
+      padding: 20px; margin-bottom: 16px; }
+    .card h2 { font-size: 15px; margin: 0 0 12px; color: #9aa0a6;
+      text-transform: uppercase; letter-spacing: .06em; }
+    .pos { display: flex; justify-content: space-between; gap: 12px;
+      padding: 10px 0; border-top: 1px solid #1f2125; font-size: 14px; flex-wrap: wrap; }
+    .pos:first-of-type { border-top: none; }
+    .pos .q { color: #c9cdd2; }
+    .pos .v { font-weight: 700; white-space: nowrap; }
+    .muted { color: #6b7075; font-size: 13px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn { padding: 11px 18px; border-radius: 10px; font-size: 14px;
+      text-decoration: none; font-weight: 600; }
+    .btn-primary { background: #0052ff; color: #fff; }
+    .btn-ghost { border: 1px solid #2a2d33; color: #c9cdd2; }
+    .addr { font-family: monospace; font-size: 13px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" aria-hidden="true"></div>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/">
+        <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+        <span class="brand-name"><b>Tippy</b></span>
+      </a>
+      <a class="btn btn-ghost" href="/logout">Log out</a>
+    </div>
+  </header>
+
+  <main class="me-wrap">
+    <div id="content">Loading…</div>
+  </main>
+
+<script>
+async function load() {
+  const r = await fetch('/api/me');
+  if (r.status === 401) { location.href = '/login'; return; }
+  const me = await r.json();
+  const pos = me.positions.length
+    ? me.positions.map(p => `
+        <div class="pos">
+          <span class="q">#${p.market_id} ${p.question}<br/>
+            <span class="muted">${p.option} — ${p.shares} shares @ ${(p.price*100).toFixed(1)}¢</span></span>
+          <span class="v">$${p.value_usdc.toFixed(2)}<br/>
+            <span class="muted">cost $${p.cost_usdc.toFixed(2)}</span></span>
+        </div>`).join('')
+    : '<p class="muted">No open positions yet — trade in the bot.</p>';
+  document.getElementById('content').innerHTML = `
+    <div class="balance-card">
+      <div class="label">Balance</div>
+      <div class="amount">$${me.balance_usdc.toFixed(2)}</div>
+      <div class="label" style="margin-top:8px">USDC on Base</div>
+    </div>
+    <div class="card">
+      <h2>Open market positions</h2>
+      ${pos}
+    </div>
+    <div class="card">
+      <h2>Linked wallet</h2>
+      ${me.linked_address ? `<div class="addr">${me.linked_address}</div>`
+        : '<p class="muted">No wallet linked yet.</p>'}
+    </div>
+    <div class="actions">
+      <a class="btn btn-primary" href="${me.bot_link}">Open in Telegram</a>
+      <a class="btn btn-ghost" href="/">Public dashboard</a>
+    </div>`;
+}
+load();
+</script>
+</body>
+</html>

@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 from decimal import Decimal
@@ -11,6 +12,14 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 BOT_TOKEN: str = os.environ["BOT_TOKEN"]
 BASE_RPC_URL: str = os.environ.get("BASE_RPC_URL", "https://mainnet.base.org")
 HOT_WALLET_KEY: str = os.environ["HOT_WALLET_KEY"]
+
+# Signing key for web login sessions (/login -> /me). Empty -> derived from
+# BOT_TOKEN, so it never needs to be provisioned separately and never leaves
+# the server. Set SECRET_KEY explicitly to rotate sessions independently.
+SECRET_KEY: str = (
+    os.environ.get("SECRET_KEY", "").strip()
+    or hashlib.sha256(f"tippy-session:{BOT_TOKEN}".encode()).hexdigest()
+)
 POLL_SECONDS: int = int(os.environ.get("POLL_SECONDS", "15"))
 # RPC request timeout in seconds (guards watchers/web against a hung provider)
 RPC_TIMEOUT_SECONDS: int = int(os.environ.get("RPC_TIMEOUT_SECONDS", "10"))
