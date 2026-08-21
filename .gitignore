@@ -23,6 +23,9 @@ coverage.xml
 htmlcov/
 .ruff_cache/
 
+# Logs
+*.log
+
 # OS
 .DS_Store
 Thumbs.db
