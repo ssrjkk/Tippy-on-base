@@ -89,8 +89,7 @@ HELP = (
     "• /donate — твоя страница донатов с QR\n"
     "• /deposit — QR + адрес для пополнения\n"
     "• /link &lt;адрес&gt; — привязать кошелёк (авто-зачисление)\n"
-    "• /withdraw &lt;адрес&gt; &lt;сумма&gt; — вывод (комиссия 1%, мин. 1 USDC)\n"
-    "• /tx &lt;hash&gt; — проверить транзакцию в Base\n\n"
+    "• /withdraw &lt;адрес&gt; &lt;сумма&gt; — вывод (комиссия 1%, мин. 1 USDC)\n\n"
     "📊 <b>Ещё</b>\n"
     "• /menu — меню · /balance · /stats · /top · /history\n"
     "• /settings — уведомления и реакции ⚙️\n\n"
@@ -102,6 +101,21 @@ HELP = (
     "🏗️ <b>Base</b> — безопасная, дешёвая, развивающаяся L2 от Coinbase: base.org\n"
     "👛 Свой кошелёк: /wallet · выгрузить ключ и сид: /wallet export · импорт по сид-фразе: /import"
 )
+
+
+def user_lang(tg_id: int) -> str:
+    """The user's UI language from settings (defaults to Russian)."""
+    try:
+        s = ledger.get_settings(tg_id)
+        return i18n.norm(s.get("lang"))
+    except Exception:
+        return "ru"
+
+
+def help_text(lang: str = "ru") -> str:
+    """Localized full command reference."""
+    return i18n.t(lang, "help_full")
+
 
 KIND_EMOJI = {
     "deposit": "⬇️",

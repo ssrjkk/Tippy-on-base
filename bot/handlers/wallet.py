@@ -8,26 +8,25 @@ from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from eth_utils import is_address, to_checksum_address
 
+from bot import i18n
+
 from . import _common as common
 
 
 async def _balance_text(tg_id: int) -> str:
     common.ledger.ensure_user(tg_id, None)
+    lang = common.user_lang(tg_id)
     bal = common.ledger.balance(tg_id)
     addr = common.ledger.linked_address(tg_id)
-    link_line = f"\n🔗 Кошелёк: <code>{common._esc(addr)}</code>" if addr else "\n🔗 Кошелёк не привязан — /link"
+    link_line = i18n.t(lang, "bal_linked", addr=common._esc(addr)) if addr else i18n.t(lang, "bal_nolink")
     pos = common.ledger.user_positions(tg_id)
     bets_line = ""
     if pos:
         stake = sum(p["stake_micro"] for p in pos)
         potential = sum(p["potential_micro"] for p in pos)
-        bets_line = (
-            f"\n🎲 В игре: <b>{len(pos)}</b> позиция(и) на <b>{common._fmt(stake)} USDC</b>\n"
-            f"🏆 Потенциальный выигрыш: <b>{common._fmt(potential)} USDC</b>\n"
-            f"📌 Твои ставки: /mybets"
-        )
+        bets_line = i18n.t(lang, "bal_ingame", n=len(pos), stake=common._fmt(stake), pot=common._fmt(potential))
     fees = common.ledger.creator_fees(tg_id)
-    fees_line = f"\n🧾 Заработано на рынках: <b>{common._fmt(fees)} USDC</b>" if fees else ""
+    fees_line = i18n.t(lang, "bal_fees", fees=common._fmt(fees)) if fees else ""
     return (
         f"💰 Баланс: <b>{bal:.6f}".rstrip("0").rstrip(".")
         + f" USDC</b>{link_line}{bets_line}{fees_line}"
@@ -35,39 +34,23 @@ async def _balance_text(tg_id: int) -> str:
 
 
 async def _deposit_text(tg_id: int) -> str:
+    lang = common.user_lang(tg_id)
     addr = common.base.hot_wallet()
     linked = common.ledger.linked_address(tg_id)
+    head = i18n.t(lang, "dep_head")
+    public = i18n.t(lang, "dep_public")
+    disc = i18n.t(lang, "dep_disclaimer")
     if linked:
-        return (
-            f"💳 Отправь USDC на адрес бота\n"
-            f"🟦 <b>Сеть Base</b> · монета USDC (ERC-20)\n\n"
-            f"<code>{addr}</code>\n\n"
-            f"С твоего привязанного кошелька <code>{common._esc(linked)}</code> — зачислится автоматически ✅\n"
-            f"🏗️ Операция в блокчейне, видна всем: basescan.org\n\n"
-            f"⚠️ <b>Дисклеймер:</b> средства хранит бот (кастодиальный кошелёк). "
-            f"Свой ключ и сид-фразу можно забрать в любой момент: /wallet export"
-        )
-    return (
-        f"💳 Отправь USDC на адрес бота\n"
-        f"🟦 <b>Сеть Base</b> · монета USDC (ERC-20)\n\n"
-        f"<code>{addr}</code>\n\n"
-        f"После отправки пришли /claim <i>&lt;tx_hash&gt;</i>.\n"
-        f"<b>Удобнее:</b> привяжи кошелёк — /link, и депозиты будут зачисляться сами.\n"
-        f"🏗️ Операция в блокчейне, видна всем: basescan.org\n\n"
-        f"⚠️ <b>Дисклеймер:</b> средства хранит бот (кастодиальный кошелёк). "
-        f"Свой ключ и сид-фразу можно забрать в любой момент: /wallet export"
-    )
+        mid = i18n.t(lang, "dep_linked", addr=common._esc(linked))
+    else:
+        mid = i18n.t(lang, "dep_claim")
+    return f"{head}\n\n<code>{addr}</code>\n\n{mid}\n{public}\n\n{disc}"
 
 
 async def _donate_text(bot, tg_id: int) -> str:
     uname = await common._get_bot_username(bot)
     link = f"https://t.me/{uname}?start=donate_{tg_id}"
-    return (
-        f"💛 <b>Твоя страница донатов</b>\n\n"
-        f"Скинь эту ссылку куда угодно — по ней откроется твой адрес для USDC:\n"
-        f"<code>{link}</code>\n\n"
-        f"По ссылке сразу видно, кому и куда платить — без посредников."
-    )
+    return i18n.t(common.user_lang(tg_id), "donate_text", link=link)
 
 
 @common.router.message(Command("balance"))

@@ -100,23 +100,20 @@ async def cmd_start(message: types.Message, command: CommandObject) -> None:
             return
     if command.command == "start":
         name = message.from_user.username or f"id{message.from_user.id}"
+        lang = _lang(message.from_user.id)
         bal = common.ledger.balance(message.from_user.id)
+        bal_s = f"{bal:.6f}".rstrip("0").rstrip(".")
         welcome = (
-            f"👋 Привет, <b>@{name}</b>!\n\n"
-            f"🟦 <b>Tippy</b> — USDC-экономика прямо в Telegram:\n"
-            f"💸 чаевые и реакции · 🎁 донат-страницы · 🎯 рынки предсказаний\n\n"
-            f"💰 Баланс: <b>{bal:.6f}".rstrip("0").rstrip(".") + " USDC</b>\n\n"
-            "Что попробовать?\n"
-            "• <b>/deposit</b> — пополнить (QR)\n"
-            "• <b>/bets</b> — поставить на рынок\n"
-            "• <b>/tip 1 @ник</b> — кинуть чаевые\n"
-            "• <b>/help</b> — все команды\n\n"
-            "🏗️ Работает на <b>Base</b> — дешёвой L2 от Coinbase · base.org\n"
-            "🧑‍💻 Автор: @b2wmain · @ssrjkk · x.com/ludych1 · github.com/ssrjkk"
+            f"{i18n.t(lang, 'start_hi', name=name)}\n\n"
+            f"{i18n.t(lang, 'start_intro')}\n\n"
+            f"💰 {i18n.t(lang, 'menu_balance', bal=bal_s)}\n\n"
+            f"{i18n.t(lang, 'start_try')}\n\n"
+            f"{i18n.t(lang, 'start_footer')}"
         )
-        await message.answer(welcome, reply_markup=common._menu_kb())
+        await message.answer(welcome, reply_markup=common._menu_kb(lang))
         return
-    await message.answer(common.HELP, reply_markup=common._menu_kb())
+    lang = _lang(message.from_user.id)
+    await message.answer(common.help_text(lang), reply_markup=common._menu_kb(lang))
 
 
 @common.router.message(Command("menu"))
@@ -261,30 +258,11 @@ async def on_menu(cb: types.CallbackQuery) -> None:
         text, kb = await _settings_kb_text(user.id)
         await common._edit_menu(cb, text, kb)
     elif cb.data == "tip":
-        await common._edit_menu(
-            cb,
-            "💸 <b>Чаевые</b>\n\n"
-            "/tip 5 @ник — кинуть 5 USDC\n"
-            "/tip 5 ответом на сообщение — автору.\n\n"
-            "В группах работают реакции-чаевые ⚡ — ставь 🔥/❤️/⚡ на сообщение, "
-            "и автор получает USDC (вкл/выкл: /settings).",
-        )
+        await common._edit_menu(cb, i18n.t(lang, "hint_tip"))
     elif cb.data == "ask":
-        await common._edit_menu(
-            cb,
-            "🧠 <b>ИИ-ассистент</b>\n\n"
-            "/ask &lt;вопрос&gt; — например: /ask Что такое Base?\n"
-            "Можно задать вопрос ответом на сообщение — ИИ увидит его контекст.",
-        )
+        await common._edit_menu(cb, i18n.t(lang, "hint_ask"))
     elif cb.data == "wallet":
-        await common._edit_menu(
-            cb,
-            "👛 <b>Кошелёк</b>\n\n"
-            "/wallet — адрес и ключи\n"
-            "/deposit — пополнить · /withdraw &lt;адрес&gt; &lt;сумма&gt; — вывести\n"
-            "/link &lt;адрес&gt; — привязать внешний кошелёк (авто-зачисление)\n"
-            "/import — вход по сид-фразе · /export — выгрузка ключа",
-        )
+        await common._edit_menu(cb, i18n.t(lang, "hint_wallet"))
     elif cb.data == "betcreate":
         await common._edit_menu(
             cb,
