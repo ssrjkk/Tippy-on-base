@@ -180,6 +180,14 @@ worst-case payout.
 - Order-book style CLOB on top of the AMM
 - On-chain market escrow (trustless resolution via UMA-style oracle)
 
+## Contributing
+
+PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, style rules,
+and the money-conservation requirement for any fund-touching change.
+Security issues: [SECURITY.md](SECURITY.md) (no public issues).
+Community rules: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Licensed under [MIT](LICENSE).
+
 ## Grant
 
 Prepared for the [Base Builder Grants](https://www.base.io/ecosystem/grants)

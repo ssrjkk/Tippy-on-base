@@ -36,11 +36,11 @@ Agents · Asset creation · Consumer apps.
 | **How does your product make money today?** | см. §6 |
 | **GTM plan for the next 3 months** | см. §7 |
 | **Base Builder Code** | `TODO: код пригласившего (если есть)` |
-| **Primary challenge or bottleneck** | `User acquisition` — продукт готов (380 автотеста, 94% покрытие), нужны сообщества и рост |
-| **Project description (без трекшна — формулировка)** | `Tippy is a monetization layer for Telegram communities and AI agents on Base. We enable creators to gate content behind USDC paywalls using the x402 protocol, with fully on-chain Proof of Reserves via TipBotVault. While currently in pre-launch phase, the technical foundation is production-ready with 380 automated tests and 94% coverage. We are targeting the 900M Telegram user base and the rapidly growing AI agent economy on Base.` |
+| **Primary challenge or bottleneck** | `User acquisition` — продукт готов (419 автотестов, 94% покрытие), нужны сообщества и рост |
+| **Project description (без трекшна — формулировка)** | `Tippy is a monetization layer for Telegram communities and AI agents on Base. We enable creators to gate content behind USDC paywalls using the x402 protocol, with fully on-chain Proof of Reserves via TipBotVault. While currently in pre-launch phase, the technical foundation is production-ready with 419 automated tests and 94% coverage. We are targeting the 900M Telegram user base and the rapidly growing AI agent economy on Base.` |
 | **Why Base?** | `Base is the only chain with native x402 support, which is critical for our AI-agent-to-agent commerce model. Additionally, Base's Smart Wallets enable gasless onboarding for Telegram users who have never used crypto before. We are building exclusively on Base to leverage these primitives.` |
 | **Use of Funds ($5,000)** | `$2,000 — Smart Contract Audit (TipBotVault.sol), critical for handling user deposits. $1,500 — GTM & Partnership Development: onboarding the first 10 crypto-signal Telegram channels and integrating with Virtuals Protocol agents. $1,500 — Infrastructure scaling (PostgreSQL optimization, Alchemy Webhooks) for 10k+ daily active users.` |
-| **Traction (честно, с фокусом на потенциал)** | `Currently pre-launch with a fully tested MVP. Technical milestones achieved: x402 integration, Vault Proof of Reserves, 380 tests. Next step: Launch on Base mainnet and secure the first 100 users through Farcaster Frames and AI agent partnerships.` |
+| **Traction (честно, с фокусом на потенциал)** | `Currently pre-launch with a fully tested MVP. Technical milestones achieved: x402 integration, Vault Proof of Reserves, 419 tests. Next step: Launch on Base mainnet and secure the first 100 users through Farcaster Frames and AI agent partnerships.` |
 | **Which credits would be most useful?** | `AWS` (хостинг бота/дашборда), `Alchemy / QuickNode` (RPC Base), `Privy` (не приоритетно — вход через Telegram) |
 
 ## 2. Founding team (draft)
@@ -51,7 +51,7 @@ Agents · Asset creation · Consumer apps.
 > GitHub [ssrjkk](https://github.com/ssrjkk)
 > Prior experience: `TODO: прошлые компании/проекты, релевантный опыт`
 > Funding raised: `TODO: (если было)`. Тон: продукт написан целиком и
-> покрыт 380 автотестами (консервация средств, безопасность депозитов,
+> покрыт 419 автотестовми (консервация средств, безопасность депозитов,
 > E2E-сценарии) — надёжность важнее маркетинга.
 
 ## 3. The one-line-adjacent pitch (154 words — reuse for "tell us about your product" if the form asks)
@@ -69,7 +69,7 @@ Agents · Asset creation · Consumer apps.
 > volume, markets, and a live solvency check proving liabilities are always
 > covered by the on-chain USDC balance.
 >
-> The prototype is complete (380 automated tests, 94% coverage, Dockerized,
+> The prototype is complete (419 automated tests, 94% coverage, Dockerized,
 > treasury contract deployed with 12 EVM-tested scenarios).
 > The grant funds real RPC infrastructure, hosting, and community rollout.
 

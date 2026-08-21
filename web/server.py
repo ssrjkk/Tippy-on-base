@@ -25,7 +25,36 @@ from web.frame import router as frame_router  # noqa: E402
 from web.hook import router as tg_webhook  # noqa: E402
 from web.x402 import x402_paywall, x402_tip  # noqa: E402
 
-app = FastAPI(title="Tippy", version="1.0.0", description="Community economy on Base")
+app = FastAPI(
+    title="Tippy API",
+    version="1.1.0",
+    description=(
+        "Public API of **Tippy** — a community economy in USDC on Base.\n\n"
+        "Features: instant tips, Polymarket-style prediction markets (LMSR AMM), "
+        "paywalled content, and **x402 HTTP payments for AI agents** "
+        "(`POST /api/x402/tip`, `POST /api/x402/paywall`).\n\n"
+        "* All amounts are USDC; `_usdc` fields are human-readable floats, "
+        "`_micro` fields are integer micro-units (1e6 = 1 USDC).\n"
+        "* `/api/solvency` is the Proof of Reserves: bot liabilities vs "
+        "on-chain USDC (TipBotVault contract when deployed, else hot wallet).\n"
+        "* Rate-limited per IP to protect the RPC quota."
+    ),
+    contact={
+        "name": "ssrjkk",
+        "url": "https://github.com/ssrjkk/Tippy-on-base",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://github.com/ssrjkk/Tippy-on-base/blob/main/LICENSE",
+    },
+    openapi_tags=[
+        {"name": "stats", "description": "Volume, users, fees, health"},
+        {"name": "markets", "description": "Parimutuel polls and LMSR prediction markets"},
+        {"name": "users", "description": "Leaderboards and public profiles"},
+        {"name": "treasury", "description": "Proof of Reserves and wallet transparency"},
+        {"name": "x402", "description": "HTTP 402 payment handshake for AI agents"},
+    ],
+)
 app.include_router(tg_webhook)
 app.include_router(frame_router)
 
@@ -89,7 +118,7 @@ def _safe_vault_balance() -> float | None:
         return None
 
 
-@app.get("/api/stats")
+@app.get("/api/stats", tags=["stats"])
 def api_stats() -> dict:
     s = ledger.global_stats()
     return {
@@ -103,7 +132,7 @@ def api_stats() -> dict:
     }
 
 
-@app.get("/api/volume_history")
+@app.get("/api/volume_history", tags=["stats"])
 def api_volume_history(days: int = 14) -> list[dict]:
     days = min(max(int(days), 1), 30)
     return [
@@ -112,7 +141,7 @@ def api_volume_history(days: int = 14) -> list[dict]:
     ]
 
 
-@app.get("/api/markets")
+@app.get("/api/markets", tags=["markets"])
 def api_markets(status: str = "open") -> list[dict]:
     out = []
     for b in ledger.bets_by_status(status, 20):
@@ -125,7 +154,7 @@ def api_markets(status: str = "open") -> list[dict]:
     return out
 
 
-@app.get("/api/market/{bet_id}")
+@app.get("/api/market/{bet_id}", tags=["markets"])
 def api_market(bet_id: int) -> dict:
     view = ledger.market_view(bet_id)
     if not view:
@@ -136,7 +165,7 @@ def api_market(bet_id: int) -> dict:
     return view
 
 
-@app.get("/api/predictions")
+@app.get("/api/predictions", tags=["markets"])
 def api_predictions(status: str = "open") -> list[dict]:
     """LMSR AMM prediction markets with live odds (Polymarket-style)."""
     out = []
@@ -150,7 +179,7 @@ def api_predictions(status: str = "open") -> list[dict]:
     return out
 
 
-@app.get("/api/prediction/{market_id}")
+@app.get("/api/prediction/{market_id}", tags=["markets"])
 def api_prediction(market_id: int) -> dict:
     view = ledger.amm_market_view(market_id)
     if not view:
@@ -159,14 +188,14 @@ def api_prediction(market_id: int) -> dict:
     return view
 
 
-@app.get("/api/leaderboard")
+@app.get("/api/leaderboard", tags=["users"])
 def api_leaderboard() -> list[dict]:
     return [
         {**r, "total_usdc": _usdc(r["total_micro"])} for r in ledger.leaderboard(10)
     ]
 
 
-@app.get("/api/user/{tg_id}")
+@app.get("/api/user/{tg_id}", tags=["users"])
 def api_user(tg_id: int) -> dict:
     if not ledger.user_exists(tg_id):
         raise HTTPException(status_code=404, detail="User not found")
@@ -203,12 +232,12 @@ def api_user(tg_id: int) -> dict:
     }
 
 
-@app.get("/api/info")
+@app.get("/api/info", tags=["stats"])
 def api_info() -> dict:
     return {"bot_username": config.BOT_USERNAME}
 
 
-@app.get("/api/health")
+@app.get("/api/health", tags=["stats"])
 def api_health() -> dict:
     """Liveness + deposit-scanner health. If the scanner falls behind the chain
     head, deposits would be picked up late — `deposit_lag` makes that visible."""
@@ -227,7 +256,7 @@ def api_health() -> dict:
     }
 
 
-@app.post("/api/x402/tip")
+@app.post("/api/x402/tip", tags=["x402"])
 async def api_x402_tip(request: Request) -> Response:
     """x402 payment handshake: agents pay USDC tips to Telegram users over HTTP.
 
@@ -238,7 +267,7 @@ async def api_x402_tip(request: Request) -> Response:
     return await x402_tip(request)
 
 
-@app.post("/api/x402/paywall")
+@app.post("/api/x402/paywall", tags=["x402"])
 async def api_x402_paywall(request: Request) -> Response:
     """x402 payment handshake for paywall content.
 
@@ -250,7 +279,7 @@ async def api_x402_paywall(request: Request) -> Response:
     return await x402_paywall(request)
 
 
-@app.get("/api/solvency")
+@app.get("/api/solvency", tags=["treasury"])
 def api_solvency() -> dict:
     """Transparency: every user balance is a claim on the treasury.
 
@@ -279,7 +308,7 @@ def api_solvency() -> dict:
     }
 
 
-@app.get("/qr")
+@app.get("/qr", tags=["treasury"])
 def api_qr(data: str, size: int = 220) -> Response:
     """Render a QR PNG locally (no external service). Used by /u pages."""
     if not data or len(data) > 1024:
@@ -294,7 +323,7 @@ def api_qr(data: str, size: int = 220) -> Response:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
-@app.get("/api/wallet")
+@app.get("/api/wallet", tags=["treasury"])
 def api_wallet() -> dict:
     return {
         "address": str(hot_wallet()),
