@@ -219,6 +219,8 @@ async def main() -> None:
                 types.BotCommand(command="tx", description="Проверить транзакцию в Base"),
                 types.BotCommand(command="paywall", description="Платные посты"),
                 types.BotCommand(command="settings", description="Настройки"),
+                types.BotCommand(command="language", description="Сменить язык / Language"),
+                types.BotCommand(command="about", description="О боте — что это такое"),
             ]
         )
     except Exception as e:

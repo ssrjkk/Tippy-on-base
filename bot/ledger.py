@@ -270,7 +270,8 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS user_settings (
                     tg_id         BIGINT PRIMARY KEY,
                     reaction_tips BIGINT NOT NULL DEFAULT 1,  -- allow emoji-reaction tips
-                    notify_deposits BIGINT NOT NULL DEFAULT 1 -- DM on credited deposit
+                    notify_deposits BIGINT NOT NULL DEFAULT 1, -- DM on credited deposit
+                    lang          TEXT NOT NULL DEFAULT 'ru'   -- UI language: ru/en/zh
                 );
                 CREATE TABLE IF NOT EXISTS user_wallets (
                     tg_id      BIGINT PRIMARY KEY,
@@ -349,6 +350,9 @@ class Ledger:
             )
             self._conn.execute("ALTER TABLE bets ADD COLUMN IF NOT EXISTS close_at BIGINT")
             self._conn.execute("ALTER TABLE tx_log ADD COLUMN IF NOT EXISTS status TEXT")
+            self._conn.execute(
+                "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'ru'"
+            )
             self._conn.execute(
                 "ALTER TABLE bets ADD COLUMN IF NOT EXISTS deadline_notified BIGINT NOT NULL DEFAULT 0"
             )
@@ -1696,18 +1700,22 @@ class Ledger:
         with self._lock:
             self.ensure_user(tg_id, None)
             row = self._conn.execute(
-                "SELECT reaction_tips, notify_deposits FROM user_settings WHERE tg_id = %s",
+                "SELECT reaction_tips, notify_deposits, lang FROM user_settings WHERE tg_id = %s",
                 (tg_id,),
             ).fetchone()
         if row:
             return {
                 "reaction_tips": bool(row["reaction_tips"]),
                 "notify_deposits": bool(row["notify_deposits"]),
+                "lang": row["lang"] or "ru",
             }
-        return {"reaction_tips": True, "notify_deposits": True}
+        return {"reaction_tips": True, "notify_deposits": True, "lang": "ru"}
 
-    def set_setting(self, tg_id: int, key: str, value: bool) -> None:
-        if key not in ("reaction_tips", "notify_deposits"):
+    def set_setting(self, tg_id: int, key: str, value: bool | str) -> None:
+        if key == "lang":
+            if value not in ("ru", "en", "zh"):
+                raise ValueError(f"unknown language: {value}")
+        elif key not in ("reaction_tips", "notify_deposits"):
             raise ValueError(f"unknown setting: {key}")
         with self._lock:
             self.ensure_user(tg_id, None)
@@ -1715,9 +1723,10 @@ class Ledger:
                 "INSERT INTO user_settings (tg_id) VALUES (%s) ON CONFLICT (tg_id) DO NOTHING",
                 (tg_id,)
             )
+            param = (1 if value else 0) if isinstance(value, bool) else value
             self._conn.execute(
                 f"UPDATE user_settings SET {key} = %s WHERE tg_id = %s",
-                (1 if value else 0, tg_id),
+                (param, tg_id),
             )
             self._conn.commit()
 

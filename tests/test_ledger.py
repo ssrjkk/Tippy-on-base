@@ -480,15 +480,34 @@ def test_creator_fees_only_market_fees(ledger):
 
 
 def test_settings_defaults(ledger):
-    assert ledger.get_settings(ALICE) == {"reaction_tips": True, "notify_deposits": True}
+    assert ledger.get_settings(ALICE) == {
+        "reaction_tips": True,
+        "notify_deposits": True,
+        "lang": "ru",
+    }
 
 
 def test_settings_toggle_and_unknown_key(ledger):
     ledger.set_setting(ALICE, "reaction_tips", False)
     ledger.set_setting(ALICE, "notify_deposits", False)
-    assert ledger.get_settings(ALICE) == {"reaction_tips": False, "notify_deposits": False}
+    assert ledger.get_settings(ALICE) == {
+        "reaction_tips": False,
+        "notify_deposits": False,
+        "lang": "ru",
+    }
     try:
         ledger.set_setting(ALICE, "bogus", True)
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
+
+
+def test_settings_language_roundtrip(ledger):
+    for code in ("en", "zh", "ru"):
+        ledger.set_setting(ALICE, "lang", code)
+        assert ledger.get_settings(ALICE)["lang"] == code
+    try:
+        ledger.set_setting(ALICE, "lang", "de")
         raise AssertionError("expected ValueError")
     except ValueError:
         pass

@@ -4,10 +4,81 @@ from aiogram import F, types
 from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
+from bot import i18n
+
 from . import _common as common
 from .bets import _bets_text, _market_detail_text
 from .stats import _history_text, _stats_text, _top_text
 from .wallet import _balance_text, _deposit_text, _donate_text
+
+
+def _lang(tg_id: int) -> str:
+    return i18n.norm(common.ledger.get_settings(tg_id).get("lang"))
+
+
+def _fmt_balance(tg_id: int) -> str:
+    bal = common.ledger.balance(tg_id)
+    return f"{bal:.6f}".rstrip("0").rstrip(".")
+
+
+@common.router.message(Command("about"))
+async def cmd_about(message: types.Message) -> None:
+    common.ledger.ensure_user(message.from_user.id, message.from_user.username)
+    lang = _lang(message.from_user.id)
+    await message.answer(
+        f"{i18n.t(lang, 'about_title')}\n\n{i18n.t(lang, 'about_body')}",
+        reply_markup=common._menu_kb(lang),
+    )
+
+
+@common.router.callback_query(F.data == "about")
+async def cb_about(cb: types.CallbackQuery) -> None:
+    user = cb.from_user
+    if not user:
+        return
+    lang = _lang(user.id)
+    await common._edit_menu(
+        cb,
+        f"{i18n.t(lang, 'about_title')}\n\n{i18n.t(lang, 'about_body')}",
+        common._menu_kb(lang),
+    )
+    await cb.answer()
+
+
+@common.router.message(Command("language"))
+async def cmd_language(message: types.Message) -> None:
+    common.ledger.ensure_user(message.from_user.id, message.from_user.username)
+    lang = _lang(message.from_user.id)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.LANG_NAME[code], callback_data=f"setlang:{code}"
+                )
+            ]
+            for code in i18n.LANGS
+        ]
+    )
+    await message.answer(i18n.t(lang, "lang_title"), reply_markup=kb)
+
+
+@common.router.callback_query(F.data.startswith("setlang:"))
+async def cb_setlang(cb: types.CallbackQuery) -> None:
+    user = cb.from_user
+    if not user:
+        return
+    code = cb.data.split(":", 1)[1]
+    if code not in i18n.LANGS:
+        await cb.answer()
+        return
+    common.ledger.set_setting(user.id, "lang", code)
+    await common._edit_menu(
+        cb,
+        f"{i18n.t(code, 'lang_set', name=i18n.LANG_NAME[code])}\n\n"
+        f"{i18n.t(code, 'menu_balance', bal=_fmt_balance(user.id))}",
+        common._menu_kb(code),
+    )
+    await cb.answer()
 
 
 @common.router.message(Command("start", "help"))
@@ -51,10 +122,10 @@ async def cmd_start(message: types.Message, command: CommandObject) -> None:
 @common.router.message(Command("menu"))
 async def cmd_menu(message: types.Message) -> None:
     common.ledger.ensure_user(message.from_user.id, message.from_user.username)
-    bal = common.ledger.balance(message.from_user.id)
+    lang = _lang(message.from_user.id)
     await message.answer(
-        f"💰 Баланс: <b>{bal:.6f}".rstrip("0").rstrip(".") + " USDC</b>",
-        reply_markup=common._menu_kb(),
+        i18n.t(lang, "menu_balance", bal=_fmt_balance(message.from_user.id)),
+        reply_markup=common._menu_kb(lang),
     )
 
 
@@ -238,31 +309,36 @@ async def on_menu(cb: types.CallbackQuery) -> None:
 
 
 async def _settings_kb_text(tg_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    lang = _lang(tg_id)
     s = common.ledger.get_settings(tg_id)
-    react = "✅ вкл" if s["reaction_tips"] else "⛔ выкл"
-    notif = "✅ вкл" if s["notify_deposits"] else "⛔ выкл"
+    react = i18n.t(lang, "on") if s["reaction_tips"] else i18n.t(lang, "off")
+    notif = i18n.t(lang, "on") if s["notify_deposits"] else i18n.t(lang, "off")
     text = (
-        "⚙️ <b>Настройки</b>\n\n"
-        f"⚡ <b>Реакции-чаевые</b> — {'включены' if s['reaction_tips'] else 'выключены'}.\n"
-        "Когда ставишь реакцию на сообщение — автору начисляются USDC.\n\n"
-        f"🔔 <b>Уведомления о депозитах</b> — {'включены' if s['notify_deposits'] else 'выключены'}.\n"
-        "Сообщение при зачислении депозита."
+        f"{i18n.t(lang, 'set_title')}\n\n"
+        f"{i18n.t(lang, 'set_react', state=react)}\n\n"
+        f"{i18n.t(lang, 'set_notif', state=notif)}"
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"⚡ Реакции-чаевые: {react}",
+                    text=f"⚡ {i18n.t(lang, 'on') if s['reaction_tips'] else i18n.t(lang, 'off')}",
                     callback_data="set:react",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f"🔔 Депозиты: {notif}",
+                    text=f"🔔 {i18n.t(lang, 'on') if s['notify_deposits'] else i18n.t(lang, 'off')}",
                     callback_data="set:notif",
                 )
             ],
-            [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],
+            [
+                InlineKeyboardButton(
+                    text=i18n.t(lang, "btn_lang", name=i18n.LANG_NAME[lang]),
+                    callback_data="set:lang",
+                )
+            ],
+            [InlineKeyboardButton(text=i18n.t(lang, "btn_back"), callback_data="menu")],
         ]
     )
     return text, kb
@@ -281,6 +357,22 @@ async def cb_settings(cb: types.CallbackQuery) -> None:
     if not user:
         return
     _, key = cb.data.split(":")
+    if key == "lang":
+        lang = _lang(user.id)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=i18n.LANG_NAME[code], callback_data=f"setlang:{code}"
+                    )
+                ]
+                for code in i18n.LANGS
+            ]
+            + [[InlineKeyboardButton(text=i18n.t(lang, "btn_back"), callback_data="settings")]]
+        )
+        await common._edit_menu(cb, i18n.t(lang, "lang_title"), kb)
+        await cb.answer()
+        return
     if key == "react":
         cur = common.ledger.get_settings(user.id)["reaction_tips"]
         common.ledger.set_setting(user.id, "reaction_tips", not cur)
@@ -300,11 +392,11 @@ async def cb_menu(cb: types.CallbackQuery) -> None:
     user = cb.from_user
     if not user:
         return
-    bal = common.ledger.balance(user.id)
+    lang = _lang(user.id)
     await common._edit_menu(
         cb,
-        f"💰 Баланс: <b>{bal:.6f}".rstrip("0").rstrip(".") + " USDC</b>",
-        common._menu_kb(),
+        i18n.t(lang, "menu_balance", bal=_fmt_balance(user.id)),
+        common._menu_kb(lang),
     )
     await cb.answer()
 

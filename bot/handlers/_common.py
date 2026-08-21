@@ -11,7 +11,7 @@ from decimal import Decimal
 from aiogram import Router, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .. import base, config, wallets
+from .. import base, config, i18n, wallets
 from .. import qr as qrlib
 from ..ledger import ledger
 
@@ -176,36 +176,22 @@ async def _get_bot_username(bot) -> str:
     return _bot_username
 
 
-def _menu_kb() -> InlineKeyboardMarkup:
+def _menu_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    def b(key: str, cb: str | None = None) -> InlineKeyboardButton:
+        if key == "about":
+            return InlineKeyboardButton(text=i18n.t(lang, "btn_about"), callback_data="about")
+        return InlineKeyboardButton(text=i18n.t(lang, f"btn_{key}"), callback_data=cb or key)
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="💰 Баланс", callback_data="bal"),
-                InlineKeyboardButton(text="💳 Пополнить", callback_data="dep"),
-            ],
-            [
-                InlineKeyboardButton(text="💸 Чаевые", callback_data="tip"),
-                InlineKeyboardButton(text="🧠 ИИ-ассистент", callback_data="ask"),
-            ],
-            [
-                InlineKeyboardButton(text="📈 Рынки", callback_data="markets_amm"),
-                InlineKeyboardButton(text="🎲 Ставки", callback_data="bets"),
-            ],
-            [
-                InlineKeyboardButton(text="💛 Донаты", callback_data="donate"),
-                InlineKeyboardButton(text="🏆 Топ", callback_data="top"),
-            ],
-            [
-                InlineKeyboardButton(text="🧾 История", callback_data="hist"),
-                InlineKeyboardButton(text="📊 Статы", callback_data="stats"),
-            ],
-            [
-                InlineKeyboardButton(text="👛 Кошелёк", callback_data="wallet"),
-                InlineKeyboardButton(text="🔐 Платные посты", callback_data="paywall_list"),
-            ],
-            [
-                InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings"),
-            ],
+            [b("bal"), b("dep")],
+            [b("tip"), b("ask")],
+            [b("markets", "markets_amm"), b("bets")],
+            [b("donate"), b("top")],
+            [b("hist"), b("stats")],
+            [b("wallet"), b("paywall")],
+            [b("settings")],
+            [b("about")],
         ]
     )
 
