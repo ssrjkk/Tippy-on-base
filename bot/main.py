@@ -138,20 +138,40 @@ async def housekeeping_watcher() -> None:
 
 
 async def _run_webhook(stop: asyncio.Event | None = None) -> None:
-    """Register the webhook with Telegram, then keep the watchers alive.
+    """Register the webhook with Telegram, serve the API, keep watchers alive.
 
-    The FastAPI app (web/server.py, which hosts the hook endpoint) runs as a
-    separate process behind a reverse proxy; this entrypoint is only the bot
-    side (webhook registration + deposit/withdraw/market watchers).
+    Single-process mode for hosts like Render: uvicorn serves web/server.py
+    (which includes the /telegram-webhook endpoint) on $PORT while the
+    deposit/withdraw/market watchers run as tasks in the same loop. Without a
+    bound port the platform health check kills the service.
     """
+    import os
+
+    import uvicorn
+
     from web import hook
+    from web.server import app as web_app
 
     await hook.bot.set_webhook(
         url=config.WEBHOOK_URL, secret_token=hook.webhook_secret()
     )
     log.info("webhook registered: %s", config.WEBHOOK_URL)
+    port = int(os.environ.get("PORT", str(config.WEB_PORT)))
+    uvi = uvicorn.Server(
+        uvicorn.Config(web_app, host=config.WEB_HOST, port=port, log_level="info")
+    )
+    server = asyncio.create_task(uvi.serve())
     wait = stop or asyncio.Event()
-    await wait.wait()
+    stop_task = asyncio.create_task(wait.wait())
+    try:
+        # Either the stop signal or uvicorn exiting (SIGTERM -> graceful
+        # shutdown) ends the wait; both are cancelled/awaited below so no
+        # "Task was destroyed but it is pending" noise on shutdown.
+        await asyncio.wait([server, stop_task], return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        stop_task.cancel()
+        server.cancel()
+        await asyncio.gather(server, stop_task, return_exceptions=True)
 
 
 async def main() -> None:
@@ -170,14 +190,35 @@ async def main() -> None:
         await bot.set_my_commands(
             [
                 AI_BOT_COMMAND,
+                types.BotCommand(command="menu", description="Главное меню"),
+                types.BotCommand(command="balance", description="Баланс кошелька"),
+                types.BotCommand(command="deposit", description="Пополнить USDC"),
+                types.BotCommand(command="withdraw", description="Вывести USDC"),
                 types.BotCommand(command="tip", description="Чаевые USDC"),
+                types.BotCommand(command="rain", description="Дождь: раздать USDC в чате"),
                 types.BotCommand(command="markets", description="Рынки предсказаний"),
-                types.BotCommand(command="bets", description="Ставки-пулы"),
-                types.BotCommand(command="deposit", description="Пополнить"),
-                types.BotCommand(command="withdraw", description="Вывести"),
-                types.BotCommand(command="balance", description="Баланс"),
-                types.BotCommand(command="ask", description="Спросить ИИ"),
-                types.BotCommand(command="menu", description="Меню"),
+                types.BotCommand(command="market", description="Открыть рынок по id"),
+                types.BotCommand(command="trade", description="Купить доли на рынке"),
+                types.BotCommand(command="sell", description="Продать доли"),
+                types.BotCommand(command="positions", description="Мои позиции и PnL"),
+                types.BotCommand(command="bet", description="Ставка-пул: создать/поставить"),
+                types.BotCommand(command="bets", description="Открытые ставки-пулы"),
+                types.BotCommand(command="mybets", description="Мои ставки"),
+                types.BotCommand(command="resolve", description="Закрыть ставку (создатель)"),
+                types.BotCommand(command="cancel", description="Отменить свою ставку"),
+                types.BotCommand(command="stats", description="Статистика бота"),
+                types.BotCommand(command="top", description="Топ пользователей"),
+                types.BotCommand(command="history", description="История операций"),
+                types.BotCommand(command="donate", description="Твоя страница донатов"),
+                types.BotCommand(command="link", description="Привязать внешний кошелёк"),
+                types.BotCommand(command="confirm", description="Подтвердить привязку"),
+                types.BotCommand(command="claim", description="Забрать с внешнего адреса"),
+                types.BotCommand(command="wallet", description="Кошелёк: адрес и ключи"),
+                types.BotCommand(command="import", description="Импорт по сид-фразе"),
+                types.BotCommand(command="export", description="Выгрузить ключ и сид"),
+                types.BotCommand(command="tx", description="Проверить транзакцию в Base"),
+                types.BotCommand(command="paywall", description="Платные посты"),
+                types.BotCommand(command="settings", description="Настройки"),
             ]
         )
     except Exception as e:

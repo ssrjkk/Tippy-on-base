@@ -184,6 +184,10 @@ def _menu_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="💳 Пополнить", callback_data="dep"),
             ],
             [
+                InlineKeyboardButton(text="💸 Чаевые", callback_data="tip"),
+                InlineKeyboardButton(text="🧠 ИИ-ассистент", callback_data="ask"),
+            ],
+            [
                 InlineKeyboardButton(text="📈 Рынки", callback_data="markets_amm"),
                 InlineKeyboardButton(text="🎲 Ставки", callback_data="bets"),
             ],
@@ -194,6 +198,10 @@ def _menu_kb() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="🧾 История", callback_data="hist"),
                 InlineKeyboardButton(text="📊 Статы", callback_data="stats"),
+            ],
+            [
+                InlineKeyboardButton(text="👛 Кошелёк", callback_data="wallet"),
+                InlineKeyboardButton(text="🔐 Платные посты", callback_data="paywall_list"),
             ],
             [
                 InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings"),

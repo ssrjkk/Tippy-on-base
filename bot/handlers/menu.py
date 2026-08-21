@@ -165,7 +165,7 @@ async def cb_paywall_buy(cb: types.CallbackQuery) -> None:
 
 
 @common.router.callback_query(
-    F.data.in_({"bal", "dep", "top", "hist", "bets", "donate", "stats", "settings", "betcreate", "paywall_list"})
+    F.data.in_({"bal", "dep", "top", "hist", "bets", "donate", "stats", "settings", "betcreate", "paywall_list", "tip", "ask", "wallet"})
 )
 async def on_menu(cb: types.CallbackQuery) -> None:
     user = cb.from_user
@@ -189,6 +189,31 @@ async def on_menu(cb: types.CallbackQuery) -> None:
     elif cb.data == "settings":
         text, kb = await _settings_kb_text(user.id)
         await common._edit_menu(cb, text, kb)
+    elif cb.data == "tip":
+        await common._edit_menu(
+            cb,
+            "💸 <b>Чаевые</b>\n\n"
+            "/tip 5 @ник — кинуть 5 USDC\n"
+            "/tip 5 ответом на сообщение — автору.\n\n"
+            "В группах работают реакции-чаевые ⚡ — ставь 🔥/❤️/⚡ на сообщение, "
+            "и автор получает USDC (вкл/выкл: /settings).",
+        )
+    elif cb.data == "ask":
+        await common._edit_menu(
+            cb,
+            "🧠 <b>ИИ-ассистент</b>\n\n"
+            "/ask &lt;вопрос&gt; — например: /ask Что такое Base?\n"
+            "Можно задать вопрос ответом на сообщение — ИИ увидит его контекст.",
+        )
+    elif cb.data == "wallet":
+        await common._edit_menu(
+            cb,
+            "👛 <b>Кошелёк</b>\n\n"
+            "/wallet — адрес и ключи\n"
+            "/deposit — пополнить · /withdraw &lt;адрес&gt; &lt;сумма&gt; — вывести\n"
+            "/link &lt;адрес&gt; — привязать внешний кошелёк (авто-зачисление)\n"
+            "/import — вход по сид-фразе · /export — выгрузка ключа",
+        )
     elif cb.data == "betcreate":
         await common._edit_menu(
             cb,

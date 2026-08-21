@@ -11,6 +11,7 @@ import hmac
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
@@ -20,7 +21,10 @@ from bot.handlers import router as handlers_router
 
 log = logging.getLogger("tipbot.hook")
 
-bot = Bot(token=config.BOT_TOKEN, default=ParseMode.HTML)
+bot = Bot(
+    token=config.BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+)
 # One aiogram Dispatcher may own a router, and only one. The bot process
 # (bot/main.py) attaches handlers.router to its own dispatcher; this webhook
 # process attaches it to `dp` — except in tests, where both run in one
