@@ -222,16 +222,20 @@ def install_rpc(monkeypatch, logs=(), block=1000, receipts=None, fail_first=0, t
 def e2e(ledger, monkeypatch):
     """Fresh ledger wired into handlers, the base layer AND the bot watchers;
     no throttling."""
+    from bot.ledger import AsyncLedger
     monkeypatch.setattr(config, "MONEY_CMD_COOLDOWN_SECONDS", 0)
     monkeypatch.setattr(base, "ledger", ledger)
-    monkeypatch.setattr(botmain, "ledger", ledger)
+    monkeypatch.setattr(botmain, "ledger", AsyncLedger(ledger))
     return ledger
 
 
 @pytest.fixture()
 def api(e2e, monkeypatch):
-    monkeypatch.setattr(web_server, "ledger", e2e)
-    monkeypatch.setattr(web_server, "hot_balance", lambda: 500.0)
+    from bot.ledger import AsyncLedger
+    monkeypatch.setattr(web_server, "ledger", AsyncLedger(e2e))
+    async def _hb():
+        return 500.0
+    monkeypatch.setattr(web_server, "hot_balance", _hb)
     return TestClient(web_server.app)
 
 

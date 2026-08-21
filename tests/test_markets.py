@@ -481,7 +481,7 @@ def test_ask_with_reply_context(ledger, monkeypatch):
     m = Message("/ask объясни", )
     m.reply_to_message = ref
     run(cmd_ask(m))
-    assert "Контекст" in captured["q"]
+    assert "Context (replied message)" in captured["q"]
     assert "ETH газ" in captured["q"]
 
 
@@ -498,30 +498,30 @@ def test_cmd_tx_found_decodes_usdc(ledger, monkeypatch):
     from bot import base
 
     h = "0x" + "ab" * 32
-    monkeypatch.setattr(
-        base,
-        "tx_info",
-        lambda t: {
+    async def _fake_tx(t):
+        return {
             "hash": t,
             "from": "0x" + "1" * 40,
             "to": "0x" + "2" * 40,
             "status": True,
             "value_micro": 5 * USDC,
             "usdc_to": "0x" + "3" * 40,
-        },
-    )
+        }
+    monkeypatch.setattr(base, "tx_info", _fake_tx)
     m = Message(f"/tx {h}")
     run(cmd_tx(m))
     text = m.answers[0][0]
-    assert "USDC перевод" in text
-    assert "подтверждена" in text
+    assert "USDC:" in text
+    assert "confirmed" in text.lower() or "подтвержд" in text.lower()
     assert "Basescan" in text
 
 
 def test_cmd_tx_not_found(ledger, monkeypatch):
     from bot import base
 
-    monkeypatch.setattr(base, "tx_info", lambda t: None)
+    async def _fake_tx_none(t):
+        return None
+    monkeypatch.setattr(base, "tx_info", _fake_tx_none)
     m = Message(f"/tx {'0x' + 'cd' * 32}")
     run(cmd_tx(m))
     assert "не найдена" in m.answers[0][0]

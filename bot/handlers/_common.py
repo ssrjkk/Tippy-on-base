@@ -1,4 +1,4 @@
-"""Shared state and helpers for the bot.handlers package.
+﻿"""Shared state and helpers for the bot.handlers package.
 
 All mutating state that tests patch (ledger, _now, _qr_bytes, _money_cmd_last)
 lives here so a single monkeypatch on bot.handlers._common works everywhere.
@@ -13,7 +13,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .. import base, config, i18n, wallets
 from .. import qr as qrlib
-from ..ledger import ledger
+from ..ledger import async_ledger as ledger
 
 __all__ = [
     "AMOUNT_RE",
@@ -59,61 +59,20 @@ BET_LINK_RE = re.compile(r"^bet_(\d{1,20})$")
 PAYWALL_LINK_RE = re.compile(r"^paywall_(\d{1,20})$")
 DEADLINE_RE = re.compile(r"^(\d{1,3})([hd])$")
 
-# Quick-amount buttons for inline betting.
 QUICK_AMOUNTS = ("5", "10", "25", "50")
 
-HELP = (
-    "🤖 <b>Tippy</b> — экономика сообщества в USDC на <b>Base</b>.\n"
-    "🟦 Сеть Base · монета USDC · все переводы в блокчейне\n\n"
-    "💸 <b>Чаевые</b>\n"
-    "• /tip 5 @nick — кинуть 5 USDC\n"
-    "• /tip 5 (ответом на сообщение) — кинуть автору\n"
-    "• 🔥/❤️/⚡/👏/🎉 на сообщение — реакция-чаевые (в группах)\n"
-    "• /rain 10 — разбросать 10 USDC случайным участникам группы 🌧️\n\n"
-    "📈 <b>Рынки предсказаний (AMM)</b>\n"
-    "• /market create &lt;банк&gt; &lt;вопрос&gt; | &lt;в1&gt; | &lt;в2&gt; [24h] — создать рынок с живыми котировками\n"
-    "• /markets — открытые рынки (кнопки)\n"
-    "• /trade &lt;id&gt; &lt;номер&gt; &lt;сумма&gt; — купить доли по живой цене\n"
-    "• /sell &lt;id&gt; &lt;номер&gt; [50%] — продать доли в любой момент\n"
-    "• /positions — твои позиции и PnL\n\n"
-    "🎲 <b>Ставки (пулы)</b>\n"
-    "• /bet create &lt;вопрос&gt; | &lt;в1&gt; | &lt;в2&gt; [24h] — создать\n"
-    "• /bets — открытые ставки (кнопки)\n"
-    "• /bet &lt;id&gt; &lt;номер&gt; &lt;сумма&gt; — поставить\n"
-    "• /mybets — твои позиции\n"
-    "• /resolve &lt;id&gt; &lt;номер&gt; — закрыть (создатель)\n"
-    "• /cancel &lt;id&gt; — отменить / вернуть деньги после истечения\n\n"
-    "🧠 <b>ИИ-ассистент</b>\n"
-    "• /ask &lt;вопрос&gt; — спросить ИИ о чём угодно (можно ответом на сообщение)\n\n"
-    "💰 <b>Кошелёк</b>\n"
-    "• /donate — твоя страница донатов с QR\n"
-    "• /deposit — QR + адрес для пополнения\n"
-    "• /link &lt;адрес&gt; — привязать кошелёк (авто-зачисление)\n"
-    "• /withdraw &lt;адрес&gt; &lt;сумма&gt; — вывод (комиссия 1%, мин. 1 USDC)\n\n"
-    "📊 <b>Ещё</b>\n"
-    "• /menu — меню · /balance · /stats · /top · /history\n"
-    "• /settings — уведомления и реакции ⚙️\n\n"
-    "🔐 <b>Платный контент</b>\n"
-    "• /paywall create 5 Заголовок — создать платный пост\n"
-    "• /paywall list · /paywall buy &lt;id&gt; — купить и открыть\n"
-    "• /paywall subscribe @канал — доступ к платному каналу\n\n"
-    "🟦 <b>На Base</b> · 🪙 USDC (ERC-20) · 🔍 все транзакции в блокчейне\n"
-    "🏗️ <b>Base</b> — безопасная, дешёвая, развивающаяся L2 от Coinbase: base.org\n"
-    "👛 Свой кошелёк: /wallet · выгрузить ключ и сид: /wallet export · импорт по сид-фразе: /import"
-)
+HELP = i18n.t("ru", "help_full")
 
 
-def user_lang(tg_id: int) -> str:
-    """The user's UI language from settings (defaults to Russian)."""
+async def user_lang(tg_id: int) -> str:
     try:
-        s = ledger.get_settings(tg_id)
+        s = await ledger.get_settings(tg_id)
         return i18n.norm(s.get("lang"))
     except Exception:
         return "ru"
 
 
 def help_text(lang: str = "ru") -> str:
-    """Localized full command reference."""
     return i18n.t(lang, "help_full")
 
 
@@ -162,12 +121,7 @@ def _now() -> float:
 _money_cmd_last: dict[tuple[int, str], float] = {}
 
 
-def _throttle(tg_id: int, action: str) -> str | None:
-    """Anti-spam: return a wait message if the user is over the cooldown.
-
-    Bounded in-memory map (cleared when it grows too large); the cooldown is
-    per user per action so normal multi-action use is not penalised.
-    """
+async def _throttle(tg_id: int, action: str) -> str | None:
     cooldown = config.MONEY_CMD_COOLDOWN_SECONDS
     if cooldown <= 0:
         return None
@@ -175,7 +129,9 @@ def _throttle(tg_id: int, action: str) -> str | None:
     now = _now()
     last = _money_cmd_last.get(key, 0.0)
     if now - last < cooldown:
-        return f"⏳ Слишком часто. Подожди {max(1, int(cooldown - (now - last)) + 1)} сек."
+        lang = await user_lang(tg_id)
+        remaining = max(1, int(cooldown - (now - last)) + 1)
+        return i18n.t(lang, "throttle", sec=remaining)
     if len(_money_cmd_last) > 100_000:
         _money_cmd_last.clear()
     _money_cmd_last[key] = now
@@ -206,19 +162,19 @@ def _menu_kb(lang: str = "ru") -> InlineKeyboardMarkup:
             [b("wallet"), b("paywall")],
             [b("settings")],
             [b("about")],
+            [InlineKeyboardButton(text=i18n.t(lang, "btn_mini_app"), callback_data="miniapp")],
         ]
     )
 
 
-def _qr_bytes(data: str) -> bytes | None:
+async def _qr_bytes(data: str) -> bytes | None:
     try:
-        return qrlib.qr_bytes(data)
+        return await qrlib.qr_bytes(data)
     except Exception:
         return None
 
 
 async def _edit_menu(cb: types.CallbackQuery, text: str, reply_markup=None) -> None:
-    """Edit a menu message, falling back to caption for media messages."""
     try:
         await cb.message.edit_text(text, reply_markup=reply_markup)
     except Exception:

@@ -40,7 +40,7 @@ def test_stats_tracks_fees(client, ledger):
 def test_wallet_shape(client, monkeypatch):
     from web import server
 
-    def _raise():
+    async def _raise():
         raise ConnectionError("no rpc")
 
     monkeypatch.setattr(server, "hot_balance", _raise)
@@ -162,7 +162,7 @@ def test_solvency_tracks_liabilities(client, ledger):
 def test_solvency_insolvent_when_rpc_down(client, monkeypatch):
     from web import server
 
-    def _raise():
+    async def _raise():
         raise ConnectionError("no rpc")
 
     monkeypatch.setattr(server, "hot_balance", _raise)
@@ -177,7 +177,9 @@ def test_solvency_uses_vault_as_primary_reserve(client, ledger, monkeypatch):
 
     vault_addr = "0x" + "ab" * 20
     monkeypatch.setattr(server.config, "VAULT_ADDRESS", vault_addr)
-    monkeypatch.setattr(server, "vault_balance", lambda: 25.5)
+    async def _vb():
+        return 25.5
+    monkeypatch.setattr(server, "vault_balance", _vb)
     ledger.credit(777, 12_000_000, "deposit")
     r = client.get("/api/solvency").json()
     assert r["vault_address"] == vault_addr
@@ -192,7 +194,7 @@ def test_solvency_vault_rpc_down_keeps_hot_wallet_source(client, monkeypatch):
 
     monkeypatch.setattr(server.config, "VAULT_ADDRESS", "0x" + "cd" * 20)
 
-    def _raise():
+    async def _raise():
         raise ConnectionError("no rpc")
 
     monkeypatch.setattr(server, "vault_balance", _raise)

@@ -7,3 +7,4 @@ py-evm==0.12.1b1
 ruff==0.16.4
 coverage==7.14.1
 pytest==8.4.2
+httpx>=0.28

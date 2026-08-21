@@ -1,5 +1,6 @@
 """Local QR code generation (no external HTTP dependency)."""
 
+import asyncio
 import io
 
 from qrcode import QRCode
@@ -7,7 +8,7 @@ from qrcode.constants import ERROR_CORRECT_L
 from qrcode.image.pil import PilImage
 
 
-def qr_bytes(data: str, size: int = 400) -> bytes:
+def _qr_bytes_sync(data: str, size: int = 400) -> bytes:
     """Render `data` as a PNG QR code in memory (pure local, no network).
 
     `size` is the target pixel width/height of the rendered image.
@@ -21,3 +22,8 @@ def qr_bytes(data: str, size: int = 400) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+async def qr_bytes(data: str, size: int = 400) -> bytes:
+    """Async: render a QR code off the event loop (CPU-bound PIL work)."""
+    return await asyncio.to_thread(_qr_bytes_sync, data, size)

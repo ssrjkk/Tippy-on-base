@@ -16,6 +16,7 @@ sys.path.insert(0, ROOT)
 # Config reads these at import time.
 os.environ.setdefault("BOT_TOKEN", "0:test")
 os.environ.setdefault("HOT_WALLET_KEY", "0x" + "11" * 32)
+os.environ.setdefault("WALLET_ENC_KEY", "a" * 32)  # Test-only: 32-char key for wallet encryption
 TEST_DB_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5433/tipbot_test"
 )
@@ -55,7 +56,11 @@ def ledger(monkeypatch):
     fresh = ledger_mod.Ledger(TEST_DB_URL)
     _reset_db(fresh)
     monkeypatch.setattr(ledger_mod, "ledger", fresh)
-    monkeypatch.setattr(handlers._common, "ledger", fresh)
+    # Handlers now call the async proxy; wrap the fresh instance so awaited
+    # ledger calls hit the hermetic test database.
+    async_fresh = ledger_mod.AsyncLedger(fresh)
+    monkeypatch.setattr(ledger_mod, "async_ledger", async_fresh)
+    monkeypatch.setattr(handlers._common, "ledger", async_fresh)
     # Web modules bind the singleton at import time; rebind them so web
     # tests are hermetic (test database, not whatever DATABASE_URL points to).
     import web.auth
@@ -64,5 +69,6 @@ def ledger(monkeypatch):
     monkeypatch.setattr(web.server, "ledger", fresh)
     monkeypatch.setattr(web.auth, "ledger", fresh)
     handlers._common._money_cmd_last.clear()
+    web.server._rl_state.clear()
     yield fresh
     fresh.close()  # release the open transaction, or TRUNCATE in the next test hangs

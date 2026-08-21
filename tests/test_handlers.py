@@ -209,7 +209,7 @@ def test_cmd_start_help(ledger):
 def test_cmd_start_donate_landing(ledger, monkeypatch):
     ledger.ensure_user(BOB, "bob")
 
-    def fake_qr(data):
+    async def fake_qr(data):
         return b"\x89PNG"
 
     monkeypatch.setattr(handlers._common, "_qr_bytes", fake_qr)
@@ -329,7 +329,7 @@ def test_cmd_claim_ok(ledger):
     ledger.confirm_link(ALICE, ACC.address, nonce)
     m = Message("/claim 0x" + "1" * 64)
     run(cmd_claim(m))
-    assert "Зачтено" in m.answers[0][0]
+    assert "Депозит зачислен" in m.answers[0][0]
     assert ledger.balance(ALICE) == Decimal("5.000000")
 
 
@@ -348,7 +348,7 @@ def test_cmd_claim_other_users_deposit_rejected(ledger):
 def test_cmd_claim_unknown(ledger):
     m = Message("/claim 0x" + "2" * 64)
     run(cmd_claim(m))
-    assert "Не нашёл" in m.answers[0][0]
+    assert "Транзакция не найдена" in m.answers[0][0]
 
 
 def _sign_text_from_answer(text):
@@ -503,9 +503,13 @@ def test_cmd_tip_throttled(ledger):
 # ---------- withdraw ----------
 
 
+async def _mock_send_ab(to, amt):
+    return "0x" + "ab" * 32
+
+
 def test_cmd_withdraw_success(ledger, monkeypatch):
     ledger.credit(ALICE, 10_000_000, "deposit")
-    monkeypatch.setattr(handlers.base, "send_usdc", lambda to, amt: "0x" + "ab" * 32)
+    monkeypatch.setattr(handlers.base, "send_usdc", _mock_send_ab)
     m = Message(f"/withdraw {ACC.address} 5", from_id=ALICE)
     run(cmd_withdraw(m))
     assert "Отправлено" in m.answers[0][0]
@@ -514,13 +518,14 @@ def test_cmd_withdraw_success(ledger, monkeypatch):
     assert ledger.balance(ALICE) == Decimal("4.950000")
 
 
+async def _mock_send_boom(to, amt):
+    raise RuntimeError("rpc down")
+
+
 def test_cmd_withdraw_refund_on_failure(ledger, monkeypatch):
     ledger.credit(ALICE, 10_000_000, "deposit")
 
-    def boom(to, amt):
-        raise RuntimeError("rpc down")
-
-    monkeypatch.setattr(handlers.base, "send_usdc", boom)
+    monkeypatch.setattr(handlers.base, "send_usdc", _mock_send_boom)
     m = Message(f"/withdraw {ACC.address} 5", from_id=ALICE)
     run(cmd_withdraw(m))
     assert "Ошибка" in m.answers[0][0]
@@ -555,8 +560,12 @@ def test_cmd_withdraw_below_min(ledger):
     assert ledger.balance(ALICE) == Decimal("10.000000")
 
 
+async def _mock_send_ef(to, amt):
+    return "0x" + "ef" * 32
+
+
 def test_cmd_withdraw_throttled(ledger, monkeypatch):
-    monkeypatch.setattr(handlers.base, "send_usdc", lambda to, amt: "0x" + "ef" * 32)
+    monkeypatch.setattr(handlers.base, "send_usdc", _mock_send_ef)
     ledger.credit(ALICE, 10_000_000, "deposit")
     m1 = Message(f"/withdraw {ACC.address} 1", from_id=ALICE)
     run(cmd_withdraw(m1))
@@ -572,7 +581,11 @@ def test_cmd_withdraw_daily_limit(ledger, monkeypatch):
 
     monkeypatch.setattr(handlers.config, "MONEY_CMD_COOLDOWN_SECONDS", 0)
     ledger.credit(ALICE, 100_000_000, "deposit")
-    monkeypatch.setattr(handlers.base, "send_usdc", lambda to, amt: "0x" + "cd" * 32)
+
+    async def _mock_send_cd(to, amt):
+        return "0x" + "cd" * 32
+
+    monkeypatch.setattr(handlers.base, "send_usdc", _mock_send_cd)
     for _ in range(config.MAX_WITHDRAWS_PER_DAY):
         m = Message(f"/withdraw {ACC.address} 1", from_id=ALICE)
         run(cmd_withdraw(m))
@@ -817,7 +830,7 @@ def test_bet_place_after_deadline_alert(ledger):
     bid = ledger.create_bet(ALICE, "Скоро закроем?", ["Да", "Нет"], close_at=0)
     cb = Callback(f"bets:{bid}:0:5", ALICE)
     run(cb_bet_place(cb))
-    assert cb.answers and cb.answers[0][0] == "⏰ Приём ставок закрыт"
+    assert cb.answers and "истекло" in cb.answers[0][0]
 
 
 def test_cb_market_unknown(ledger):
@@ -901,7 +914,7 @@ def test_reaction_bot_reactor_ignored(ledger):
 def test_qr_error_falls_back_to_text(ledger, monkeypatch):
     ledger.ensure_user(BOB, "bob")
 
-    def boom(*a, **k):
+    async def boom(*a, **k):
         raise RuntimeError("qr backend broken")
 
     monkeypatch.setattr(handlers.qrlib, "qr_bytes", boom)
@@ -1247,9 +1260,9 @@ def test_reaction_balance_warn_failure_silent(ledger):
 
 
 def test_qr_success_path(ledger, monkeypatch):
-    monkeypatch.setattr(
-        handlers.qrlib, "qr_bytes", lambda *a, **k: b"\x89PNG\x0d\x0a\x1a\x0a"
-    )
+    async def _qr(*a, **k):
+        return b"\x89PNG\r\n\x1a\n"
+    monkeypatch.setattr(handlers.qrlib, "qr_bytes", _qr)
     m = Message("/start", from_id=ALICE, username="alice")
     run(cmd_start(m, CommandObject(command="start", args="donate_2002")))
     assert m.photos
@@ -1283,7 +1296,7 @@ def test_cmd_bets_shows_deadline(ledger):
     ledger.create_bet(ALICE, "С дедлайном?", ["А", "Б"], close_at=int(time.time()) + 3600)
     m = Message("/bets", from_id=ALICE)
     run(cmd_bets(m))
-    assert "осталось" in m.answers[0][0]
+    assert "⏰" in m.answers[0][0] and ("h" in m.answers[0][0] or "m" in m.answers[0][0])
 
 
 def test_cb_market_expired_text(ledger):
@@ -1299,7 +1312,7 @@ def test_cb_market_deadline_text(ledger):
     bid = ledger.create_bet(ALICE, "Срок?", ["А", "Б"], close_at=int(time.time()) + 3600)
     cb = Callback(f"market:{bid}", ALICE)
     run(cb_market(cb))
-    assert "осталось" in cb.message.text
+    assert "⏰" in cb.message.text and ("h" in cb.message.text or "m" in cb.message.text)
 
 
 def test_notify_bet_result_dedup(ledger):

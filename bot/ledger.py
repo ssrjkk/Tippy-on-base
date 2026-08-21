@@ -2087,3 +2087,38 @@ class Ledger:
 
 
 ledger = Ledger()
+
+
+import asyncio
+
+
+class AsyncLedger:
+    """Async proxy over the synchronous :class:`Ledger`.
+
+    Every method call is dispatched to a worker thread via
+    ``asyncio.to_thread`` so the aiogram event loop is never blocked by a
+    synchronous ``psycopg`` query. Handlers ``await`` these calls exactly as
+    if they were native coroutines.
+
+    Non-callable attributes (e.g. ``_conn`` used by tests) pass through
+    unchanged.
+    """
+
+    def __init__(self, real: "Ledger") -> None:
+        # Use object.__setattr__ to avoid any __getattr__ recursion.
+        object.__setattr__(self, "_real", real)
+
+    def __getattr__(self, name: str):
+        attr = getattr(object.__getattribute__(self, "_real"), name)
+        if callable(attr):
+
+            def _wrapper(*args, **kwargs):
+                return asyncio.to_thread(attr, *args, **kwargs)
+
+            return _wrapper
+        return attr
+
+
+# The instance handlers import. Keeps the synchronous `ledger` singleton for
+# tests/non-async contexts while handlers run every query off the event loop.
+async_ledger = AsyncLedger(ledger)

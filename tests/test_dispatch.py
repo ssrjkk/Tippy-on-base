@@ -246,9 +246,9 @@ def test_dispatch_reaction_tip(ledger):
 
 def test_dispatch_donate_landing_with_qr(ledger, monkeypatch):
     ledger.ensure_user(BOB, "bob")
-    monkeypatch.setattr(
-        handlers.qrlib, "qr_bytes", lambda *a, **k: b"\x89PNG\r\n\x1a\n"
-    )
+    async def _qr(*a, **k):
+        return b"\x89PNG\r\n\x1a\n"
+    monkeypatch.setattr(handlers.qrlib, "qr_bytes", _qr)
     s = RecorderSession()
     asyncio.run(
         _mk_dp().feed_update(
@@ -313,19 +313,17 @@ def test_dispatch_tx_lookup(ledger, monkeypatch):
     from bot import base
 
     h = "0x" + "ab" * 32
-    monkeypatch.setattr(
-        base,
-        "tx_info",
-        lambda t: {
+    async def _fake_tx(t):
+        return {
             "hash": t,
             "from": "0x" + "1" * 40,
             "to": "0x" + "2" * 40,
             "status": True,
             "value_micro": 5_000_000,
             "usdc_to": "0x" + "3" * 40,
-        },
-    )
+        }
+    monkeypatch.setattr(base, "tx_info", _fake_tx)
     s = RecorderSession()
     asyncio.run(_mk_dp().feed_update(_mk_bot(s), _message_update(f"/tx {h}")))
     text = next(p["text"] for n, p in s.calls if n == "sendMessage")
-    assert "USDC перевод" in text and "Basescan" in text
+    assert "USDC:" in text and "Basescan" in text

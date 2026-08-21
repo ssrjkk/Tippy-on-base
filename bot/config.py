@@ -87,9 +87,9 @@ MARKET_MAX_TRADE_USDC: Decimal = Decimal(os.environ.get("MARKET_MAX_TRADE_USDC",
 
 # AI assistant (/ask): any OpenAI-compatible chat-completions endpoint works
 # (OpenAI, OpenRouter, local llama/vLLM server, ...). Empty key disables /ask.
-AI_API_URL: str = os.environ.get("AI_API_URL", "https://api.openai.com/v1").rstrip("/")
+AI_API_URL: str = os.environ.get("AI_API_URL", "https://api.groq.com/openai/v1").rstrip("/")
 AI_API_KEY: str | None = os.environ.get("AI_API_KEY", "").strip() or None
-AI_MODEL: str = os.environ.get("AI_MODEL", "gpt-4o-mini")
+AI_MODEL: str = os.environ.get("AI_MODEL", "llama-3.3-70b-versatile")
 AI_TIMEOUT_SECONDS: int = int(os.environ.get("AI_TIMEOUT_SECONDS", "45"))
 AI_COOLDOWN_SECONDS: int = int(os.environ.get("AI_COOLDOWN_SECONDS", "15"))
 AI_MAX_QUESTION_LEN: int = int(os.environ.get("AI_MAX_QUESTION_LEN", "1000"))

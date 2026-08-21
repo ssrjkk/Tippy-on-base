@@ -1,5 +1,6 @@
 """Base network layer: USDC balance, deposit scanning, withdrawals."""
 
+import asyncio
 import threading
 import time
 from decimal import ROUND_CEILING, Decimal
@@ -31,12 +32,17 @@ def hot_wallet() -> ChecksumAddress:
     return HOT_WALLET
 
 
-def hot_balance() -> float:
+def _hot_balance_sync() -> float:
     micro = usdc.functions.balanceOf(HOT_WALLET).call()
     return micro / 10**config.USDC_DECIMALS
 
 
-def tx_info(tx_hash: str) -> dict | None:
+async def hot_balance() -> float:
+    """Async: hot-wallet USDC balance (off the event loop)."""
+    return await asyncio.to_thread(_hot_balance_sync)
+
+
+def _tx_info_sync(tx_hash: str) -> dict | None:
     """Fetch a transaction and decode a USDC transfer out of its input data.
 
     Returns {'hash', 'from', 'to', 'status', 'value_micro', 'usdc_to'} —
@@ -72,7 +78,12 @@ def tx_info(tx_hash: str) -> dict | None:
     return out
 
 
-def vault_balance() -> float | None:
+async def tx_info(tx_hash: str) -> dict | None:
+    """Async: decode a transaction (off the event loop)."""
+    return await asyncio.to_thread(_tx_info_sync, tx_hash)
+
+
+def _vault_balance_sync() -> float | None:
     """On-chain USDC held by the TipBotVault treasury, or None if not deployed.
 
     This is the on-chain proof-of-reserves: anyone can re-verify it directly
@@ -82,6 +93,11 @@ def vault_balance() -> float | None:
         return None
     micro = usdc.functions.balanceOf(Web3.to_checksum_address(config.VAULT_ADDRESS)).call()
     return micro / 10**config.USDC_DECIMALS
+
+
+async def vault_balance() -> float | None:
+    """Async: on-chain vault balance (off the event loop)."""
+    return await asyncio.to_thread(_vault_balance_sync)
 
 
 def _scan_deposits(from_block: int, to_block: int) -> list[dict]:
@@ -113,11 +129,16 @@ def _scan_deposits(from_block: int, to_block: int) -> list[dict]:
     return out
 
 
-def recover_signer(message: str, signature: str) -> str:
+def _recover_signer_sync(message: str, signature: str) -> str:
     """Recover the address that signed `message` (ETH personal_sign)."""
     return w3.eth.account.recover_message(
         encode_defunct(text=message), signature=signature
     )
+
+
+async def recover_signer(message: str, signature: str) -> str:
+    """Async: recover signer (off the event loop)."""
+    return await asyncio.to_thread(_recover_signer_sync, message, signature)
 
 
 def withdraw_fee(amount_micro: int) -> int:
@@ -126,7 +147,7 @@ def withdraw_fee(amount_micro: int) -> int:
     return max(int(fee), 1)
 
 
-def poll_deposits() -> list[dict]:
+def _poll_deposits_sync() -> list[dict]:
     """One sweep: record new deposits; auto-credit ones from linked wallets.
 
     Returns a list of newly credited deposits so the caller can notify users:
@@ -165,7 +186,12 @@ def poll_deposits() -> list[dict]:
     return credited
 
 
-def check_pending_withdraws() -> None:
+async def poll_deposits() -> list[dict]:
+    """Async: run one deposit sweep off the event loop."""
+    return await asyncio.to_thread(_poll_deposits_sync)
+
+
+def _check_pending_withdrawn_sync() -> None:
     """Refund withdrawals that never confirmed (stuck/replaced/reverted/crash).
 
     - status NULL (legacy rows) with a tx_hash were recorded after a successful
@@ -201,8 +227,13 @@ def check_pending_withdraws() -> None:
             ledger.refund_withdraw(wd_id, int(row["tg_id"]), total_micro)
 
 
-def send_usdc(to_address: str, amount_micro: int) -> str:
-    """Send USDC from hot wallet. Returns tx hash. Raises on failure.
+async def check_pending_withdraws() -> None:
+    """Async: run the pending-withdrawal refund sweep off the event loop."""
+    await asyncio.to_thread(_check_pending_withdrawn_sync)
+
+
+def _send_usdc_sync(to_address: str, amount_micro: int) -> str:
+    """Internal sync send USDC from hot wallet. Returns tx hash. Raises on failure.
 
     Serialized by a process lock so two concurrent withdrawals never pick the
     same nonce (which would silently replace one tx with the other).
@@ -230,6 +261,16 @@ def send_usdc(to_address: str, amount_micro: int) -> str:
         )
         signed = acct.sign_transaction(tx)
         return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+
+
+async def send_usdc(to_address: str, amount_micro: int) -> str:
+    """Async wrapper: send USDC from hot wallet without blocking the event loop.
+
+    Runs the synchronous web3 transaction building + signing + sending in a
+    separate thread via asyncio.to_thread, so the bot's event loop stays
+    responsive during the ~10s RPC call.
+    """
+    return await asyncio.to_thread(_send_usdc_sync, to_address, amount_micro)
 
 
 async def kick_expired_channel_subscriptions(bot) -> int:

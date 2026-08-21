@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tippy</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0A0B0D;--card:#14161A;--card2:#1C1F26;--accent:#0052FF;--accent2:#1a6aff;--success:#16a34a;--danger:#ef4444;--text:#fff;--text2:#9aa0a6;--text3:#6b7280;--border:#2a2d35;--radius:12px;--safe-b:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;background:var(--bg);color:var(--text);overflow:hidden;-webkit-tap-highlight-color:transparent}
+a{color:var(--accent);text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;outline:none}
+input,textarea{font-family:inherit;outline:none}
+::-webkit-scrollbar{width:0;height:0}
+
+#app{max-width:480px;margin:0 auto;height:100%;position:relative;display:flex;flex-direction:column;overflow:hidden}
+
+/* Header */
+.header{position:sticky;top:0;z-index:100;background:rgba(10,11,13,.92);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);min-height:56px}
+.header-logo{font-size:22px;font-weight:700;letter-spacing:-.5px}
+.header-logo span{color:var(--accent)}
+.balance-chip{background:var(--card2);border:1px solid var(--border);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;transition:all .2s}
+.balance-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
+
+/* Content */
+.content{flex:1;overflow-y:auto;overflow-x:hidden;padding-bottom:calc(70px + var(--safe-b));-webkit-overflow-scrolling:touch}
+.tab-page{display:none;padding:16px;animation:fadeUp .25s ease}
+.tab-page.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Tab Bar */
+.tab-bar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:rgba(10,11,13,.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--border);display:flex;z-index:100;padding-bottom:var(--safe-b)}
+.tab-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 4px 8px;font-size:10px;color:var(--text3);transition:color .2s;position:relative}
+.tab-item.active{color:var(--accent)}
+.tab-item .tab-icon{font-size:22px;line-height:1}
+.tab-item.active .tab-icon{transform:scale(1.1)}
+.tab-item::after{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:24px;height:2px;border-radius:1px;background:var(--accent);opacity:0;transition:opacity .2s}
+.tab-item.active::after{opacity:1}
+
+/* Cards */
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:12px;transition:transform .15s}
+.card:active{transform:scale(.985)}
+.card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.card-title{font-size:13px;color:var(--text2);font-weight:500;text-transform:uppercase;letter-spacing:.5px}
+.big-number{font-size:36px;font-weight:700;letter-spacing:-1px;line-height:1.1}
+.big-number .currency{font-size:16px;color:var(--text2);font-weight:500;margin-left:4px}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:10px;font-weight:600;font-size:14px;padding:12px 20px;transition:all .15s;white-space:nowrap}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:active{background:var(--accent2)}
+.btn-secondary{background:var(--card2);color:var(--text);border:1px solid var(--border)}
+.btn-success{background:var(--success);color:#fff}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-sm{padding:8px 14px;font-size:12px;border-radius:8px}
+.btn-full{width:100%}
+.btn-group{display:flex;gap:8px;flex-wrap:wrap}
+
+/* Action Row */
+.action-row{display:flex;gap:8px;margin:16px 0}
+.action-btn{flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--text);transition:all .15s}
+.action-btn:active{transform:scale(.96);border-color:var(--accent);background:rgba(0,82,255,.08)}
+.action-btn .icon{font-size:24px}
+
+/* Amount Chips */
+.chips{display:flex;gap:8px;margin:8px 0}
+.chip{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer;transition:all .15s;min-width:48px;text-align:center}
+.chip:active,.chip.active{border-color:var(--accent);background:rgba(0,82,255,.12);color:var(--accent)}
+
+/* Input */
+.input{width:100%;background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:14px;color:var(--text);transition:border-color .2s}
+.input:focus{border-color:var(--accent)}
+.input::placeholder{color:var(--text3)}
+.input-group{margin-bottom:12px}
+.input-label{font-size:12px;color:var(--text2);margin-bottom:6px;display:block;font-weight:500}
+
+/* Market / Bet Card */
+.market-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:10px;cursor:pointer;transition:all .15s}
+.market-card:active{transform:scale(.98);border-color:var(--accent)}
+.market-question{font-size:15px;font-weight:600;margin-bottom:10px;line-height:1.4}
+.market-meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text3);margin-top:8px}
+.prob-bars{display:flex;flex-direction:column;gap:6px}
+.prob-bar{height:6px;border-radius:3px;background:var(--card2);overflow:hidden;position:relative}
+.prob-bar-fill{height:100%;border-radius:3px;transition:width .4s ease}
+.prob-bar-label{display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:2px}
+.opt-colors{--c0:#0052FF;--c1:#7c3aed;--c2:#f59e0b;--c3:#ef4444}
+
+/* Transaction History */
+.tx-item{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
+.tx-item:last-child{border-bottom:none}
+.tx-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.tx-icon.tip{background:rgba(0,82,255,.12)}
+.tx-icon.deposit{background:rgba(22,163,74,.12)}
+.tx-icon.withdraw{background:rgba(239,68,68,.12)}
+.tx-icon.trade{background:rgba(124,58,237,.12)}
+.tx-icon.bet{background:rgba(245,158,11,.12)}
+.tx-details{flex:1;min-width:0}
+.tx-title{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tx-time{font-size:11px;color:var(--text3)}
+.tx-amount{font-size:14px;font-weight:600;white-space:nowrap}
+.tx-amount.pos{color:var(--success)}
+.tx-amount.neg{color:var(--danger)}
+
+/* Deposit Section */
+.deposit-box{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;align-items:center;gap:10px;margin-top:8px}
+.deposit-addr{font-size:12px;color:var(--text2);word-break:break-all;flex:1;user-select:all}
+.deposit-qr{width:80px;height:80px;border-radius:8px;background:#fff;padding:4px;flex-shrink:0}
+.deposit-qr img{width:100%;height:100%}
+
+/* Modal / Bottom Sheet */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:200;display:none;align-items:flex-end;justify-content:center;opacity:0;transition:opacity .25s}
+.modal-overlay.show{display:flex;opacity:1}
+.modal-sheet{background:var(--card);border-radius:16px 16px 0 0;width:100%;max-width:480px;max-height:85vh;overflow-y:auto;padding:16px 16px calc(20px + var(--safe-b));transform:translateY(100%);transition:transform .3s cubic-bezier(.32,.72,0,1)}
+.modal-overlay.show .modal-sheet{transform:translateY(0)}
+.modal-handle{width:36px;height:4px;background:var(--text3);border-radius:2px;margin:0 auto 16px;opacity:.5}
+.modal-title{font-size:18px;font-weight:700;margin-bottom:16px}
+.modal-close{position:absolute;top:16px;right:16px;width:28px;height:28px;border-radius:50%;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--text2);cursor:pointer}
+
+/* Toast */
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-80px);background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px 20px;font-size:13px;font-weight:500;z-index:300;transition:transform .3s cubic-bezier(.32,.72,0,1);pointer-events:none;white-space:nowrap}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.toast.success{border-color:var(--success);color:var(--success)}
+.toast.error{border-color:var(--danger);color:var(--danger)}
+
+/* Detail View */
+.detail-view{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:150;overflow-y:auto;max-width:480px;margin:0 auto}
+.detail-header{position:sticky;top:0;z-index:10;background:rgba(10,11,13,.95);backdrop-filter:blur(12px);padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}
+.detail-back{width:32px;height:32px;border-radius:8px;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer}
+.detail-title{font-size:16px;font-weight:600;flex:1}
+.detail-body{padding:16px}
+.detail-question{font-size:20px;font-weight:700;line-height:1.4;margin-bottom:16px}
+.detail-options{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+.detail-opt{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.detail-opt-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.detail-opt-name{font-weight:600;font-size:15px}
+.detail-opt-pct{font-size:20px;font-weight:700;color:var(--accent)}
+.detail-opt-bar{height:8px;border-radius:4px;background:var(--card2);overflow:hidden}
+.detail-opt-bar-fill{height:100%;border-radius:4px;transition:width .4s}
+
+/* Create Form */
+.create-options{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.create-opt-row{display:flex;gap:8px;align-items:center}
+.create-opt-row .input{flex:1}
+.create-opt-rm{width:32px;height:32px;border-radius:8px;background:rgba(239,68,68,.1);display:flex;align-items:center;justify-content:center;color:var(--danger);font-size:16px;cursor:pointer;flex-shrink:0}
+.create-add{background:none;border:1px dashed var(--border);border-radius:8px;padding:10px;color:var(--text3);font-size:13px;width:100%;text-align:center;cursor:pointer;transition:all .15s}
+.create-add:active{border-color:var(--accent);color:var(--accent)}
+
+/* Language items */
+.lang-item{display:flex;align-items:center;gap:10px;padding:12px;border-radius:10px;cursor:pointer;transition:background .15s}
+.lang-item:active{background:var(--card2)}
+.lang-item.active{background:rgba(0,82,255,.1);border:1px solid var(--accent)}
+.lang-flag{font-size:24px}
+.lang-name{font-size:14px;font-weight:500}
+.lang-check{margin-left:auto;color:var(--accent);font-size:16px;display:none}
+.lang-item.active .lang-check{display:block}
+
+/* Top users */
+.top-item{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.top-item:last-child{border-bottom:none}
+.top-rank{width:24px;font-size:14px;font-weight:700;color:var(--text3);text-align:center}
+.top-rank.gold{color:#f59e0b}
+.top-rank.silver{color:#9ca3af}
+.top-rank.bronze{color:#d97706}
+.top-name{flex:1;font-size:14px;font-weight:500}
+.top-vol{font-size:13px;color:var(--text2);font-weight:600}
+
+/* Stats */
+.stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 0}
+.stat-item{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center}
+.stat-val{font-size:20px;font-weight:700}
+.stat-label{font-size:11px;color:var(--text3);margin-top:2px}
+
+/* Section title */
+.section-title{font-size:13px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin:16px 0 8px}
+
+/* Empty state */
+.empty{text-align:center;padding:40px 16px;color:var(--text3)}
+.empty .icon{font-size:40px;margin-bottom:8px;opacity:.5}
+.empty .text{font-size:14px}
+
+/* Scrollbar hide */
+.content::-webkit-scrollbar{display:none}
+.content{scrollbar-width:none}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-logo">Tippy<span>.</span></div>
+    <div class="balance-chip" id="balanceChip" onclick="switchTab(0)">
+      <span class="dot"></span>
+      <span id="balanceDisplay">--</span>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content" id="contentArea">
+    <!-- TAB 0: Wallet -->
+    <div class="tab-page active" id="tab0">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title" data-i18n="balance">Balance</div>
+        </div>
+        <div class="big-number"><span id="bigBalance">--</span><span class="currency">USDC</span></div>
+      </div>
+
+      <div class="action-row">
+        <button class="action-btn" onclick="openTipSheet()">
+          <span class="icon">💸</span>
+          <span data-i18n="send_tip">Send tip</span>
+        </button>
+        <button class="action-btn" onclick="openDepositSheet()">
+          <span class="icon">💳</span>
+          <span data-i18n="deposit">Deposit</span>
+        </button>
+        <button class="action-btn" onclick="openWithdrawSheet()">
+          <span class="icon">⬆️</span>
+          <span data-i18n="withdraw">Withdraw</span>
+        </button>
+      </div>
+
+      <div class="section-title" data-i18n="history">History</div>
+      <div id="historyList"></div>
+    </div>
+
+    <!-- TAB 1: Markets -->
+    <div class="tab-page" id="tab1">
+      <button class="btn btn-primary btn-full" onclick="openCreateMarket()" style="margin-bottom:14px">
+        <span>+</span> <span data-i18n="create_market">Create market</span>
+      </button>
+      <div id="marketsList"></div>
+    </div>
+
+    <!-- TAB 2: Bets -->
+    <div class="tab-page" id="tab2">
+      <button class="btn btn-primary btn-full" onclick="openCreateBet()" style="margin-bottom:14px">
+        <span>+</span> <span data-i18n="create_bet">Create bet</span>
+      </button>
+      <div id="betsList"></div>
+    </div>
+
+    <!-- TAB 3: More -->
+    <div class="tab-page" id="tab3">
+      <div class="section-title" data-i18n="lang">Language</div>
+      <div id="langList">
+        <div class="lang-item" onclick="setLang('ru')">
+          <span class="lang-flag">🇷🇺</span>
+          <span class="lang-name">Русский</span>
+          <span class="lang-check">✓</span>
+        </div>
+        <div class="lang-item" onclick="setLang('en')">
+          <span class="lang-flag">🇬🇧</span>
+          <span class="lang-name">English</span>
+          <span class="lang-check">✓</span>
+        </div>
+        <div class="lang-item" onclick="setLang('zh')">
+          <span class="lang-flag">🇨🇳</span>
+          <span class="lang-name">中文</span>
+          <span class="lang-check">✓</span>
+        </div>
+      </div>
+
+      <div class="section-title" data-i18n="about">About</div>
+      <div class="card" id="aboutCard"></div>
+
+      <div class="section-title" data-i18n="top">Top</div>
+      <div id="topList"></div>
+
+      <div class="section-title">Stats</div>
+      <div class="stats-grid">
+        <div class="stat-item">
+          <div class="stat-val" id="statUsers">--</div>
+          <div class="stat-label">Users</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val" id="statVolume">--</div>
+          <div class="stat-label">Volume</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val" id="statTips">--</div>
+          <div class="stat-label">Tips</div>
+        </div>
+      </div>
+
+      <a href="https://t.me/tippy_on_base_bot" target="_blank" class="btn btn-secondary btn-full" style="margin-top:12px">Telegram Bot</a>
+    </div>
+  </div>
+
+  <!-- Tab Bar -->
+  <div class="tab-bar">
+    <div class="tab-item active" onclick="switchTab(0)">
+      <span class="tab-icon">💰</span>
+      <span data-i18n="wallet">Wallet</span>
+    </div>
+    <div class="tab-item" onclick="switchTab(1)">
+      <span class="tab-icon">📈</span>
+      <span data-i18n="markets">Markets</span>
+    </div>
+    <div class="tab-item" onclick="switchTab(2)">
+      <span class="tab-icon">🎲</span>
+      <span data-i18n="bets">Bets</span>
+    </div>
+    <div class="tab-item" onclick="switchTab(3)">
+      <span class="tab-icon">⋯</span>
+      <span data-i18n="more">More</span>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Overlay -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal-sheet" id="modalSheet" onclick="event.stopPropagation()">
+    <div class="modal-handle"></div>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Detail View -->
+<div class="detail-view" id="detailView" style="display:none"></div>
+
+<script>
+const I18N = {
+  ru: { wallet: "Кошелёк", balance: "Баланс", tip: "Чаевые", deposit: "Пополнить", withdraw: "Вывести", markets: "Рынки", bets: "Ставки", more: "Ещё", send: "Отправить", buy: "Купить", create: "Создать", history: "История", top: "Топ", about: "О боте", lang: "Язык", question: "Вопрос", options: "Варианты", amount: "Сумма", username: "Никнейм", address: "Адрес", copied: "Скопировано!", copy: "Копировать", fill_fields: "Заполни все поля", creating: "Создаём...", no_markets: "Рынков пока нет", no_bets: "Ставок пока нет", no_history: "История пуста", deposit_title: "Пополнение USDC", deposit_note: "Отправь USDC на этот адрес (сеть Base)", linked: "Кошелёк привязан, депозиты автоматические", send_tip: "Отправить чаевые", create_market: "Создать рынок", create_bet: "Создать ставку", hours: "Дедлайн (часы, опционально)" },
+  en: { wallet: "Wallet", balance: "Balance", tip: "Tips", deposit: "Deposit", withdraw: "Withdraw", markets: "Markets", bets: "Bets", more: "More", send: "Send", buy: "Buy", create: "Create", history: "History", top: "Top", about: "About", lang: "Language", question: "Question", options: "Options", amount: "Amount", username: "Username", address: "Address", copied: "Copied!", copy: "Copy", fill_fields: "Fill all fields", creating: "Creating...", no_markets: "No markets yet", no_bets: "No bets yet", no_history: "No history", deposit_title: "Deposit USDC", deposit_note: "Send USDC to this address (Base network)", linked: "Wallet linked, deposits are automatic", send_tip: "Send tip", create_market: "Create market", create_bet: "Create bet", hours: "Deadline (hours, optional)" },
+  zh: { wallet: "钱包", balance: "余额", tip: "打赏", deposit: "充值", withdraw: "提现", markets: "市场", bets: "投注", more: "更多", send: "发送", buy: "买入", create: "创建", history: "历史", top: "排行", about: "关于", lang: "语言", question: "问题", options: "选项", amount: "金额", username: "用户名", address: "地址", copied: "已复制!", copy: "复制", fill_fields: "请填写所有字段", creating: "创建中...", no_markets: "暂无市场", no_bets: "暂无投注", no_history: "暂无记录", deposit_title: "充值 USDC", deposit_note: "将 USDC 发送到此地址（Base 网络）", linked: "钱包已绑定，充值自动到账", send_tip: "发送打赏", create_market: "创建市场", create_bet: "创建投注", hours: "截止时间（小时，可选）" }
+};
+
+const OPT_COLORS = ['#0052FF','#7c3aed','#f59e0b','#ef4444'];
+let STATE = { lang: 'en', balance_usdc: 0, deposit_address: '', markets: [], bets: [], history: [], top: [], username: '', tg_id: null, linked_address: '' };
+let currentTab = 0;
+let toastTimer = null;
+
+// ─── i18n ───
+function t(key) { return (I18N[STATE.lang] && I18N[STATE.lang][key]) || I18N.en[key] || key; }
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+}
+
+// ─── Toast ───
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + type;
+  clearTimeout(toastTimer);
+  requestAnimationFrame(() => { el.classList.add('show'); });
+  toastTimer = setTimeout(() => { el.classList.remove('show'); }, 2500);
+}
+
+// ─── Tab switching ───
+function switchTab(i) {
+  currentTab = i;
+  document.querySelectorAll('.tab-page').forEach((p, idx) => p.classList.toggle('active', idx === i));
+  document.querySelectorAll('.tab-item').forEach((t, idx) => t.classList.toggle('active', idx === i));
+  document.getElementById('contentArea').scrollTop = 0;
+  // Close detail if open
+  hideDetail();
+}
+
+// ─── Modal ───
+function openModal(html) {
+  const overlay = document.getElementById('modalOverlay');
+  document.getElementById('modalContent').innerHTML = '<div class="modal-handle"></div>' + html;
+  overlay.classList.add('show');
+}
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('modalOverlay') && e.type === 'click') return;
+  document.getElementById('modalOverlay').classList.remove('show');
+}
+function closeModalForce() {
+  document.getElementById('modalOverlay').classList.remove('show');
+}
+
+// ─── Detail View ───
+function showDetail(html) {
+  const dv = document.getElementById('detailView');
+  dv.innerHTML = html;
+  dv.style.display = 'block';
+}
+function hideDetail() {
+  const dv = document.getElementById('detailView');
+  dv.style.display = 'none';
+}
+
+// ─── Auth + Load ───
+async function init() {
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    try { tg.ready(); } catch(e) {}
+    try { tg.expand(); } catch(e) {}
+    const initData = tg.initData || '';
+    if (initData) {
+      try {
+        await fetch('/api/mini/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ initData })
+        });
+      } catch(e) { console.error('auth error', e); }
+    }
+  }
+  await loadState();
+}
+
+async function loadState() {
+  try {
+    const r = await fetch('/api/mini/state', { credentials: 'same-origin' });
+    if (r.ok) {
+      const d = await r.json();
+      Object.assign(STATE, d);
+      renderAll();
+    } else {
+      toast('Failed to load state', 'error');
+    }
+  } catch(e) {
+    console.error('state error', e);
+    toast('Network error', 'error');
+  }
+}
+
+function renderAll() {
+  applyI18n();
+  renderBalance();
+  renderHistory();
+  renderMarkets();
+  renderBets();
+  renderMore();
+  updateLangHighlight();
+}
+
+function renderBalance() {
+  const bal = Number(STATE.balance_usdc || 0).toFixed(2);
+  document.getElementById('balanceDisplay').textContent = bal + ' USDC';
+  document.getElementById('bigBalance').textContent = bal;
+}
+
+function renderHistory() {
+  const c = document.getElementById('historyList');
+  const h = STATE.history || [];
+  if (!h.length) {
+    c.innerHTML = `<div class="empty"><div class="icon">📋</div><div class="text">${t('no_history')}</div></div>`;
+    return;
+  }
+  c.innerHTML = h.slice(0, 10).map(tx => {
+    let icon = '💸', cls = 'tip', amt = tx.amount, sign = '';
+    if (tx.type === 'deposit') { icon = '💳'; cls = 'deposit'; sign = '+'; }
+    else if (tx.type === 'withdraw') { icon = '⬆️'; cls = 'withdraw'; sign = '-'; }
+    else if (tx.type === 'trade') { icon = '📈'; cls = 'trade'; sign = tx.amount > 0 ? '+' : ''; }
+    else if (tx.type === 'bet') { icon = '🎲'; cls = 'bet'; sign = tx.amount > 0 ? '+' : ''; }
+    else { sign = tx.amount < 0 ? '-' : '+'; }
+    const isPos = tx.amount >= 0;
+    const timeStr = tx.time ? new Date(tx.time).toLocaleDateString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+    return `<div class="tx-item">
+      <div class="tx-icon ${cls}">${icon}</div>
+      <div class="tx-details">
+        <div class="tx-title">${tx.description || tx.type || ''}</div>
+        <div class="tx-time">${timeStr}</div>
+      </div>
+      <div class="tx-amount ${isPos?'pos':'neg'}">${sign}${Math.abs(Number(amt||0)).toFixed(2)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderMarkets() {
+  const c = document.getElementById('marketsList');
+  const m = STATE.markets || [];
+  if (!m.length) {
+    c.innerHTML = `<div class="empty"><div class="icon">📈</div><div class="text">${t('no_markets')}</div></div>`;
+    return;
+  }
+  c.innerHTML = m.map(mk => {
+    const opts = mk.options || [];
+    const total = opts.reduce((s, o) => s + (o.shares || 0), 0) || 1;
+    return `<div class="market-card opt-colors" onclick="openMarketDetail('${mk.id}')">
+      <div class="market-question">${esc(mk.question)}</div>
+      <div class="prob-bars">${opts.map((o, i) => {
+        const pct = total > 0 ? ((o.shares||0)/total*100) : 0;
+        return `<div>
+          <div class="prob-bar-label"><span>${esc(o.name)}</span><span>${pct.toFixed(0)}%</span></div>
+          <div class="prob-bar"><div class="prob-bar-fill" style="width:${pct}%;background:var(--c${i})"></div></div>
+        </div>`;
+      }).join('')}</div>
+      <div class="market-meta">
+        <span>${opts.length} options</span>
+        <span>${mk.traders || 0} traders</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderBets() {
+  const c = document.getElementById('betsList');
+  const b = STATE.bets || [];
+  if (!b.length) {
+    c.innerHTML = `<div class="empty"><div class="icon">🎲</div><div class="text">${t('no_bets')}</div></div>`;
+    return;
+  }
+  c.innerHTML = b.map(bet => {
+    const opts = bet.options || [];
+    const total = opts.reduce((s, o) => s + (o.bets || 0), 0) || 1;
+    return `<div class="market-card" onclick="openBetDetail('${bet.id}')">
+      <div class="market-question">${esc(bet.question)}</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Pot: <strong style="color:var(--text)">${Number(bet.pot||0).toFixed(2)} USDC</strong></div>
+      <div class="prob-bars">${opts.map(o => {
+        const pct = total > 0 ? ((o.bets||0)/total*100) : 0;
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border)">
+          <span style="font-size:13px">${esc(o.name)}</span>
+          <span style="font-size:13px;font-weight:600;color:var(--accent)">${pct.toFixed(0)}%</span>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderMore() {
+  document.getElementById('aboutCard').innerHTML = `<div style="font-size:14px;line-height:1.6;color:var(--text2)">
+    <strong style="color:var(--text)">Tippy</strong> — ${STATE.lang === 'ru' ? 'USDC экономика в Telegram. Чаевые, рынки предсказаний и ставки на Base.' : STATE.lang === 'zh' ? 'Telegram 中的 USDC 经济。小费、预测市场和 Base 网络投注。' : 'USDC economy in Telegram. Tips, prediction markets & pool bets on Base.'}
+  </div>`;
+
+  const top = STATE.top || [];
+  document.getElementById('topList').innerHTML = top.slice(0, 5).map((u, i) => {
+    const rankCls = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+    return `<div class="top-item">
+      <div class="top-rank ${rankCls}">${i + 1}</div>
+      <div class="top-name">@${esc(u.username || u.tg_id || '?')}</div>
+      <div class="top-vol">${Number(u.volume || 0).toFixed(2)} USDC</div>
+    </div>`;
+  }).join('') || '<div class="empty"><div class="text">—</div></div>';
+
+  document.getElementById('statUsers').textContent = STATE.stats?.users ?? '--';
+  document.getElementById('statVolume').textContent = STATE.stats?.volume ? Number(STATE.stats.volume).toFixed(0) : '--';
+  document.getElementById('statTips').textContent = STATE.stats?.tips ?? '--';
+}
+
+function updateLangHighlight() {
+  document.querySelectorAll('.lang-item').forEach(el => {
+    const lang = el.onclick?.toString().match(/setLang\('(\w+)'\)/)?.[1];
+    el.classList.toggle('active', lang === STATE.lang);
+  });
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ─── Tip ───
+function openTipSheet() {
+  openModal(`
+    <div class="modal-title">${t('send_tip')}</div>
+    <div class="input-group">
+      <label class="input-label">${t('username')}</label>
+      <input class="input" id="tipTo" placeholder="@username" autocomplete="off">
+    </div>
+    <div class="input-group">
+      <label class="input-label">${t('amount')} (USDC)</label>
+      <div class="chips" id="tipChips">
+        <div class="chip" onclick="pickChip(this,'tipAmt',1)">1</div>
+        <div class="chip active" onclick="pickChip(this,'tipAmt',5)">5</div>
+        <div class="chip" onclick="pickChip(this,'tipAmt',10)">10</div>
+        <div class="chip" onclick="pickChip(this,'tipAmt',25)">25</div>
+      </div>
+      <input class="input" id="tipAmt" type="number" step="0.01" min="0" value="5" placeholder="5">
+    </div>
+    <button class="btn btn-primary btn-full" onclick="doTip()">${t('send')}</button>
+  `);
+}
+
+async function doTip() {
+  const to = document.getElementById('tipTo').value.trim().replace('@','');
+  const amount = parseFloat(document.getElementById('tipAmt').value);
+  if (!to || !amount || amount <= 0) { toast(t('fill_fields'), 'error'); return; }
+  try {
+    const r = await fetch('/api/mini/tip', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, amount })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      STATE.balance_usdc = d.new_balance;
+      renderBalance();
+      closeModalForce();
+      toast('+' + amount.toFixed(2) + ' USDC → @' + to);
+      loadState();
+    } else { toast(d.error || 'Error', 'error'); }
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+// ─── Deposit ───
+function openDepositSheet() {
+  const addr = STATE.deposit_address || STATE.linked_address || 'Connect wallet first';
+  openModal(`
+    <div class="modal-title">${t('deposit_title')}</div>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:12px">${STATE.linked_address ? t('linked') : t('deposit_note')}</p>
+    <div class="deposit-box">
+      <div class="deposit-qr"><img src="/qr?data=${encodeURIComponent(addr)}" alt="QR"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">${t('address')}</div>
+        <div class="deposit-addr" id="depAddr">${esc(addr)}</div>
+        <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="copyAddr('${esc(addr)}')">${t('copy')}</button>
+      </div>
+    </div>
+  `);
+}
+
+function copyAddr(addr) {
+  navigator.clipboard.writeText(addr).then(() => toast(t('copied'))).catch(() => {});
+}
+
+// ─── Withdraw ───
+function openWithdrawSheet() {
+  openModal(`
+    <div class="modal-title">${t('withdraw')}</div>
+    <div class="input-group">
+      <label class="input-label">${t('address')}</label>
+      <input class="input" id="wdAddr" placeholder="0x..." autocomplete="off">
+    </div>
+    <div class="input-group">
+      <label class="input-label">${t('amount')} (USDC)</label>
+      <input class="input" id="wdAmt" type="number" step="0.01" min="0" placeholder="0.00">
+    </div>
+    <button class="btn btn-primary btn-full" onclick="doWithdraw()">${t('withdraw')}</button>
+  `);
+}
+
+async function doWithdraw() {
+  const addr = document.getElementById('wdAddr').value.trim();
+  const amount = parseFloat(document.getElementById('wdAmt').value);
+  if (!addr || !amount || amount <= 0) { toast(t('fill_fields'), 'error'); return; }
+  toast('Withdrawal requested', 'success');
+  closeModalForce();
+}
+
+// ─── Markets Detail ───
+function openMarketDetail(id) {
+  const mk = (STATE.markets || []).find(m => m.id == id);
+  if (!mk) return;
+  const opts = mk.options || [];
+  const total = opts.reduce((s, o) => s + (o.shares || 0), 0) || 1;
+  showDetail(`
+    <div class="detail-header">
+      <div class="detail-back" onclick="hideDetail()">←</div>
+      <div class="detail-title">${esc(mk.question)}</div>
+    </div>
+    <div class="detail-body">
+      <div class="detail-question">${esc(mk.question)}</div>
+      <div class="detail-options opt-colors">${opts.map((o, i) => {
+        const pct = total > 0 ? ((o.shares||0)/total*100) : 0;
+        return `<div class="detail-opt">
+          <div class="detail-opt-head">
+            <div class="detail-opt-name">${esc(o.name)}</div>
+            <div class="detail-opt-pct">${pct.toFixed(1)}%</div>
+          </div>
+          <div class="detail-opt-bar"><div class="detail-opt-bar-fill" style="width:${pct}%;background:var(--c${i})"></div></div>
+          <div style="margin-top:10px">
+            <div class="chips">
+              <div class="chip" onclick="pickChip(this,'mktAmt_${i}',1)">1</div>
+              <div class="chip active" onclick="pickChip(this,'mktAmt_${i}',5)">5</div>
+              <div class="chip" onclick="pickChip(this,'mktAmt_${i}',10)">10</div>
+              <div class="chip" onclick="pickChip(this,'mktAmt_${i}',25)">25</div>
+            </div>
+            <input class="input" id="mktAmt_${i}" type="number" step="0.01" min="0" value="5" placeholder="5" style="margin-bottom:8px">
+            <button class="btn btn-primary btn-full btn-sm" onclick="doTrade('${mk.id}',${i})">${t('buy')} ${esc(o.name)}</button>
+          </div>
+        </div>`;
+      }).join('')}</div>
+      <div class="market-meta" style="margin-top:8px">
+        <span>${opts.length} options</span>
+        <span>${mk.traders || 0} traders</span>
+      </div>
+    </div>
+  `);
+}
+
+async function doTrade(marketId, option) {
+  const amt = parseFloat(document.getElementById('mktAmt_' + option).value);
+  if (!amt || amt <= 0) { toast(t('fill_fields'), 'error'); return; }
+  try {
+    const r = await fetch('/api/mini/trade', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ market_id: marketId, option, amount: amt })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      STATE.balance_usdc = d.new_balance;
+      renderBalance();
+      toast('Bought for ' + amt.toFixed(2) + ' USDC');
+      hideDetail();
+      loadState();
+    } else { toast(d.error || 'Error', 'error'); }
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+// ─── Bets Detail ───
+function openBetDetail(id) {
+  const bet = (STATE.bets || []).find(b => b.id == id);
+  if (!bet) return;
+  const opts = bet.options || [];
+  const total = opts.reduce((s, o) => s + (o.bets || 0), 0) || 1;
+  showDetail(`
+    <div class="detail-header">
+      <div class="detail-back" onclick="hideDetail()">←</div>
+      <div class="detail-title">${esc(bet.question)}</div>
+    </div>
+    <div class="detail-body">
+      <div class="detail-question">${esc(bet.question)}</div>
+      <div style="font-size:15px;color:var(--text2);margin-bottom:16px">Pot: <strong style="color:var(--text)">${Number(bet.pot||0).toFixed(2)} USDC</strong></div>
+      <div class="detail-options">${opts.map((o, i) => {
+        const pct = total > 0 ? ((o.bets||0)/total*100) : 0;
+        return `<div class="detail-opt">
+          <div class="detail-opt-head">
+            <div class="detail-opt-name">${esc(o.name)}</div>
+            <div class="detail-opt-pct">${pct.toFixed(1)}%</div>
+          </div>
+          <div class="detail-opt-bar"><div class="detail-opt-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
+          <div style="margin-top:10px">
+            <div class="chips">
+              <div class="chip" onclick="pickChip(this,'betAmt_${i}',1)">1</div>
+              <div class="chip active" onclick="pickChip(this,'betAmt_${i}',5)">5</div>
+              <div class="chip" onclick="pickChip(this,'betAmt_${i}',10)">10</div>
+              <div class="chip" onclick="pickChip(this,'betAmt_${i}',25)">25</div>
+            </div>
+            <input class="input" id="betAmt_${i}" type="number" step="0.01" min="0" value="5" placeholder="5" style="margin-bottom:8px">
+            <button class="btn btn-primary btn-full btn-sm" onclick="doBet('${bet.id}',${i})">${t('buy')} ${esc(o.name)}</button>
+          </div>
+        </div>`;
+      }).join('')}</div>
+    </div>
+  `);
+}
+
+async function doBet(betId, option) {
+  const amt = parseFloat(document.getElementById('betAmt_' + option).value);
+  if (!amt || amt <= 0) { toast(t('fill_fields'), 'error'); return; }
+  try {
+    const r = await fetch('/api/mini/betplace', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bet_id: betId, option, amount: amt })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      STATE.balance_usdc = d.new_balance;
+      renderBalance();
+      toast('Bet placed: ' + amt.toFixed(2) + ' USDC');
+      hideDetail();
+      loadState();
+    } else { toast(d.error || 'Error', 'error'); }
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+// ─── Create Market ───
+function openCreateMarket() {
+  openModal(`
+    <div class="modal-title">${t('create_market')}</div>
+    <div class="input-group">
+      <label class="input-label">${t('question')}</label>
+      <input class="input" id="mkQuestion" placeholder="${t('question')}" autocomplete="off">
+    </div>
+    <div class="input-group">
+      <label class="input-label">${t('options')}</label>
+      <div class="create-options" id="mkOpts">
+        <div class="create-opt-row"><input class="input" placeholder="Option 1"></div>
+        <div class="create-opt-row"><input class="input" placeholder="Option 2"></div>
+      </div>
+      <button class="create-add" onclick="addCreateOpt('mkOpts')">+ Add option</button>
+    </div>
+    <div class="input-group">
+      <label class="input-label">${t('hours')}</label>
+      <input class="input" id="mkHours" type="number" min="1" placeholder="24">
+    </div>
+    <button class="btn btn-primary btn-full" onclick="doCreateMarket()">${t('create')}</button>
+  `);
+}
+
+function openCreateBet() {
+  openModal(`
+    <div class="modal-title">${t('create_bet')}</div>
+    <div class="input-group">
+      <label class="input-label">${t('question')}</label>
+      <input class="input" id="btQuestion" placeholder="${t('question')}" autocomplete="off">
+    </div>
+    <div class="input-group">
+      <label class="input-label">${t('options')}</label>
+      <div class="create-options" id="btOpts">
+        <div class="create-opt-row"><input class="input" placeholder="Option 1"></div>
+        <div class="create-opt-row"><input class="input" placeholder="Option 2"></div>
+      </div>
+      <button class="create-add" onclick="addCreateOpt('btOpts')">+ Add option</button>
+    </div>
+    <div class="input-group">
+      <label class="input-label">${t('hours')}</label>
+      <input class="input" id="btHours" type="number" min="1" placeholder="24">
+    </div>
+    <button class="btn btn-primary btn-full" onclick="doCreateBet()">${t('create')}</button>
+  `);
+}
+
+function addCreateOpt(containerId) {
+  const c = document.getElementById(containerId);
+  if (c.children.length >= 4) return;
+  const n = c.children.length + 1;
+  const row = document.createElement('div');
+  row.className = 'create-opt-row';
+  row.innerHTML = `<input class="input" placeholder="Option ${n}"><div class="create-opt-rm" onclick="rmCreateOpt(this)">×</div>`;
+  c.appendChild(row);
+}
+
+function rmCreateOpt(btn) {
+  const row = btn.parentElement;
+  const container = row.parentElement;
+  if (container.children.length <= 2) return;
+  row.remove();
+}
+
+function getCreateOpts(containerId) {
+  return Array.from(document.querySelectorAll('#' + containerId + ' .input')).map(i => i.value.trim()).filter(Boolean);
+}
+
+async function doCreateMarket() {
+  const q = document.getElementById('mkQuestion').value.trim();
+  const options = getCreateOpts('mkOpts');
+  const hours = document.getElementById('mkHours').value ? parseInt(document.getElementById('mkHours').value) : undefined;
+  if (!q || options.length < 2) { toast(t('fill_fields'), 'error'); return; }
+  try {
+    const r = await fetch('/api/mini/create', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'market', question: q, options, hours })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      closeModalForce();
+      toast('Market created!');
+      loadState();
+    } else { toast(d.error || 'Error', 'error'); }
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function doCreateBet() {
+  const q = document.getElementById('btQuestion').value.trim();
+  const options = getCreateOpts('btOpts');
+  const hours = document.getElementById('btHours').value ? parseInt(document.getElementById('btHours').value) : undefined;
+  if (!q || options.length < 2) { toast(t('fill_fields'), 'error'); return; }
+  try {
+    const r = await fetch('/api/mini/create', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'bet', question: q, options, hours })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      closeModalForce();
+      toast('Bet created!');
+      loadState();
+    } else { toast(d.error || 'Error', 'error'); }
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+// ─── Language ───
+async function setLang(lang) {
+  STATE.lang = lang;
+  updateLangHighlight();
+  applyI18n();
+  renderMore();
+  try {
+    await fetch('/api/mini/lang', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lang })
+    });
+  } catch(e) {}
+}
+
+// ─── Chip picker ───
+function pickChip(el, inputId, val) {
+  el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById(inputId).value = val;
+}
+
+// ─── Start ───
+init();
+</script>
+</body>
+</html>
