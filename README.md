@@ -1,7 +1,7 @@
 # Tippy — Community Economy in USDC on Base
 
 [![CI](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml/badge.svg)](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml)
-![Tests](https://img.shields.io/badge/tests-419%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-422%20passed-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.12+-blue)
 ![Network](https://img.shields.io/badge/network-Base-0052FF)
 
@@ -140,14 +140,14 @@ web/
 ├─ server.py      FastAPI: public API, proof-of-reserves, x402 endpoints
 └─ static/        Base-design dashboard
 contracts/TipBotVault.sol    on-chain treasury (proof of reserves)
-tests/           419 tests: real Postgres, real dispatcher, real crypto, local EVM
+tests/           422 tests: real Postgres, real dispatcher, real crypto, local EVM
 ```
 
 ## Testing
 
 ```bash
 docker compose up -d db       # PostgreSQL for tests (port 5433)
-python -m pytest tests -q     # 419 passed
+python -m pytest tests -q     # 422 passed
 ```
 
 What is tested *for real* (not mocked): money conservation across every flow

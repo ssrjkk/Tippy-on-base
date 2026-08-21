@@ -10,11 +10,11 @@ Announcement: `https://x.com/base/status/2086754553580355673`
 Areas of interest (our fit): **Prediction markets** · Launchpads · DeFi ·
 Agents · Asset creation · Consumer apps.
 
-> ⚠️ **Критично:** программа рассчитана на **live-продукт, который уже
-> используется** («You're past the idea stage. With a Live product that's
-> getting used»). До деплоя на Base mainnet и первых реальных пользователей
-> заявку подавать рано — сначала чек-лист §7 (деплой + демо + активность),
-> потом форма. Usage numbers должны быть честными (см. §5).
+> ⚠️ **Critical:** the program targets a **live product that is already being
+> used** ("You're past the idea stage. With a Live product that's getting
+> used"). Do not submit before deploying to Base mainnet and onboarding the
+> first real users — complete the §9 checklist first (deploy + demo +
+> activity). Usage numbers must be honest (see §5).
 
 ---
 
@@ -22,26 +22,26 @@ Agents · Asset creation · Consumer apps.
 
 | Form field | Answer |
 |---|---|
-| **Full name** | `TODO: ваше имя` |
-| **Email** | `TODO: e-mail под реальным аккаунтом` |
-| **X (Twitter) handle** | `TODO: @Nickname` (создать + активность, см. §7) |
+| **Full name** | `TODO: your name` |
+| **Email** | `TODO: e-mail under a real account` |
+| **X (Twitter) handle** | `TODO: @Nickname` (create it + post activity, see §9) |
 | **Telegram username** | `TODO: @username` |
-| **Project name + one-line description** | `Tippy — turn any Telegram community into a USDC economy on Base: instant tips, QR donation pages, and parimutuel prediction markets with automatic payouts.` |
-| **Tell us about the founding team** | см. §2 |
-| **Link to your live product** | `TODO: https://<домен дашборда>` — публичный дашборд + `/api/solvency` |
-| **Link to a Product Demo (Loom)** | `TODO: ссылка на Loom` — сценарий §3 |
-| **Contract address on Base** | Бот кастодиальный: `TODO: адрес hot wallet` (после генерации ключа) — все балансы держатся на нём; единственный используемый контракт — аудированный USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`. |
-| **Which track best fits?** | `Trading` (рекомендуется: прогнозные рынки — трейдинг-продукт). Альтернатива: «Другое: Prediction Markets». |
-| **Key usage numbers** | Честно до деплоя: 0. Формат: all-time users / DAU / WAU / all-time volume / 30-day volume — см. §5 |
-| **How does your product make money today?** | см. §6 |
-| **GTM plan for the next 3 months** | см. §7 |
-| **Base Builder Code** | `TODO: код пригласившего (если есть)` |
-| **Primary challenge or bottleneck** | `User acquisition` — продукт готов (419 автотестов, 94% покрытие), нужны сообщества и рост |
-| **Project description (без трекшна — формулировка)** | `Tippy is a monetization layer for Telegram communities and AI agents on Base. We enable creators to gate content behind USDC paywalls using the x402 protocol, with fully on-chain Proof of Reserves via TipBotVault. While currently in pre-launch phase, the technical foundation is production-ready with 419 automated tests and 94% coverage. We are targeting the 900M Telegram user base and the rapidly growing AI agent economy on Base.` |
+| **Project name + one-line description** | `Tippy — turn any Telegram community into a USDC economy on Base: instant tips, QR donation pages, Polymarket-style prediction markets (LMSR AMM) with tradeable positions, paid content, and an AI assistant.` |
+| **Tell us about the founding team** | see §2 |
+| **Link to your live product** | `TODO: https://<dashboard domain>` — public dashboard + `/api/solvency` |
+| **Link to a Product Demo (Loom)** | `TODO: Loom link` — script in §4 |
+| **Contract address on Base** | The bot is custodial: `TODO: hot wallet address` (after key generation) — all balances are held there; the only contract used is canonical USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` plus our audited-on-testnet treasury `TipBotVault`. |
+| **Which track best fits?** | `Trading` (recommended: prediction markets are a trading product). Alternative: "Other: Prediction Markets". |
+| **Key usage numbers** | Honest pre-deploy: 0. Format: all-time users / DAU / WAU / all-time volume / 30-day volume — see §5 |
+| **How does your product make money today?** | see §6 |
+| **GTM plan for the next 3 months** | see §7 |
+| **Base Builder Code** | `TODO: inviter code (if any)` |
+| **Primary challenge or bottleneck** | `User acquisition` — the product is built (422 automated tests, 94% coverage); we need communities and growth |
+| **Project description** | `Tippy is a monetization layer for Telegram communities and AI agents on Base. Users get instant USDC tips, QR donation pages, Polymarket-style prediction markets powered by an LMSR automated market maker (tradeable positions, live odds, automatic resolution), x402 paywalled content, and a built-in AI assistant. Every balance is backed by publicly verifiable on-chain reserves via TipBotVault. Production-ready: 422 automated tests, 94% coverage, Dockerized. We target the 900M Telegram user base and the AI agent economy on Base.` |
 | **Why Base?** | `Base is the only chain with native x402 support, which is critical for our AI-agent-to-agent commerce model. Additionally, Base's Smart Wallets enable gasless onboarding for Telegram users who have never used crypto before. We are building exclusively on Base to leverage these primitives.` |
 | **Use of Funds ($5,000)** | `$2,000 — Smart Contract Audit (TipBotVault.sol), critical for handling user deposits. $1,500 — GTM & Partnership Development: onboarding the first 10 crypto-signal Telegram channels and integrating with Virtuals Protocol agents. $1,500 — Infrastructure scaling (PostgreSQL optimization, Alchemy Webhooks) for 10k+ daily active users.` |
-| **Traction (честно, с фокусом на потенциал)** | `Currently pre-launch with a fully tested MVP. Technical milestones achieved: x402 integration, Vault Proof of Reserves, 419 tests. Next step: Launch on Base mainnet and secure the first 100 users through Farcaster Frames and AI agent partnerships.` |
-| **Which credits would be most useful?** | `AWS` (хостинг бота/дашборда), `Alchemy / QuickNode` (RPC Base), `Privy` (не приоритетно — вход через Telegram) |
+| **Traction (honest, potential-focused)** | `Currently pre-launch with a fully tested MVP. Technical milestones achieved: LMSR prediction market engine, x402 integration (tips + paywalls), Vault Proof of Reserves, AI assistant, 422 tests. Next step: launch on Base mainnet and secure the first 100 users through Farcaster Frames and AI agent partnerships.` |
+| **Which credits would be most useful?** | `AWS` (bot/dashboard hosting), `Alchemy / QuickNode` (Base RPC), `Privy` (not a priority — login is via Telegram) |
 
 ## 2. Founding team (draft)
 
@@ -49,100 +49,106 @@ Agents · Asset creation · Consumer apps.
 > Links: Telegram [@b2wmain](https://t.me/b2wmain) /
 > [@ssrjkk](https://t.me/ssrjkk) · X [@ludych1](https://x.com/ludych1) ·
 > GitHub [ssrjkk](https://github.com/ssrjkk)
-> Prior experience: `TODO: прошлые компании/проекты, релевантный опыт`
-> Funding raised: `TODO: (если было)`. Тон: продукт написан целиком и
-> покрыт 419 автотестовми (консервация средств, безопасность депозитов,
-> E2E-сценарии) — надёжность важнее маркетинга.
+> Prior experience: `TODO: past companies/projects, relevant experience`
+> Funding raised: `TODO: (if any)`. Tone: the entire product was written
+> solo and is covered by 422 automated tests (fund conservation, deposit
+> security, E2E scenarios through the real bot router) — reliability over
+> marketing.
 
-## 3. The one-line-adjacent pitch (154 words — reuse for "tell us about your product" if the form asks)
+## 3. The pitch (154 words — reuse if the form asks "tell us about your product")
 
 > Tippy turns any Telegram community into a USDC economy on Base:
-> instant tips, QR donation pages, and parimutuel prediction markets with
-> automatic payouts. Everything settles instantly inside the bot's ledger
-> (zero gas), while every balance is backed by a public, on-chain auditable
-> treasury contract (TipBotVault) — no custom tokens, no IOU points, only
-> USDC, so the audit surface is minimal.
+> instant tips, QR donation pages, and Polymarket-style prediction markets.
+> Markets run on an LMSR automated market maker: traders buy and sell YES/NO
+> positions at live odds, prices sum to $1, and resolution pays winners
+> automatically — no order book, no gas per trade. Everything settles
+> instantly inside the bot's ledger (zero fees), while every balance is backed
+> by a public, on-chain auditable treasury (TipBotVault) — no custom tokens,
+> no IOU points, only USDC.
 >
 > It brings users onchain: 900M+ Telegram users are one message away from a
-> dollar-pegged wallet, and group admins get a built-in referral loop (2% win
-> fee) that makes them want their community betting. A public dashboard shows
-> volume, markets, and a live solvency check proving liabilities are always
-> covered by the on-chain USDC balance.
+> dollar-pegged wallet. Group admins earn a fee on every winning trade in
+> markets they create — a built-in referral loop. An AI assistant answers
+> community questions, and x402 paywalls let AI agents buy content over HTTP.
+> A public dashboard shows volume, markets, and a live solvency check proving
+> liabilities are always covered by on-chain USDC.
 >
-> The prototype is complete (419 automated tests, 94% coverage, Dockerized,
-> treasury contract deployed with 12 EVM-tested scenarios).
-> The grant funds real RPC infrastructure, hosting, and community rollout.
+> The prototype is complete: 422 automated tests, 94% coverage, Dockerized,
+> treasury contract tested on a local EVM. The grant funds RPC infrastructure,
+> hosting, and community rollout.
 
 ## 4. 1-minute demo script (record on Loom after deploy)
 
-1. `0:00–0:10` — `/start` в Telegram, меню бота.
-2. `0:10–0:25` — `/deposit`, открыть дашборд (Project URL), показать QR на
-   донат-странице `/u/{id}`; отправить USDC с кошелька → авто-зачисление.
-3. `0:25–0:40` — `/tip 5` и реакция-чаевые в группе; показать `/top` и
-   мгновенное уведомление получателя.
-4. `0:40–0:55` — `/bet create ...`, ставка из двух тапов, `/resolve`,
-   автоматическая выплата победителю; с любой страницы рынка — кнопка
-   «🎯 Поставить в Telegram» (deep-link `t.me/bot?start=bet_<id>`).
-5. `0:55–1:00` — `/api/solvency`: обязательства покрыты резервами, которые
-    читаются прямо из контракта `TipBotVault` (`reserves_source: "vault"`).
-6. (бонус для жюри) x402: `curl -X POST <домен>/api/x402/tip?recipient=…&amount=1`
-    → `402` с инвойсом → оплата USDC → повторный запрос с `x-402-payment` → 200.
-7. (киллер-фича) x402 Paywall: `/paywall create 1 Отчёт` → контент →
-    `curl -X POST <домен>/api/x402/paywall?item=1&amount=1` → агент платит
-    on-chain и получает контент — bot-to-bot коммерция на Base.
-8. (киллер-фича 2) Платный канал: админ включает `/paywall channel 5`,
-   подписчик платит `/paywall subscribe @канал`, входит по invite-линку,
-   watcher кикает после истечения — канал монетизируется сам.
-9. (дистрибуция) Farcaster Frame: запостить `/frame/<id>` в Warpcast с
-   тегами `@jessepollak` `@buildonbase` — кнопка «Buy in Telegram» ведёт на
-   `t.me/bot?start=paywall_<id>` (однокнопочная покупка), вторая кнопка —
-   прямой x402-инвойс для агентов. Демо-скрипты: `scripts/x402_demo.py`,
-   `scripts/agent_demo.py` (агент минтит пост и сам платит за него).
+1. `0:00–0:10` — `/start` in Telegram, bot menu.
+2. `0:10–0:25` — `/deposit`, open the dashboard (Project URL), show the QR on
+   the `/u/{id}` donation page; send USDC from a wallet → auto-credit.
+3. `0:25–0:40` — `/tip 5` and reaction-tips in a group; show `/top` and the
+   instant recipient notification.
+4. `0:40–0:55` — **prediction market**: `/market create 50 Who wins? | Alice |
+   Bob` → `/trade <id> 1 10` at live odds → card shows moving prices →
+   creator resolves → winner payout DM arrives automatically.
+5. `0:55–1:00` — `/api/solvency`: liabilities covered by reserves read
+   directly from the `TipBotVault` contract (`reserves_source: "vault"`).
+6. (bonus for judges) x402: `curl -X POST <domain>/api/x402/tip?recipient=…&amount=1`
+   → `402` with an invoice → pay USDC → repeat with `x-402-payment` → 200.
+7. (killer feature) x402 Paywall: `/paywall create 1 Report` → content →
+   `curl -X POST <domain>/api/x402/paywall?item=1&amount=1` → the agent pays
+   on-chain and receives the content — bot-to-bot commerce on Base.
+8. (killer feature 2) Paid channel: admin runs `/paywall channel 5`,
+   subscribers pay `/paywall subscribe @channel`, enter via invite link,
+   watcher kicks them on expiry — the channel monetizes itself.
+9. (killer feature 3) AI assistant: `/ask What is Base?` inside the chat —
+   context-aware answers from the OpenAI-compatible API.
+10. (distribution) Farcaster Frame: post `/frame/<id>` on Warpcast with tags
+    `@jessepollak` `@buildonbase` — the "Buy in Telegram" button deep-links to
+    `t.me/bot?start=paywall_<id>` (one-button purchase). Demo scripts:
+    `scripts/x402_demo.py`, `scripts/agent_demo.py` (an agent mints a post and
+    pays for it itself).
 
-## 5. Key usage numbers — что заполнять (формат формы)
+## 5. Key usage numbers — what to fill in (form format)
 
-Форма запрашивает: all-time users onboarded, DAU, WAU, all-time volume,
-last-30-day volume. До деплоя честно: `0 / 0 / 0 / 0 / 0` + (если есть поле
-для текста) «just launched, live on Base mainnet, onboarding first
-communities». После первых недель — реальные цифры из дашборда (`/api/stats`
-и `/api/user`), они отображаются публично и их легко проверить: **не
-завышать**.
+The form asks: all-time users onboarded, DAU, WAU, all-time volume,
+last-30-day volume. Before deploy, honestly: `0 / 0 / 0 / 0 / 0` + (if there
+is a text field) "just launched, live on Base mainnet, onboarding first
+communities". After the first weeks — real numbers from the dashboard
+(`/api/stats` and `/api/user`); they are public and easy to verify:
+**do not inflate**.
 
 ## 6. How the product makes money
 
-- **2% win fee на прогнозных рынках** — комиссия от чистого выигрыша
-  победителя идёт **создателю рынка** (админ группы / стример). Это
-  встроенная реферальная петля: админу выгодно, чтобы его сообщество
-  ставило. Следующий шаг — доля платформы на escrow-рынках.
-- **Конверсия в депозиты** — каждая активность (тип, донат, ставка) требует
-  USDC в боте; это реальный on-chain inflow на hot wallet.
-- **Донат-страницы** — комиссия на донаты (опционально, после запуска).
+- **Market creator fees on prediction markets** — when a market resolves,
+  leftover escrow from rounding and the platform share go to the market
+  creator (group admin / streamer). A built-in referral loop: admins want
+  their community trading. Next step: explicit platform fee on trades.
+- **Deposit conversion** — every activity (tip, trade, paywall purchase)
+  requires USDC in the bot; this is real on-chain inflow to the hot wallet.
+- **Donation pages** — optional tip percentage (post-launch).
 
 ## 7. GTM plan (3 months)
 
-- **Месяц 1 — деплой и первые сообщества.** Base mainnet + публичный
-  дашборд; Loom-демо; посты в X/Farcaster («мы live»); онбординг 5–10
-  Telegram-сообществ (крипто-чаты, спортивные фан-группы, стримеры):
-  чаевые + первый рынок с реальными ставками. **Farcaster Frames** как
-  первый канал трафика: paywall-пост как Frame (`/frame/<id>`), запостить
-  в Warpcast с тегами `@jessepollak`/`@buildonbase`/`$DEGEN`; «AI-агент»
-  демо (`scripts/agent_demo.py`) как видео для ревьюеров.
-- **Месяц 2 — реферальная петля админов.** Персональные дашборды создателей
-  (объём, рынки, комиссия) — админ сам зовёт сообщество; публичные
-  страницы рынков с deep-link «Поставить в Telegram» для шаринга;
-  интеграции и правки по обратной связи первых пользователей.
-- **Месяц 3 — вирусный рост.** Рынки-«события» (матчи, эфиры) как
-  вирусный контент; коллаборации с Base-сообществами; публичный
-  `/api/solvency` как аргумент доверия; цель — 1k+ пользователей,
-  первый 30-дневный объём.
+- **Month 1 — deploy and first communities.** Base mainnet + public
+  dashboard; Loom demo; X/Farcaster posts ("we're live"); onboard 5–10
+  Telegram communities (crypto chats, sports fan groups, streamers):
+  tips + the first real-money market. **Farcaster Frames** as the first
+  traffic channel: a paywall post as a Frame (`/frame/<id>`), posted on
+  Warpcast tagged `@jessepollak`/`@buildonbase`; the AI-agent demo
+  (`scripts/agent_demo.py`) as a video for reviewers.
+- **Month 2 — the admin referral loop.** Personal creator dashboards
+  (volume, markets, fees earned) — admins invite their own communities;
+  public market pages with a "Trade in Telegram" deep-link for sharing;
+  integrations and fixes from early-user feedback.
+- **Month 3 — viral growth.** Event markets (matches, streams) as viral
+  content; collaborations with Base communities; the public `/api/solvency`
+  as a trust argument; goal — 1k+ users and the first 30-day volume.
 
 ## 8. Full-length pitch (supporting material, not for the form)
 
 ### One-liner
 
 **USDC-powered community economy inside Telegram on Base: tips, donation pages
-with QR, and prediction markets with automatic payouts — backed by an
-on-chain treasury contract (TipBotVault) with publicly verifiable reserves.**
+with QR, Polymarket-style prediction markets (LMSR AMM), paid content, and an
+AI assistant — backed by an on-chain treasury contract (TipBotVault) with
+publicly verifiable reserves.**
 
 ### The problem
 
@@ -154,7 +160,8 @@ Crypto tipping and community monetization tools have two failure modes:
    real settlement, no trust.
 
 Both fail because the *value is not real money the whole community already
-trusts.*
+trusts.* And prediction markets never made it into group chats: order books
+are too heavy, gas kills micro-trades, and settlement requires trust.
 
 ### The solution
 
@@ -166,14 +173,22 @@ auditable on-chain** (see the web dashboard).
 - **💸 Tips** — `/tip 5` or reply to any message. Instant, with a leaderboard.
 - **🎁 Donation pages** — every user gets a public landing page with a QR that
   links back into the bot (`t.me/bot?start=donate_<id>`).
-- **🎯 Prediction markets** — parimutuel markets with deadlines. Winner takes
-  the whole pot (minus a 2% fee on net profit that goes to the market creator).
-  Cancel = automatic full refund to every backer. Every market has a public
-  shareable page with a "Bet in Telegram" button (deep-link `?start=bet_<id>`),
-  and the bot nudges the creator when a deadline passes so backers' money is
-  never stuck in a forgotten market.
+- **📈 Prediction markets (Polymarket-style)** — an LMSR automated market
+  maker: anyone creates a market with a liquidity subsidy in one command;
+  traders buy and sell YES/NO shares at algorithmic live odds (prices always
+  sum to $1, no counterparty needed); the creator resolves, winners are paid
+  automatically, and the creator earns the leftover escrow as a fee. Deadline
+  + grace-period watchers nudge absent creators so trader money is never
+  stuck; cancellation refunds everyone their net cost basis. Funding is
+  mathematically bounded: escrow ≥ max payout is guaranteed by the LMSR cost
+  function (property-tested). Every market has a public JSON endpoint and a
+  shareable card with live odds bars.
+- **🎯 Parimutuel bets** — simple winner-takes-all polls with deadlines,
+  automatic payouts, cancel = full refund, and Farcaster Frame distribution.
 - **🔑 Wallet linking** — sign a message with your wallet to auto-claim any
-  USDC sent to the bot's address. Withdrawals go back on-chain anytime.
+  USDC sent to the bot's address. Withdrawals go back on-chain anytime;
+  `/tx <hash>` decodes any on-chain USDC transfer right in the chat with a
+  Basescan link.
 - **🤖 x402 for AI agents** — `POST /api/x402/tip` speaks the x402 protocol
   (Coinbase): an agent requests an invoice (HTTP 402 + `x-402-*` headers),
   pays USDC on Base, repeats the request with `x-402-payment: <tx_hash>`,
@@ -197,6 +212,10 @@ auditable on-chain** (see the web dashboard).
   plus a sale notification, and a watcher kicks expired subscribers
   (ban+unban + a DM that it expired). Re-buying re-arms access seamlessly —
   subscriptions are rows, not wallets.
+- **🧠 AI assistant** — `/ask <question>` answers community questions via an
+  OpenAI-compatible API (configurable model/key), optionally using the
+  replied-to message as context; throttled and gracefully disabled when no
+  key is configured.
 - **📊 Transparency** — a public dashboard shows volume, open markets,
   leaderboard, and a live **solvency check** (`/api/solvency`): all user
   balances + unclaimed deposits must be covered by on-chain reserves. When the
@@ -210,9 +229,12 @@ auditable on-chain** (see the web dashboard).
 
 ### Why Base
 
-- **Sub-cent fees + 2s finality** make micro-tipping viable for the first time.
+- **Sub-cent fees + 2s finality** make micro-tipping and micro-trading viable
+  for the first time.
 - **USDC is native on Base** — no wrapping, no bridges, no custom contracts,
   minimal audit surface.
+- **Native x402 support** — the only chain where agent-to-agent payments work
+  out of the box.
 - **Telegram → Base funnel**: 900M Telegram users, one message away from a
   dollar-pegged wallet.
 
@@ -226,8 +248,10 @@ auditable on-chain** (see the web dashboard).
   the reserve without the owner key. 12 automated tests run the real compiled
   bytecode on a local EVM (deposits, caps, day rollover, owner powers).
 - Every user balance is a real claim on the on-chain reserve; conservation is
-  enforced and verified by an automated test suite (fees, refunds, payouts —
-  nothing created, nothing lost).
+  enforced and verified by an automated test suite (fees, refunds, payouts,
+  AMM escrow — nothing created, nothing lost). Market funding is provably
+  sufficient: escrow ≥ max possible payout, verified by a property test over
+  randomized trade sequences.
 - Wallet linking uses EIP-191 signatures (`personal_sign`); deposits are
   credited **only to the owner of the sending wallet** (a tx hash is public
   on-chain, so a `claim` without this check would be stealable), then matched
@@ -240,8 +264,10 @@ auditable on-chain** (see the web dashboard).
 1. **Growth & operations** — real RPC infrastructure (Alchemy/Infura), hosting,
    and promotion in communities. Deployment is already Dockerized (bot +
    dashboard, healthcheck, shared ledger volume).
-2. **Escrow markets** — tradeable positions, creator-referred growth.
-3. **Referral program** — the win-fee loop scaled with a dashboard per creator.
+2. **On-chain market escrow** — move market collateral on-chain for
+   trustless resolution.
+3. **Referral program** — the creator-fee loop scaled with a dashboard per
+   creator.
 4. **Audit & transparency** — formal audit of `TipBotVault` (CertiK/Hacken/
    independent) and the on-chain proof page. The live `/api/solvency` check
    (liabilities vs vault reserves) is already in the dashboard.
@@ -258,29 +284,33 @@ infrastructure, hosting, and community rollout — taking a working product from
 
 ---
 
-## 9. Pre-submission checklist (RU)
+## 9. Pre-submission checklist
 
-- [ ] Деплой на Base mainnet: `.env` заполнен (`BOT_TOKEN`, `BASE_RPC_URL`,
+- [ ] Deploy to Base mainnet: fill `.env` (`BOT_TOKEN`, `BASE_RPC_URL`,
       `HOT_WALLET_KEY`, `BOT_USERNAME`), `docker compose up -d --build`,
-      прогон end-to-end: депозит → авто-зачисление → `/tip` → `/withdraw`.
-- [ ] **Live product**: реальные первые пользователи и хотя бы минимальные
-      usage numbers (форма рассчитана на live-продукт).
-- [ ] **Project URL** доступен публично (дашборд + `/api/solvency` отвечает).
-- [ ] Создан **X (Twitter)** с активностью (пост «мы live» + репосты);
-      Telegram username реальный.
-- [ ] Записано **1-минутное демо на Loom** по сценарию §4 (форма просит
-      именно Loom).
-- [ ] Сгенерирован ключ hot wallet → адрес в поле «Contract address on Base».
-- [ ] TipBotVault развёрнут (`python scripts/deploy_vault.py`), USDC переведён
-      в контракт, `/api/solvency` показывает `reserves_source: "vault"`.
-- [ ] x402 проверен: `POST /api/x402/tip` отвечает `402` с инвойсом и
-      зачисляет после оплаты (тест-платёж на $1).
-- [ ] Paywall проверен: `/paywall create` → покупка через `/paywall buy`
-      и через `POST /api/x402/paywall` (тест-платёж на $1).
-- [ ] Платный канал проверен: `/paywall channel 1` (бот — админ канала) →
-      покупка `/paywall subscribe` → вход по invite-линку.
-- [ ] Заполнены все поля формы (таблица §1), включая честные usage numbers.
-- [ ] E-mail под реальным аккаунтом (проще проверить и связаться).
+      run the end-to-end pass: deposit → auto-credit → `/tip` → `/withdraw`.
+- [ ] **Live product**: real first users and at least minimal usage numbers
+      (the form expects a live product).
+- [ ] **Project URL** publicly reachable (dashboard + `/api/solvency` answers).
+- [ ] **X (Twitter)** created with activity ("we're live" post + reposts);
+      real Telegram username.
+- [ ] **1-minute Loom demo** recorded per §4 (the form asks for exactly Loom).
+- [ ] Hot wallet key generated → address in the "Contract address on Base"
+      field.
+- [ ] TipBotVault deployed (`python scripts/deploy_vault.py`), USDC moved
+      into the contract, `/api/solvency` shows `reserves_source: "vault"`.
+- [ ] x402 verified: `POST /api/x402/tip` returns `402` with an invoice and
+      credits after payment ($1 test payment).
+- [ ] Paywall verified: `/paywall create` → purchase via `/paywall buy` and
+      via `POST /api/x402/paywall` ($1 test payment).
+- [ ] Paid channel verified: `/paywall channel 1` (bot as channel admin) →
+      purchase via `/paywall subscribe` → entry via invite link.
+- [ ] Prediction market verified: `/market create` → `/trade` → resolve →
+      winner payout; odds visible on the public `/api/predictions` feed.
+- [ ] AI assistant configured or intentionally left off (`AI_API_KEY`).
+- [ ] All form fields filled (table §1), including honest usage numbers.
+- [ ] E-mail under a real account (easier to verify and contact).
 
-*Stack: Python 3.12 · aiogram (polling или webhook) · web3.py · FastAPI · PostgreSQL 16 · Solidity 0.8.24 (TipBotVault) · Base mainnet.*
+*Stack: Python 3.12 · aiogram (polling or webhook) · web3.py · FastAPI ·
+PostgreSQL 16 · Solidity 0.8.24 (TipBotVault) · Base mainnet.*
 *Address (USDC on Base): `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`*
