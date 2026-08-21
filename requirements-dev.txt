@@ -1,8 +1,9 @@
 # Development / CI / contract tooling (NOT needed in the production image)
+# All tool versions are pinned: unpinned majors (e.g. pytest 9) broke CI.
 -r requirements.txt
 py-solc-x==2.0.5
 eth-tester==0.13.0b1
 py-evm==0.12.1b1
-ruff
-coverage
-pytest
+ruff==0.16.4
+coverage==7.14.1
+pytest==8.4.2

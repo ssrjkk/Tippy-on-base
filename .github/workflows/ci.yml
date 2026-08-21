@@ -43,6 +43,27 @@ jobs:
         run: ruff check bot web tests scripts
 
       - name: Test with coverage
+        env:
+          PYTHONUTF8: "1"
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
-          coverage run -m pytest tests -q
+          coverage run -m pytest tests -q --junitxml=pytest-result.xml
           coverage report --skip-covered -m
+
+      - name: Dump failure details
+        if: failure()
+        run: |
+          echo "=== pytest junit summary ==="
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET
+          try:
+              root = ET.parse("pytest-result.xml").getroot()
+              for case in root.iter("testcase"):
+                  for tag in ("failure", "error"):
+                      node = case.find(tag)
+                      if node is not None:
+                          print(f"--- {case.attrib.get('classname')}.{case.attrib.get('name')} [{tag}] ---")
+                          print((node.text or "")[-3000:])
+          except FileNotFoundError:
+              print("no junit file; test process died before reporting")
+          EOF
