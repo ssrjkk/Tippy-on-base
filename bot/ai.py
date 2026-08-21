@@ -8,6 +8,7 @@ Disabled state: AI_API_KEY unset -> ai_enabled() is False and /ask explains
 how to enable it instead of erroring mid-chat.
 """
 
+import asyncio
 import json
 import urllib.error
 import urllib.request
@@ -31,7 +32,7 @@ def ai_enabled() -> bool:
     return bool(config.AI_API_KEY)
 
 
-def ask(question: str) -> str:
+def _ask_sync(question: str) -> str:
     """One-shot question -> answer text. Raises RuntimeError with a short,
     user-presentable message on any failure (network, HTTP, bad payload)."""
     if not config.AI_API_KEY:
@@ -73,3 +74,10 @@ def ask(question: str) -> str:
     except (KeyError, IndexError, TypeError) as e:
         raise RuntimeError("AI returned an unexpected response") from e
     return (text or "").strip()
+
+
+async def ask(question: str) -> str:
+    """Async wrapper: runs the blocking urllib request off the event loop so
+    the aiogram event loop is never frozen while the AI endpoint answers
+    (can take many seconds)."""
+    return await asyncio.to_thread(_ask_sync, question)

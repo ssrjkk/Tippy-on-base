@@ -39,7 +39,7 @@ async def cmd_ask(message: types.Message) -> None:
     except Exception:
         pass
     try:
-        answer = ai.ask(full_question)
+        answer = await ai.ask(full_question)
     except RuntimeError as e:
         await message.answer(i18n.t(lang, 'ai_error', error=html.escape(str(e))))
         return

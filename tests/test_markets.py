@@ -453,7 +453,11 @@ def test_ai_no_question_shows_usage(ledger):
 
 def test_ask_success(ledger, monkeypatch):
     monkeypatch.setattr(ai_mod.config, "AI_API_KEY", "sk-test")
-    monkeypatch.setattr(ai_mod, "ask", lambda q: "Base — это L2 от Coinbase.")
+
+    async def _ask(q):
+        return "Base — это L2 от Coinbase."
+
+    monkeypatch.setattr(ai_mod, "ask", _ask)
     m = Message("/ask что такое base?")
     run(cmd_ask(m))
     assert "Tippy AI" in m.answers[0][0]
@@ -463,7 +467,7 @@ def test_ask_success(ledger, monkeypatch):
 def test_ask_error_is_friendly(ledger, monkeypatch):
     monkeypatch.setattr(ai_mod.config, "AI_API_KEY", "sk-test")
 
-    def boom(q):
+    async def boom(q):
         raise RuntimeError("AI HTTP 429: rate limited")
 
     monkeypatch.setattr(ai_mod, "ask", boom)
@@ -476,7 +480,11 @@ def test_ask_error_is_friendly(ledger, monkeypatch):
 def test_ask_with_reply_context(ledger, monkeypatch):
     monkeypatch.setattr(ai_mod.config, "AI_API_KEY", "sk-test")
     captured = {}
-    monkeypatch.setattr(ai_mod, "ask", lambda q: captured.update(q=q) or "ок")
+    async def _ask(q):
+        captured.update(q=q)
+        return "ок"
+
+    monkeypatch.setattr(ai_mod, "ask", _ask)
     ref = Message("ETH газ дорогой")
     m = Message("/ask объясни", )
     m.reply_to_message = ref
