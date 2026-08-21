@@ -249,3 +249,75 @@ def test_dispatch_donate_landing_with_qr(ledger, monkeypatch):
         )
     )
     assert "sendPhoto" in [n for n, _ in s.calls]
+
+
+def test_dispatch_market_full_lifecycle(ledger):
+    """AMM prediction market end-to-end through the REAL router: create ->
+    trade -> card -> two-tap resolve -> winner DM. Only Telegram transport
+    is faked; filters, parsing, ledger math are all real."""
+    ledger.credit(ALICE, 1_000_000_000, "deposit")
+    s = RecorderSession()
+    bot = _mk_bot(s)
+    dp = _mk_dp()
+
+    asyncio.run(
+        dp.feed_update(
+            bot,
+            _message_update("/market create 50 Кто победит? | Алиса | Боб", user_id=ALICE),
+        )
+    )
+    markets = ledger.open_markets()
+    assert len(markets) == 1
+    mid = int(markets[0]["id"])
+    assert ledger.balance(ALICE) == Decimal("950.000000")
+
+    ledger.credit(BOB, 100_000_000, "deposit")
+    asyncio.run(
+        dp.feed_update(bot, _message_update(f"/trade {mid} 1 10", user_id=BOB, username="bob"))
+    )
+    pos = ledger.user_market_position(mid, BOB)
+    assert pos.get(0, {}).get("shares", 0) > 0
+
+    asyncio.run(dp.feed_update(bot, _callback_update(f"mk:{mid}", user_id=BOB)))
+    edits = [p for n, p in s.calls if n == "editMessageText"]
+    assert edits and "%" in edits[-1]["text"], "card must show live odds"
+
+    asyncio.run(dp.feed_update(bot, _callback_update(f"mkres:{mid}", user_id=ALICE)))
+    asyncio.run(dp.feed_update(bot, _callback_update(f"mkres:{mid}:0", user_id=ALICE)))
+    m = ledger.get_market(mid)
+    assert m["status"] == "resolved"
+    assert m["winner"] == 0
+    sent_to = [p["chat_id"] for n, p in s.calls if n == "sendMessage"]
+    assert BOB in sent_to, "winner must be notified"
+
+
+def test_dispatch_ask_disabled_hint(ledger, monkeypatch):
+    from bot import ai as ai_mod
+
+    monkeypatch.setattr(ai_mod.config, "AI_API_KEY", None)
+    s = RecorderSession()
+    asyncio.run(_mk_dp().feed_update(_mk_bot(s), _message_update("/ask что такое base?")))
+    text = next(p["text"] for n, p in s.calls if n == "sendMessage")
+    assert "не подключён" in text
+
+
+def test_dispatch_tx_lookup(ledger, monkeypatch):
+    from bot import base
+
+    h = "0x" + "ab" * 32
+    monkeypatch.setattr(
+        base,
+        "tx_info",
+        lambda t: {
+            "hash": t,
+            "from": "0x" + "1" * 40,
+            "to": "0x" + "2" * 40,
+            "status": True,
+            "value_micro": 5_000_000,
+            "usdc_to": "0x" + "3" * 40,
+        },
+    )
+    s = RecorderSession()
+    asyncio.run(_mk_dp().feed_update(_mk_bot(s), _message_update(f"/tx {h}")))
+    text = next(p["text"] for n, p in s.calls if n == "sendMessage")
+    assert "USDC перевод" in text and "Basescan" in text
