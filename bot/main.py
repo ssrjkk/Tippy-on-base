@@ -5,6 +5,7 @@ import logging
 import time
 
 from aiogram import Bot, Dispatcher, types
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from . import base, config
@@ -14,7 +15,12 @@ from .ledger import ledger
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("tipbot")
 
-bot = Bot(token=config.BOT_TOKEN, default=ParseMode.HTML)
+# aiogram >=3.7 requires DefaultBotProperties (a bare ParseMode here crashes
+# form serialization on the first real API call).
+bot = Bot(
+    token=config.BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+)
 
 
 async def deposit_watcher() -> None:

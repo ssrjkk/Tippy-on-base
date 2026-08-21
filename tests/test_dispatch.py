@@ -82,7 +82,15 @@ def json_dumps(v: Any) -> str:
 
 
 def _mk_bot(session) -> Bot:
-    return Bot(token="0:test", session=session, default=ParseMode.HTML)
+    # Mirror the production construction (DefaultBotProperties), so the fake
+    # transport exercises the same Bot object real polling uses.
+    from aiogram.client.default import DefaultBotProperties
+
+    return Bot(
+        token="0:test",
+        session=session,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
 
 
 _dp: Dispatcher | None = None
