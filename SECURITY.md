@@ -57,3 +57,28 @@ every 6h) lets an attacker decrypt **all** users' wallets, not just the hot
 wallet. `WALLET_ENC_KEY` must be a separate random value
 (`python -c "import secrets; print(secrets.token_hex(32))"`), never
 `HOT_WALLET_KEY`, and must be backed up separately from the database.
+
+## Vault security (TipBotVault.sol)
+
+The on-chain vault uses a **two-step ownership transfer** (`transferOwnership`
+→ `acceptOwnership`).  The new owner must call `acceptOwnership()` to
+complete the handover; a mistyped address cannot steal the vault.
+
+The relayer's daily spending cap uses a **24-hour rolling window** (not a
+calendar day), preventing the midnight-boundary bypass where a relayer could
+spend `dailyLimit` on the last block of one day and again on the first block
+of the next.
+
+## Session revocation
+
+Web sessions are **stateless signed HMAC cookies** (no server-side store).
+There is no way to revoke a single session — the only kill-switch is to
+rotate `SECRET_KEY` in `.env`, which logs out **every** user simultaneously.
+Document this so operators know the trade-off before deploying.
+
+## Private-chat guards
+
+The `/export`, `/wallet export`, and `/import` commands refuse to execute
+outside a private chat (`message.chat.type != "private"`).  They reply with
+a hint to DM the bot and best-effort delete the triggering message, preventing
+leakage of private keys and seed phrases into group history.

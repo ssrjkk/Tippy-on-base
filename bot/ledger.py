@@ -1292,6 +1292,17 @@ class Ledger:
                 "SELECT * FROM markets WHERE id = %s", (market_id,)
             ).fetchone()
 
+    def get_market_for_update(self, market_id: int) -> dict | None:
+        """SELECT FOR UPDATE — holds an exclusive row lock until the
+        transaction commits or rolls back.  Use this inside every
+        mutating market operation (buy, sell, resolve, cancel) to prevent
+        two concurrent processes from racing on the same escrow."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM markets WHERE id = %s FOR UPDATE",
+                (market_id,),
+            ).fetchone()
+
     def open_markets(self, limit: int = 20) -> list[dict]:
         with self._lock:
             return self._conn.execute(
@@ -1465,7 +1476,7 @@ class Ledger:
         if spend_micro < 10_000:  # 0.01 USDC
             return "toosmall", {}
         with self._lock:
-            m = self.get_market(market_id)
+            m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
                 return "closed", {}
             if m["close_at"] is not None and int(time.time()) > m["close_at"]:
@@ -1517,7 +1528,7 @@ class Ledger:
         Returns ('ok', info) or ('closed'|'deadline'|'badopt'|'noshare'|'toosmall', {}).
         """
         with self._lock:
-            m = self.get_market(market_id)
+            m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
                 return "closed", {}
             if m["close_at"] is not None and int(time.time()) > m["close_at"]:
@@ -1567,7 +1578,7 @@ class Ledger:
         [{'tg_id', 'net_micro', 'win'}] for DM notifications.
         """
         with self._lock:
-            m = self.get_market(market_id)
+            m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
                 return False, "Рынок не найден или уже закрыт.", []
             if m["creator"] != resolver_id:
@@ -1627,7 +1638,7 @@ class Ledger:
         protection, same as parimutuel bets).
         """
         with self._lock:
-            m = self.get_market(market_id)
+            m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
                 return False, "Рынок не найден или уже закрыт."
             if m["creator"] != resolver_id and not self.market_is_expired(m):

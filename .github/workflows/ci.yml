@@ -57,6 +57,11 @@ jobs:
       - name: Lint (ruff)
         run: ruff check bot web tests scripts
 
+      - name: Security audit (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --strict
+
       - name: Test with coverage
         env:
           PYTHONUTF8: "1"

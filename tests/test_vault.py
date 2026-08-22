@@ -211,10 +211,17 @@ def test_only_owner_controls_roles_and_reserve(deploy):
 def test_ownership_transfer(deploy):
     w3, usdc, vault, owner, relayer, alice, bob = deploy()
     mine(w3, vault.functions.transferOwnership(bob).transact({"from": owner}))
+    assert vault.functions.pendingOwner().call() == bob
+    assert vault.functions.owner().call() == owner  # not transferred yet
+    # non-pending-owner cannot accept
+    expect_revert(lambda: vault.functions.acceptOwnership().transact({"from": alice}), "NotPendingOwner()")
+    mine(w3, vault.functions.acceptOwnership().transact({"from": bob}))
     assert vault.functions.owner().call() == bob
+    assert vault.functions.pendingOwner().call() == "0x" + "00" * 20
     expect_revert(lambda: vault.functions.setDailyLimit(1).transact({"from": owner}), "OnlyOwner()")
     mine(w3, vault.functions.setDailyLimit(1).transact({"from": bob}))
-    expect_revert(lambda: vault.functions.transferOwnership("0x" + "00" * 20).transact({"from": owner}), "OnlyOwner()")
+    # zero-address cannot be proposed
+    expect_revert(lambda: vault.functions.transferOwnership("0x" + "00" * 20).transact({"from": bob}), "OnlyOwner()")
 
 
 def test_reserve_withdrawal(deploy):

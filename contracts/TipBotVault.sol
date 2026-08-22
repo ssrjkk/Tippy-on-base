@@ -21,21 +21,24 @@ contract TipBotVault {
     error EmptyDistribution();
     error Reentrant();
     error TransferFailed();
+    error NotPendingOwner();
 
     IERC20 public immutable usdc;
 
     address public owner;
+    address public pendingOwner;
     address public relayer;
 
     uint256 public dailyLimit;
-    uint256 public lastResetDay;
-    uint256 public spentToday;
+    uint256 public windowStart;
+    uint256 public spentInWindow;
 
     uint256 private _locked = 1;
 
     event Distributed(address indexed recipient, uint256 amount);
     event RelayerChanged(address indexed relayer);
     event LimitChanged(uint256 limit);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event ReserveWithdrawn(address indexed to, uint256 amount);
 
@@ -44,7 +47,7 @@ contract TipBotVault {
         owner = owner_;
         relayer = relayer_;
         dailyLimit = dailyLimit_;
-        lastResetDay = block.timestamp / 1 days;
+        windowStart = block.timestamp;
     }
 
     modifier onlyOwner() {
@@ -83,12 +86,12 @@ contract TipBotVault {
         }
 
         if (msg.sender == relayer) {
-            _rollDay();
-            uint256 next = spentToday + total;
+            _rollWindow();
+            uint256 next = spentInWindow + total;
             if (next > dailyLimit) {
-                revert DailyLimitExceeded(spentToday, dailyLimit, total);
+                revert DailyLimitExceeded(spentInWindow, dailyLimit, total);
             }
-            spentToday = next;
+            spentInWindow = next;
         }
 
         for (uint256 i = 0; i < recipients.length; i++) {
@@ -118,21 +121,28 @@ contract TipBotVault {
 
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert OnlyOwner();
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
     }
 
-    /// @notice How much of the daily budget the relayer has already spent today.
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
+        emit OwnershipTransferred(owner, pendingOwner);
+        owner = pendingOwner;
+        pendingOwner = address(0);
+    }
+
+    /// @notice How much of the daily budget the relayer has already spent in
+    ///         the current 24h window.  Rolling window prevents midnight-bypass.
     function spentTodayView() external view returns (uint256) {
-        if (lastResetDay != block.timestamp / 1 days) return 0;
-        return spentToday;
+        if (block.timestamp >= windowStart + 1 days) return 0;
+        return spentInWindow;
     }
 
-    function _rollDay() private {
-        uint256 day = block.timestamp / 1 days;
-        if (lastResetDay != day) {
-            lastResetDay = day;
-            spentToday = 0;
+    function _rollWindow() private {
+        if (block.timestamp >= windowStart + 1 days) {
+            windowStart = block.timestamp;
+            spentInWindow = 0;
         }
     }
 }
