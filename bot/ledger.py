@@ -126,6 +126,13 @@ class ReconnectingConn:
         self._conn = psycopg.connect(
             self._database, row_factory=dict_row, connect_timeout=15
         )
+        # Bound every statement: a query that hangs (network stall, DB lock
+        # contention) would otherwise pin self._lock forever and freeze every
+        # other ledger call on the event loop. Error out instead of hanging.
+        try:
+            self._conn.execute("SET statement_timeout = '10s'")
+        except Exception:
+            pass
 
     def _ensure(self) -> None:
         if self._conn.closed or self._conn.broken:
