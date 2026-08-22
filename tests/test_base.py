@@ -61,7 +61,7 @@ def test_recover_signer_roundtrip(real_account):
     sig = base.w3.eth.account.sign_message(
         encode_defunct(text=msg), private_key=real_account.key
     ).signature.hex()
-    assert base.recover_signer(msg, sig).lower() == real_account.address.lower()
+    assert asyncio.run(base.recover_signer(msg, sig)).lower() == real_account.address.lower()
 
 
 @pytest.mark.parametrize(
@@ -83,12 +83,12 @@ def test_hot_balance_reads_contract(monkeypatch):
 
     fake_usdc = types.SimpleNamespace(functions=FakeFunctions())
     monkeypatch.setattr(base, "usdc", fake_usdc)
-    assert base.hot_balance() == 5.0
+    assert asyncio.run(base.hot_balance()) == 5.0
 
 
 def test_vault_balance_none_without_vault(monkeypatch):
     monkeypatch.setattr(base.config, "VAULT_ADDRESS", None)
-    assert base.vault_balance() is None
+    assert asyncio.run(base.vault_balance()) is None
 
 
 def test_vault_balance_reads_vault_contract(monkeypatch):
@@ -103,7 +103,7 @@ def test_vault_balance_reads_vault_contract(monkeypatch):
     fake_usdc = types.SimpleNamespace(functions=FakeFunctions())
     monkeypatch.setattr(base, "usdc", fake_usdc)
     monkeypatch.setattr(base.config, "VAULT_ADDRESS", "0x" + "ab" * 20)
-    assert base.vault_balance() == 42.5
+    assert asyncio.run(base.vault_balance()) == 42.5
     assert fake_usdc.functions.addr.lower() == "0x" + "ab" * 20
 
 
@@ -234,7 +234,7 @@ def test_poll_deposits_first_run(monkeypatch):
         return [{"tx_hash": "0x" + "ee" * 32, "sender": "0xabc", "amount_micro": 42}]
 
     monkeypatch.setattr(base, "_scan_deposits", fake_scan)
-    base.poll_deposits()
+    asyncio.run(base.poll_deposits())
     # Cold start backfills from the lookback window (>= 2000 blocks), clamped to block 1.
     assert scanned == [(1, 1000)]
     assert seen["last"] == 1000
@@ -270,7 +270,7 @@ def test_poll_deposits_skips_x402_paid_tx(monkeypatch):
             {"tx_hash": "0x" + "ff" * 32, "sender": "0xdef", "amount_micro": 7},
         ],
     )
-    base.poll_deposits()
+    asyncio.run(base.poll_deposits())
     assert seen["pending"] == ("0x" + "ff" * 32, "0xdef", 7)  # only the fresh one
 
 
@@ -287,7 +287,7 @@ def test_poll_deposits_no_new_blocks(monkeypatch):
         raise AssertionError("must not scan")
 
     monkeypatch.setattr(base, "_scan_deposits", fake_scan)
-    base.poll_deposits()  # current == last -> early return
+    asyncio.run(base.poll_deposits())  # current == last -> early return
 
 
 def test_poll_deposits_rescans_recent_blocks_for_reorg(monkeypatch):
@@ -314,7 +314,7 @@ def test_poll_deposits_rescans_recent_blocks_for_reorg(monkeypatch):
         "_scan_deposits",
         lambda f, t: (scanned.append((f, t)), [])[1],
     )
-    base.poll_deposits()
+    asyncio.run(base.poll_deposits())
     # start clamps back into the confirm window (block 490), re-scanning 490-500.
     assert scanned == [(490, 500)]
     assert seen["last"] == 500
@@ -351,7 +351,7 @@ def test_poll_deposits_auto_claims_linked(monkeypatch):
         "_scan_deposits",
         lambda f, t: [{"tx_hash": "0x1", "sender": "0xowner", "amount_micro": 5}],
     )
-    credited = base.poll_deposits()
+    credited = asyncio.run(base.poll_deposits())
     assert calls == [(777, "0xowner")]
     assert seen["last"] == 500
     # The sweep returns exactly what was credited so the watcher can notify.
@@ -379,7 +379,7 @@ def test_send_usdc_builds_and_sends(monkeypatch):
             return transfer
 
     monkeypatch.setattr(base, "usdc", types.SimpleNamespace(functions=FakeFunctions()))
-    tx_hash = base.send_usdc("0x" + "33" * 20, 123456)
+    tx_hash = asyncio.run(base.send_usdc("0x" + "33" * 20, 123456))
     assert tx_hash == "0x" + "01" * 32
     assert captured["to"] == to_checksum_address("0x" + "33" * 20)
     assert captured["amount"] == 123456
@@ -459,7 +459,7 @@ def test_check_pending_withdraws_refunds_reverted(monkeypatch, tmp_path):
             return {"status": 0}  # reverted
 
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert fresh.balance(777) == Decimal("5.050000")  # fully refunded
     row = fresh._conn.execute(
         "SELECT status FROM tx_log WHERE kind = 'withdraw'"
@@ -476,7 +476,7 @@ def test_check_pending_withdraws_marks_confirmed(monkeypatch, tmp_path):
             return {"status": 1}  # mined ok
 
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert fresh.balance(777) == Decimal("0")  # stays debited
     row = fresh._conn.execute(
         "SELECT status FROM tx_log WHERE kind = 'withdraw'"
@@ -493,7 +493,7 @@ def test_check_pending_withdraws_stuck_gets_refunded(monkeypatch, tmp_path):
             return None  # still not mined
 
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert fresh.balance(777) == Decimal("5.050000")
     assert fresh._conn.execute(
         "SELECT status FROM tx_log WHERE kind = 'withdraw'"
@@ -509,7 +509,7 @@ def test_check_pending_withdraws_recent_pending_kept(monkeypatch, tmp_path):
             return None
 
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert fresh.balance(777) == Decimal("0")  # still pending, no refund yet
 
 
@@ -522,7 +522,7 @@ def test_check_pending_withdraws_crash_before_send_refunded(monkeypatch, tmp_pat
             raise AssertionError("no tx was ever sent")
 
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert fresh.balance(777) == Decimal("5.050000")  # crash leftover refunded
     assert fresh._conn.execute(
         "SELECT status FROM tx_log WHERE kind = 'withdraw'"
@@ -538,7 +538,7 @@ def test_check_pending_withdraws_rpc_error_handled(monkeypatch, tmp_path):
             raise ConnectionError("rpc down")
 
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
-    base.check_pending_withdraws()  # must not raise on RPC error
+    asyncio.run(base.check_pending_withdraws())  # must not raise on RPC error
     # Old + RPC down -> treated as stuck, refunded.
     assert fresh.balance(777) == Decimal("5.050000")
     assert fresh._conn.execute(
@@ -555,7 +555,7 @@ def test_check_pending_withdraws_legacy_marked_done(monkeypatch, tmp_path):
             raise AssertionError("legacy rows must not hit RPC")
 
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert fresh._conn.execute(
         "SELECT status FROM tx_log WHERE kind = 'withdraw'"
     ).fetchone()["status"] == "done"

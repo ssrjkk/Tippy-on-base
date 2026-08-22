@@ -295,7 +295,7 @@ def test_e2e_user_journey_deposit_tip_withdraw(e2e, monkeypatch):
     tx1 = "0x" + "aa" * 32
     logs1 = [_transfer_log(ACC.address, str(base.hot_wallet()), 100 * USDC, tx1)]
     _, captured = install_rpc(monkeypatch, logs=logs1, block=1500)
-    credited = base.poll_deposits()
+    credited = asyncio.run(base.poll_deposits())
     assert credited == [{"tg_id": ALICE, "amount_micro": 100 * USDC, "tx_hash": tx1}]
     assert e2e.balance(ALICE) == Decimal("100.000000")
 
@@ -319,7 +319,7 @@ def test_e2e_user_journey_deposit_tip_withdraw(e2e, monkeypatch):
     tx3 = "0x" + "ac" * 32
     logs3 = [_transfer_log(ACC.address, str(base.hot_wallet()), 5 * USDC, tx3)]
     _, captured3 = install_rpc(monkeypatch, logs=logs3, block=1520)
-    botmain.ledger.set_setting(ALICE, "notify_deposits", False)
+    asyncio.run(botmain.ledger.set_setting(ALICE, "notify_deposits", False))
     bot.sent.clear()
 
     async def _run_deposit_watcher_muted():
@@ -330,7 +330,7 @@ def test_e2e_user_journey_deposit_tip_withdraw(e2e, monkeypatch):
     asyncio.run(_run_deposit_watcher_muted())
     assert not any("Депозит зачислен" in text for _, text in bot.sent)
     assert e2e.balance(ALICE) == Decimal("115.000000")
-    botmain.ledger.set_setting(ALICE, "notify_deposits", True)
+    asyncio.run(botmain.ledger.set_setting(ALICE, "notify_deposits", True))
 
     # /balance shows it
     m = Message("/balance", from_id=ALICE, bot=bot)
@@ -375,7 +375,7 @@ def test_e2e_user_journey_deposit_tip_withdraw(e2e, monkeypatch):
     ).fetchone()
     assert wd["status"] == "done" and wd["tx_hash"].startswith("0x01")
     # nothing left pending for the withdraw watcher
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert e2e.pending_withdraws() == []
 
     # conservation: balances + sent withdrawals + fees == deposits
@@ -510,13 +510,13 @@ def test_e2e_market_deadline_watcher_and_grace(e2e, monkeypatch):
     monkeypatch.setattr(botmain, "bot", bot3)
     async def _run_grace():
         t = asyncio.create_task(botmain.market_watcher())
-        await asyncio.sleep(0.1)
+        await bot3.evt.wait()
         t.cancel()
         await asyncio.gather(t, return_exceptions=True)
     asyncio.run(_run_grace())
     msgs = [text for cid, text in bot3.sent if cid == ALICE]
-    assert any("не закрыт" in t and f"#{bid}" in t for t in msgs)
-    assert "автовозврата" in msgs[0]
+    assert any(f"#{bid}" in t and "/cancel" in t for t in msgs)
+    assert "/cancel" in msgs[0]
     warned = e2e._conn.execute(
         "SELECT grace_warned FROM bets WHERE id=%s", (bid,)
     ).fetchone()["grace_warned"]
@@ -764,7 +764,7 @@ def test_e2e_wallet_security(e2e, monkeypatch):
     # manual /claim for the same tx: already credited
     m = Message(f"/claim {tx}", from_id=BOB, bot=bot)
     run(cmd_claim(m))
-    assert "Не нашёл" in m.answers[0][0]
+    assert "уже зачислена" in m.answers[0][0]
 
     # malformed /claim
     m = Message("/claim not-a-hash", from_id=ALICE, bot=bot)
@@ -933,7 +933,7 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     wd_id = cur.fetchone()["id"]
     e2e._conn.execute("UPDATE users SET balance = balance - %s WHERE tg_id = %s", (5 * USDC + 50_000, ALICE))
     e2e._conn.commit()
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert e2e.balance(ALICE) == Decimal("100.000000")  # refunded
     assert e2e._conn.execute("SELECT status FROM tx_log WHERE id=%s", (wd_id,)).fetchone()["status"] == "refunded"
 
@@ -949,7 +949,7 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     e2e._conn.execute("UPDATE users SET balance = balance - %s WHERE tg_id = %s", (5 * USDC + 50_000, ALICE))
     e2e._conn.commit()
     install_rpc(monkeypatch, block=1500, receipts={tx3: {"status": 0}})
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert e2e.balance(ALICE) == Decimal("100.000000")
 
     # 4) receipt status=1 -> done, no refund
@@ -964,7 +964,7 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     e2e._conn.execute("UPDATE users SET balance = balance - %s WHERE tg_id = %s", (5 * USDC + 50_000, ALICE))
     e2e._conn.commit()
     install_rpc(monkeypatch, block=1500, receipts={tx4: {"status": 1}})
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert e2e._conn.execute("SELECT status FROM tx_log WHERE id=%s", (wd_id4,)).fetchone()["status"] == "done"
     assert e2e.balance(ALICE) == Decimal("94.950000")  # 100 minus 5.05 debited at creation, no refund
 
@@ -979,7 +979,7 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     e2e._conn.execute("UPDATE users SET balance = balance - %s WHERE tg_id = %s", (5 * USDC + 50_000, ALICE))
     e2e._conn.commit()
     install_rpc(monkeypatch, block=1500, receipts={})
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     assert e2e.balance(ALICE) == Decimal("89.900000")  # untouched yet
 
     # 6) legacy NULL-status row with tx_hash -> marked done, never refunded
@@ -990,7 +990,7 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
         (ALICE, to_addr, 5 * USDC, tx6, int(time.time()) - 3600),
     )
     e2e._conn.commit()
-    base.check_pending_withdraws()
+    asyncio.run(base.check_pending_withdraws())
     rows = e2e._conn.execute(
         "SELECT status FROM tx_log WHERE tx_hash=%s AND kind='withdraw'", (tx6,)
     ).fetchall()

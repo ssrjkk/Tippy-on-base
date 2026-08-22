@@ -4,6 +4,7 @@ import logging
 import time
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramNetworkError
 from aiogram.enums import ParseMode
 from . import base, config
 from . import i18n
@@ -47,35 +48,35 @@ async def market_watcher() -> None:
     while True:
         try:
             for bet in await ledger.open_bets_past_deadline():
+                await ledger.mark_deadline_notified(int(bet['id']))
                 try:
                     creator_lang = i18n.norm((await ledger.get_settings(bet['creator'])).get('lang'))
                     await bot.send_message(bet['creator'], i18n.t(creator_lang, 'deadline_notify', id=bet['id'], question=bet['question']))
                 except Exception as e:
                     log.warning('deadline notify failed for #%s: %s', bet['id'], e)
-                await ledger.mark_deadline_notified(int(bet['id']))
             for bet in await ledger.bets_need_grace_warning(config.GRACE_WARN_BEFORE_HOURS * 3600):
                 hours_left = max(1, round((bet['close_at'] + config.MARKET_GRACE_HOURS * 3600 - time.time()) / 3600))
+                await ledger.mark_grace_warned(int(bet['id']))
                 try:
                     creator_lang = i18n.norm((await ledger.get_settings(bet['creator'])).get('lang'))
                     await bot.send_message(bet['creator'], i18n.t(creator_lang, 'grace_warn', id=bet['id'], question=bet['question'], hours=hours_left))
                 except Exception as e:
                     log.warning('grace warn failed for #%s: %s', bet['id'], e)
-                await ledger.mark_grace_warned(int(bet['id']))
             for m in await ledger.open_markets_past_deadline():
+                await ledger.mark_market_deadline_notified(int(m['id']))
                 try:
                     creator_lang = i18n.norm((await ledger.get_settings(m['creator'])).get('lang'))
                     await bot.send_message(m['creator'], i18n.t(creator_lang, 'deadline_notify', id=m['id'], question=m['question']))
                 except Exception as e:
                     log.warning('market deadline notify failed for #%s: %s', m['id'], e)
-                await ledger.mark_market_deadline_notified(int(m['id']))
             for m in await ledger.markets_need_grace_warning(config.GRACE_WARN_BEFORE_HOURS * 3600):
                 hours_left = max(1, round((m['close_at'] + config.MARKET_GRACE_HOURS * 3600 - time.time()) / 3600))
+                await ledger.mark_market_grace_warned(int(m['id']))
                 try:
                     creator_lang = i18n.norm((await ledger.get_settings(m['creator'])).get('lang'))
                     await bot.send_message(m['creator'], i18n.t(creator_lang, 'grace_warn', id=m['id'], question=m['question'], hours=hours_left))
                 except Exception as e:
                     log.warning('market grace warn failed for #%s: %s', m['id'], e)
-                await ledger.mark_market_grace_warned(int(m['id']))
         except Exception as e:
             log.warning('market deadline check failed: %s', e)
         await asyncio.sleep(config.POLL_SECONDS * 4)
@@ -131,6 +132,8 @@ async def _run_webhook(stop: asyncio.Event | None=None) -> None:
 async def main() -> None:
     config.validate()
     log.info('hot wallet: %s', base.hot_wallet())
+    from web.mini import public_base_url
+    log.info('mini app url: %s', public_base_url() + '/app')
     dp = Dispatcher()
     dp.include_router(router)
     try:
@@ -140,10 +143,18 @@ async def main() -> None:
         log.warning('set_my_commands failed: %s', e)
     tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(housekeeping_watcher())]
     try:
-        if config.WEBHOOK_URL:
-            await _run_webhook()
-        else:
-            await dp.start_polling(bot, skip_updates=True)
+        while True:
+            try:
+                if config.WEBHOOK_URL:
+                    await _run_webhook()
+                else:
+                    await dp.start_polling(bot, skip_updates=True)
+                break
+            except TelegramNetworkError as e:
+                # Transient network outage at startup: retry instead of dying
+                # so a brief connectivity blip does not kill the whole bot.
+                log.warning('telegram unreachable, retrying in 15s: %s', e)
+                await asyncio.sleep(15)
     finally:
         for task in tasks:
             task.cancel()

@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, localcontext
 
 import psycopg
+import psycopg.errors
 from psycopg.rows import dict_row
 
 from . import config
@@ -188,22 +189,8 @@ class ReconnectingConn:
             pass
 
 
-class Ledger:
-    def __init__(self, database: str = config.DATABASE_URL) -> None:
-        # One shared connection, serialized by an RLock (the bot and the web
-        # dashboard run in the same process). PostgreSQL handles the actual
-        # concurrency; the lock keeps statement ordering deterministic.
-        self._lock = threading.RLock()
-        self._conn = ReconnectingConn(database)
-        with self._lock:
-            # Schema DDL needs ACCESS EXCLUSIVE locks, which a concurrent
-            # process holding read locks (e.g. the web dashboard) can block
-            # indefinitely. Fail fast instead of hanging forever — this must
-            # be set BEFORE any DDL runs.
-            self._conn.execute("SET lock_timeout = '15s'")
-            self._conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS users (
+SCHEMA_DDL = """
+CREATE TABLE IF NOT EXISTS users (
                     tg_id       BIGINT PRIMARY KEY,
                     username    TEXT,
                     balance     BIGINT NOT NULL DEFAULT 0,  -- USDC micro-units (1e6)
@@ -353,20 +340,48 @@ class Ledger:
                     PRIMARY KEY (market_id, tg_id, option_idx)
                 );
                 CREATE INDEX IF NOT EXISTS idx_market_shares_user ON market_shares (tg_id);
-                """
-            )
-            self._conn.execute("ALTER TABLE bets ADD COLUMN IF NOT EXISTS close_at BIGINT")
-            self._conn.execute("ALTER TABLE tx_log ADD COLUMN IF NOT EXISTS status TEXT")
-            self._conn.execute(
-                "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'ru'"
-            )
-            self._conn.execute(
-                "ALTER TABLE bets ADD COLUMN IF NOT EXISTS deadline_notified BIGINT NOT NULL DEFAULT 0"
-            )
-            self._conn.execute(
-                "ALTER TABLE bets ADD COLUMN IF NOT EXISTS grace_warned BIGINT NOT NULL DEFAULT 0"
-            )
-            self._conn.commit()
+ALTER TABLE bets ADD COLUMN IF NOT EXISTS close_at BIGINT;
+ALTER TABLE tx_log ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'ru';
+ALTER TABLE bets ADD COLUMN IF NOT EXISTS deadline_notified BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE bets ADD COLUMN IF NOT EXISTS grace_warned BIGINT NOT NULL DEFAULT 0;
+"""
+
+class Ledger:
+    def __init__(self, database: str = config.DATABASE_URL) -> None:
+        # One shared connection, serialized by an RLock (the bot and the web
+        # dashboard run in the same process). PostgreSQL handles the actual
+        # concurrency; the lock keeps statement ordering deterministic.
+        self._lock = threading.RLock()
+        self._conn = ReconnectingConn(database)
+        self.ensure_schema()  # idempotent; retries past lock contention
+
+
+    def ensure_schema(self, retries: int = 8, delay: float = 2.0) -> None:
+        """Apply idempotent schema DDL, retrying past transient lock timeouts.
+
+        Running this at Ledger() construction used to crash the whole process
+        when a concurrent bot/web/test process held a lock (ALTER TABLE needs
+        ACCESS EXCLUSIVE). Now we back off and retry instead of dying.
+        """
+        last = None
+        for _ in range(retries):
+            try:
+                with self._lock:
+                    self._conn.rollback()
+                    self._conn.execute("SET lock_timeout = '30s'")
+                    self._conn.execute("SET statement_timeout = '60s'")
+                    self._conn.execute(SCHEMA_DDL)
+                    self._conn.commit()
+                return
+            except (psycopg.errors.LockNotAvailable, psycopg.OperationalError) as e:
+                last = e
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+                time.sleep(delay)
+        raise RuntimeError(f"schema migration failed after {retries} attempts: {last}")
 
     # ---------- users ----------
 

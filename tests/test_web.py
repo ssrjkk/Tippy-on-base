@@ -8,9 +8,12 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture()
 def client(ledger, monkeypatch):
+    from bot.ledger import AsyncLedger
     from web import server
 
-    monkeypatch.setattr(server, "ledger", ledger)
+    # Routes now `await ledger.x()`; wrap the injected sync ledger so the
+    # await resolves against the hermetic test database.
+    monkeypatch.setattr(server, "ledger", AsyncLedger(ledger))
     return TestClient(server.app)
 
 

@@ -41,6 +41,14 @@ WEBHOOK_URL: str | None = os.environ.get("WEBHOOK_URL", "").strip() or None
 WEBHOOK_PATH: str = os.environ.get("WEBHOOK_PATH", "/telegram-webhook")
 WEBHOOK_SECRET: str | None = os.environ.get("WEBHOOK_SECRET", "").strip() or None
 
+# Public base URL of the Mini App / web dashboard. Must be https for Telegram
+# WebApp buttons. Kept separate from WEBHOOK_URL so the bot can run in long
+# polling mode while still advertising a public https Mini App URL (e.g. a
+# cloudflared tunnel or a fixed domain). Empty -> falls back to WEBHOOK_URL,
+# then a (broken) http://HOST:PORT that logs a warning. The launch script
+# auto-populates this from the cloudflared tunnel URL.
+MINI_APP_URL: str | None = os.environ.get("MINI_APP_URL", "").strip() or None
+
 # Bot username without leading "@" (used for web links, optional)
 BOT_USERNAME: str = os.environ.get("BOT_USERNAME", "")
 

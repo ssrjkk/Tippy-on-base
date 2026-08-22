@@ -8,6 +8,7 @@ then issues the same signed session cookie the dashboard uses. All further
 """
 import hashlib
 import hmac
+import logging
 import time
 from typing import Any
 from fastapi import APIRouter, HTTPException, Request
@@ -17,6 +18,7 @@ from bot import base, config
 from bot.ledger import async_ledger as ledger
 from web.auth import COOKIE_NAME, SESSION_TTL_SECONDS, make_session, parse_session
 router = APIRouter()
+log = logging.getLogger('web.mini')
 MICRO = 10 ** config.USDC_DECIMALS
 INIT_DATA_TTL = 24 * 3600
 
@@ -193,7 +195,19 @@ async def mini_lang(body: LangBody, request: Request) -> dict:
     return {'ok': True, 'lang': body.lang}
 
 def public_base_url() -> str:
-    """https://host part of WEBHOOK_URL — where the Mini App lives."""
-    if config.WEBHOOK_URL:
-        return '/'.join(config.WEBHOOK_URL.split('/')[:3])
+    """https://host part where the Mini App lives (used for WebApp buttons).
+
+    Prefers MINI_APP_URL (dedicated, works in polling mode too), then
+    WEBHOOK_URL. Falls back to a http://HOST:PORT that Telegram will reject,
+    logging a clear warning so the misconfiguration is obvious.
+    """
+    for cand in (config.MINI_APP_URL, config.WEBHOOK_URL):
+        if cand:
+            base = '/'.join(str(cand).split('/')[:3]).rstrip('/')
+            if base.startswith(('http://', 'https://')):
+                return base
+    log.warning(
+        'MINI_APP_URL / WEBHOOK_URL not set — WebApp button will use '
+        'http://%s:%s, which Telegram rejects (https required). Set '
+        'MINI_APP_URL=https://your-public-host', config.WEB_HOST, config.WEB_PORT)
     return f'http://{config.WEB_HOST}:{config.WEB_PORT}'

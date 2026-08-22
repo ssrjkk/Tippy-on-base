@@ -63,11 +63,19 @@ def ledger(monkeypatch):
     monkeypatch.setattr(handlers._common, "ledger", async_fresh)
     # Web modules bind the singleton at import time; rebind them so web
     # tests are hermetic (test database, not whatever DATABASE_URL points to).
+    # Wrap in AsyncLedger: the routes now `await ledger.x()`, so the injected
+    # ledger must be awaitable too.
     import web.auth
     import web.server
+    import web.mini
+    import web.frame
+    import web.x402
 
-    monkeypatch.setattr(web.server, "ledger", fresh)
-    monkeypatch.setattr(web.auth, "ledger", fresh)
+    monkeypatch.setattr(web.server, "ledger", async_fresh)
+    monkeypatch.setattr(web.auth, "ledger", async_fresh)
+    for _mod in (web.mini, web.frame, web.x402):
+        if hasattr(_mod, "ledger"):
+            monkeypatch.setattr(_mod, "ledger", async_fresh)
     handlers._common._money_cmd_last.clear()
     web.server._rl_state.clear()
     yield fresh

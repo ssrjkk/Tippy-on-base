@@ -186,8 +186,8 @@ async def api_solvency() -> dict:
     liabilities = await ledger.total_liabilities()
     pending = await ledger.pending_deposit_total()
     owed_usdc = _usdc(liabilities + pending)
-    bal = _safe_hot_balance()
-    vault_bal = _safe_vault_balance()
+    bal = await _safe_hot_balance()
+    vault_bal = await _safe_vault_balance()
     vault_addr = config.VAULT_ADDRESS
     reserves = vault_bal if vault_addr else bal
     return {'hot_wallet': str(hot_wallet()), 'vault_address': vault_addr, 'vault_balance_usdc': vault_bal, 'reserves_source': 'vault' if vault_addr else 'hot_wallet', 'hot_wallet_balance_usdc': bal, 'liabilities_usdc': _usdc(liabilities), 'pending_deposits_usdc': _usdc(pending), 'owed_usdc': owed_usdc, 'reserve_usdc': round(reserves - owed_usdc, 2) if reserves is not None else None, 'solvent': None if reserves is None else reserves >= owed_usdc}
@@ -203,8 +203,8 @@ async def api_qr(data: str, size: int=220) -> Response:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 @app.get('/api/wallet', tags=['treasury'])
-def api_wallet() -> dict:
-    return {'address': str(hot_wallet()), 'balance_usdc': _safe_hot_balance()}
+async def api_wallet() -> dict:
+    return {'address': str(hot_wallet()), 'balance_usdc': await _safe_hot_balance()}
 
 @app.get('/u/{tg_id}')
 async def user_page(tg_id: int) -> FileResponse:

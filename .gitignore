@@ -30,3 +30,19 @@ htmlcov/
 .DS_Store
 Thumbs.db
 backups/
+
+# Dev junk / one-off scripts (never commit)
+*.err
+*.out
+out.txt
+lt.err
+launch.err
+launch.out
+scan_result.txt
+_add_keys.py
+existing_keys.txt
+i18n_keys.txt
+transform_await.py
+bot/handlers/wallet_part1.py
+bot/i18n_temp.py
+scripts/

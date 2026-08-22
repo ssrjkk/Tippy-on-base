@@ -547,7 +547,8 @@ def test_api_predictions_endpoint(ledger):
     ledger.credit(BOB, 100 * USDC, "deposit")
     ledger.buy_shares(mid, BOB, 0, 10 * USDC)
     prev = server.ledger
-    server.ledger = ledger
+    from bot.ledger import AsyncLedger
+    server.ledger = AsyncLedger(ledger)
     try:
         client = TestClient(server.app)
         r = client.get("/api/predictions")
