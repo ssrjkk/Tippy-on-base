@@ -17,6 +17,18 @@ def client(ledger, monkeypatch):
     return TestClient(server.app)
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limit():
+    """The web rate limiter keeps a module-global hit counter (_rl_state).
+    Without a reset it accumulates across the whole suite and 429s later
+    tests once the per-IP window fills. Clear it around every test."""
+    from web import server
+
+    server._rl_state.clear()
+    yield
+    server._rl_state.clear()
+
+
 def test_info(client):
     r = client.get("/api/info")
     assert r.status_code == 200

@@ -349,9 +349,11 @@ ALTER TABLE bets ADD COLUMN IF NOT EXISTS grace_warned BIGINT NOT NULL DEFAULT 0
 
 class Ledger:
     def __init__(self, database: str = config.DATABASE_URL) -> None:
-        # One shared connection, serialized by an RLock (the bot and the web
-        # dashboard run in the same process). PostgreSQL handles the actual
-        # concurrency; the lock keeps statement ordering deterministic.
+        # One connection per Ledger instance, serialized by a per-process RLock.
+        # In production the bot and the web dashboard run in SEPARATE processes
+        # (see docker-compose.yml); this RLock does NOT coordinate across them.
+        # All cross-process safety comes from atomic SQL (transactions, unique
+        # constraints, row-level locking), not from this lock.
         self._lock = threading.RLock()
         self._conn = ReconnectingConn(database)
         self.ensure_schema()  # idempotent; retries past lock contention

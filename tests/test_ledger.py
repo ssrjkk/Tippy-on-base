@@ -906,10 +906,13 @@ def test_reconnect_after_server_side_drop(ledger):
     # proxy must notice the broken socket and reconnect on the next call.
     import psycopg
 
+    try:
+        from conftest import TEST_ADMIN_URL
+    except ImportError:
+        from tests.conftest import TEST_ADMIN_URL
+
     pid = ledger._conn.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
-    with psycopg.connect(
-        "postgresql://tipbot:tipbot@localhost:5433/tipbot_test", autocommit=True
-    ) as admin:
+    with psycopg.connect(TEST_ADMIN_URL, autocommit=True) as admin:
         admin.execute("SELECT pg_terminate_backend(%s)", (pid,))
     fund(ledger, BOB, 5_000_000)
     assert ledger.balance(BOB) == Decimal("5.000000")

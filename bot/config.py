@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import re
 from decimal import Decimal
@@ -153,6 +154,18 @@ def validate() -> None:
         raise ValueError(f"BASE_RPC_URL is not a valid http(s) URL: {BASE_RPC_URL!r}")
     if WEBHOOK_URL and not re.fullmatch(r"https://[^\s/]+[^\s]*", WEBHOOK_URL):
         raise ValueError(f"WEBHOOK_URL must be a public https URL: {WEBHOOK_URL!r}")
+    _wek = os.environ.get("WALLET_ENC_KEY")
+    if not _wek or len(_wek) < 32:
+        # Not fatal: bot/wallets.py falls back to a HOT_WALLET_KEY-derived key
+        # so the bot still starts, but user wallet keys/seeds would then be
+        # encryptable from a leaked .env + DB dump. See SECURITY.md.
+        logging.getLogger("tipbot").warning(
+            "WALLET_ENC_KEY missing or shorter than 32 bytes; user wallet "
+            "keys/seeds will be encrypted with a key derived from "
+            "HOT_WALLET_KEY. Set a dedicated WALLET_ENC_KEY "
+            "(python -c \"import secrets; print(secrets.token_hex(32))\"); "
+            "never reuse HOT_WALLET_KEY."
+        )
 
 # Standard ERC-20 ABI subset we need
 ERC20_ABI = [

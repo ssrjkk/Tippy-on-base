@@ -43,3 +43,17 @@ credit reporters in the release notes unless anonymity is requested.
   On-chain trustless resolution is on the roadmap.
 - The hot wallet is custodial by design; production deployments should use
   TipBotVault with a multisig owner so the relayer key is daily-limit capped.
+
+## Wallet encryption key (WALLET_ENC_KEY)
+
+`WALLET_ENC_KEY` is a **dedicated 32-byte secret** used to encrypt every
+user's custodial wallet private key and BIP-39 seed at rest in the
+database. It MUST be set explicitly in `.env` (see `.env.example`); if it
+is missing or shorter than 32 bytes the bot falls back to deriving a key
+from `HOT_WALLET_KEY` and logs a security warning from `config.validate()`.
+
+Why it matters: a leak of `.env` together with a database dump (backups run
+every 6h) lets an attacker decrypt **all** users' wallets, not just the hot
+wallet. `WALLET_ENC_KEY` must be a separate random value
+(`python -c "import secrets; print(secrets.token_hex(32))"`), never
+`HOT_WALLET_KEY`, and must be backed up separately from the database.

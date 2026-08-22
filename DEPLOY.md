@@ -366,3 +366,12 @@ docker compose restart bot web
 - [ ] X-аккаунт с постом «мы live»
 - [ ] Loom-демо по сценарию GRANT.md §4
 - [ ] `.env` на сервере, бэкап БД настроен
+## Required secrets
+
+- `BOT_TOKEN`, `HOT_WALLET_KEY` — see `.env.example`.
+- `WALLET_ENC_KEY` — **dedicated 32-byte random key** for encrypting user
+  custodial wallets at rest. Generate with
+  `python -c "import secrets; print(secrets.token_hex(32))"`. Do NOT reuse
+  `HOT_WALLET_KEY`. `config.validate()` warns (not fatally) if it is missing,
+  but a leaked `.env` + DB dump would otherwise expose every user's wallet.
+  Back it up separately from the database.

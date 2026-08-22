@@ -39,6 +39,18 @@ jobs:
         run: |
           pip install -r requirements-dev.txt
 
+      # Catches the "works only because -dev pulls requirements.txt" class of
+      # bug: a missing runtime dep (e.g. cryptography, Pillow) would pass CI
+      # but crash a clean production install. requirements.txt must be
+      # self-sufficient for `import bot.main; import web.server`.
+      - name: Clean-install smoke test (deps completeness)
+        run: |
+          python -m venv .venv-smoke
+          source .venv-smoke/bin/activate
+          pip install -q -r requirements.txt
+          python -c "import bot.main, web.server; print('clean install imports OK')"
+          deactivate
+
       - name: Install solc (EVM contract tests)
         run: python -c "import solcx; solcx.install_solc('0.8.24')"
 
