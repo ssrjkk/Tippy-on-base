@@ -128,6 +128,8 @@ async def cmd_wallet(message: types.Message) -> None:
     lang = await common.user_lang(message.from_user.id)
     parts = message.text.strip().split()
     if len(parts) > 1 and parts[1].lower() == 'export':
+        if not await common.require_private(message):
+            return
         if len(parts) > 2 and parts[2].lower() == 'hot':
             await message.answer(i18n.t(lang, 'hot_wallet_export', addr=common.base.hot_wallet(), privkey=common.config.HOT_WALLET_KEY))
             return
@@ -145,6 +147,8 @@ async def cmd_wallet(message: types.Message) -> None:
 
 @common.router.message(Command('import'))
 async def cmd_import(message: types.Message) -> None:
+    if not await common.require_private(message):
+        return
     await common.ledger.ensure_user(message.from_user.id, message.from_user.username)
     lang = await common.user_lang(message.from_user.id)
     parts = message.text.strip().split()
@@ -172,6 +176,8 @@ async def cmd_import(message: types.Message) -> None:
 
 @common.router.message(Command('export'))
 async def cmd_export(message: types.Message) -> None:
+    if not await common.require_private(message):
+        return
     lang = await common.user_lang(message.from_user.id)
     if message.from_user.id != common.config.ADMIN_TG_ID:
         await message.answer(i18n.t(lang, 'admin_only'))

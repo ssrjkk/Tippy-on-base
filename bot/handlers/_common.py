@@ -43,6 +43,7 @@ __all__ = [
     "config",
     "ledger",
     "qrlib",
+    "require_private",
     "router",
     "wallets",
 ]
@@ -70,6 +71,22 @@ async def user_lang(tg_id: int) -> str:
         return i18n.norm(s.get("lang"))
     except Exception:
         return "ru"
+
+
+async def require_private(message: types.Message) -> bool:
+    """Refuse sensitive commands outside a private chat to avoid leaking
+    secrets (private keys, seed phrases) into group history. Returns True
+    when the command may proceed. On refusal it hints the user to DM the
+    bot and best-effort deletes the triggering message."""
+    if message.chat.type == "private":
+        return True
+    lang = await user_lang(message.from_user.id)
+    await message.answer(i18n.t(lang, "private_chat_only"))
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    return False
 
 
 def help_text(lang: str = "ru") -> str:

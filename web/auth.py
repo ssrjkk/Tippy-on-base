@@ -112,13 +112,20 @@ def _login_page() -> str:
 async def login_page() -> HTMLResponse:
     return HTMLResponse(_login_page())
 
-def _session_response(tg_id: int, redirect: str | None=None) -> JSONResponse:
+# Stateless session: signed HMAC cookie, no server-side store.  The only
+# revocation mechanism is rotating SECRET_KEY, which logs out every user.
+# Keep this comment so future contributors know there's no per-session kill.
+def _session_response(request: Request, tg_id: int, redirect: str | None=None) -> JSONResponse:
     resp: JSONResponse | RedirectResponse
     if redirect:
         resp = RedirectResponse(redirect, status_code=303)
     else:
         resp = JSONResponse({'ok': True, 'tg_id': tg_id})
-    resp.set_cookie(COOKIE_NAME, make_session(tg_id), max_age=SESSION_TTL_SECONDS, httponly=True, samesite='lax')
+    resp.set_cookie(
+        COOKIE_NAME, make_session(tg_id), max_age=SESSION_TTL_SECONDS,
+        httponly=True, samesite='lax',
+        secure=request.url.scheme == 'https',
+    )
     return resp
 
 @router.get('/api/auth/telegram', include_in_schema=False)
@@ -127,12 +134,12 @@ async def auth_telegram(request: Request):
     tg_id = verify_telegram(params)
     username = params.get('username', '')
     await ledger.ensure_user(tg_id, username or None)
-    return _session_response(tg_id, redirect='/me')
+    return _session_response(request, tg_id, redirect='/me')
 
 @router.post('/api/auth/wallet', tags=['auth'])
-async def auth_wallet(body: WalletLogin):
+async def auth_wallet(request: Request, body: WalletLogin):
     tg_id = await verify_wallet(body)
-    return _session_response(tg_id)
+    return _session_response(request, tg_id)
 
 @router.get('/logout', include_in_schema=False)
 async def logout():

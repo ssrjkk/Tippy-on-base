@@ -214,6 +214,10 @@ async def user_page(tg_id: int) -> FileResponse:
 async def market_page(bet_id: int) -> FileResponse:
     return FileResponse(STATIC / 'market.html')
 
+@app.get('/me')
+async def me_page() -> FileResponse:
+    return FileResponse(STATIC / 'me.html')
+
 @app.get('/app', include_in_schema=False)
 async def mini_app():
     return FileResponse(STATIC / 'app.html')

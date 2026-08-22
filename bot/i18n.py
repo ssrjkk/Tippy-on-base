@@ -1986,6 +1986,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": " and {n} more",
         "zh": " 还有 {n} 人",
     },
+    "private_chat_only": {
+        "ru": "🔒 Эта команда доступна только в личном чате с ботом. Напишите боту в личку.",
+        "en": "🔒 This command works only in a private chat with the bot. Message the bot in DM.",
+        "zh": "🔒 该命令仅在私聊中可用，请通过私信使用机器人。",
+    },
 }
 
 

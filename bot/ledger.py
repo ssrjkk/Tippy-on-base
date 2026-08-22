@@ -1736,11 +1736,11 @@ class Ledger:
         return {"reaction_tips": True, "notify_deposits": True, "lang": "ru"}
 
     def set_setting(self, tg_id: int, key: str, value: bool | str) -> None:
-        if key == "lang":
-            if value not in ("ru", "en", "zh"):
-                raise ValueError(f"unknown language: {value}")
-        elif key not in ("reaction_tips", "notify_deposits"):
+        ALLOWED_SETTING_COLUMNS = {"lang", "reaction_tips", "notify_deposits"}
+        if key not in ALLOWED_SETTING_COLUMNS:
             raise ValueError(f"unknown setting: {key}")
+        if key == "lang" and value not in ("ru", "en", "zh"):
+            raise ValueError(f"unknown language: {value}")
         with self._lock:
             self.ensure_user(tg_id, None)
             self._conn.execute(
