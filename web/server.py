@@ -32,11 +32,12 @@ WEB_RATE_LIMIT: int = int(os.environ.get('WEB_RATE_LIMIT', '60'))
 WEB_RATE_WINDOW: int = int(os.environ.get('WEB_RATE_WINDOW', '60'))
 WEB_RATE_MAX_CLIENTS: int = int(os.environ.get('WEB_RATE_MAX_CLIENTS', '10000'))
 _rl_state: dict[str, list[float]] = {}
+_RL_DISABLED: bool = os.environ.get('TESTING', '') != ''
 
 @app.middleware('http')
 async def rate_limit(request: Request, call_next):
     path = request.url.path
-    if path.startswith('/api/') or path == '/qr':
+    if not _RL_DISABLED and (path.startswith('/api/') or path == '/qr'):
         client = request.client.host if request.client else 'unknown'
         now = time.time()
         cutoff = now - WEB_RATE_WINDOW

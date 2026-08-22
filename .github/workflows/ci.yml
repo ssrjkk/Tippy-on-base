@@ -66,6 +66,7 @@ jobs:
         env:
           PYTHONUTF8: "1"
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
+          TESTING: "1"
         run: |
           coverage run -m pytest tests -q --junitxml=pytest-result.xml
           coverage report --skip-covered -m

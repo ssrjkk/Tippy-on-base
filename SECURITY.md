@@ -82,3 +82,32 @@ The `/export`, `/wallet export`, and `/import` commands refuse to execute
 outside a private chat (`message.chat.type != "private"`).  They reply with
 a hint to DM the bot and best-effort delete the triggering message, preventing
 leakage of private keys and seed phrases into group history.
+
+## Emergency runbook
+
+### Kill-switches
+
+| Scenario | Action | Impact |
+|---|---|---|
+| Hot wallet key compromised | Rotate `HOT_WALLET_KEY` in `.env`, restart bot. If vault deployed: call `vault.setRelayer(newAddress)` from owner. | Hot wallet drained up to `dailyLimit` since last `_rollWindow` reset. Vault funds safe (relayer can't withdraw reserves). |
+| Session cookie leak | Rotate `SECRET_KEY` in `.env`, restart web. | All users logged out; must re-authenticate. |
+| `WALLET_ENC_KEY` compromised | Rotate `WALLET_ENC_KEY`, re-encrypt all user wallets (`scripts/reencrypt_wallets.py` or manual SQL). | Old key can decrypt dumps taken before rotation. Rotate DB backups too. |
+| Vault owner key compromised | Call `vault.transferOwnership(newSafe)` immediately; attacker has 0-window until new owner calls `acceptOwnership`. Contact team to coordinate. | Vault funds at risk until ownership transferred. |
+| Relayer exceeded daily limit | `vault.setDailyLimit(0)` from owner to freeze all relayer payouts, then investigate. | All withdrawal/tip payouts stop until limit restored. |
+| Bot flooding / DDoS | Set `WEB_RATE_LIMIT=10` in `.env` (or deploy behind Cloudflare WAF). | Legitimate dashboard users see 429 errors. |
+
+### Key rotation procedure
+
+1. Generate new key: `python -c "import secrets; print(secrets.token_hex(32))"`
+2. Update `.env` with new value
+3. Restart the affected service (`docker compose restart bot` / `web`)
+4. Verify health: `/api/health` returns 200
+5. **Do not delete old `.env`** — keep a sealed copy for rollback
+
+### Backup verification
+
+- Database backups run every 6h (cron job or managed DB)
+- Verify restore monthly: spin up a clean Postgres, restore dump, check
+  `SELECT count(*) FROM users` and `SELECT sum(balance) FROM users` match
+  expected totals
+- `WALLET_ENC_KEY` backup is separate from DB backups (password manager / vault)

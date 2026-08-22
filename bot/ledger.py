@@ -1476,6 +1476,7 @@ class Ledger:
         if spend_micro < 10_000:  # 0.01 USDC
             return "toosmall", {}
         with self._lock:
+            self._ensure()
             m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
                 return "closed", {}
@@ -1528,6 +1529,7 @@ class Ledger:
         Returns ('ok', info) or ('closed'|'deadline'|'badopt'|'noshare'|'toosmall', {}).
         """
         with self._lock:
+            self._ensure()
             m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
                 return "closed", {}
@@ -1578,6 +1580,7 @@ class Ledger:
         [{'tg_id', 'net_micro', 'win'}] for DM notifications.
         """
         with self._lock:
+            self._ensure()
             m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
                 return False, "Рынок не найден или уже закрыт.", []
@@ -1638,6 +1641,7 @@ class Ledger:
         protection, same as parimutuel bets).
         """
         with self._lock:
+            self._ensure()
             m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
                 return False, "Рынок не найден или уже закрыт."
