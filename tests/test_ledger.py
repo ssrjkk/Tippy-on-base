@@ -1,9 +1,16 @@
 """Ledger invariants: conservation of funds, fees, refunds, deadlines."""
 
+import os
+import threading
 import time
 from decimal import Decimal
 
 from bot import config
+from bot.ledger import Ledger
+
+TEST_DB_URL = os.environ.get(
+    "TEST_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5433/tipbot_test"
+)
 
 ALICE, BOB, CAROL = 1001, 1002, 1003
 
@@ -916,3 +923,55 @@ def test_reconnect_after_server_side_drop(ledger):
         admin.execute("SELECT pg_terminate_backend(%s)", (pid,))
     fund(ledger, BOB, 5_000_000)
     assert ledger.balance(BOB) == Decimal("5.000000")
+
+
+# ---------- concurrency safety ----------
+
+def test_concurrent_buy_shares_no_insolvency(ledger):
+    """Two processes buying shares on the same market must not create
+    insolvency.  With SELECT FOR UPDATE the second transaction blocks
+    until the first commits, so escrow always equals the total spent."""
+    import threading
+    from tests.conftest import TEST_DB_URL
+
+    fund(ledger, ALICE, 100_000_000)
+    fund(ledger, BOB, 100_000_000)
+    fund(ledger, CAROL, 100_000_000)
+
+    market_id = ledger.create_market(ALICE, "Test race?", ["Yes", "No"], 50_000_000)
+    assert isinstance(market_id, int)
+
+    results = {}
+    errors = {}
+
+    def buy(user_id, spend, label):
+        try:
+            conn = Ledger(TEST_DB_URL)
+            ok, info = conn.buy_shares(market_id, user_id, 0, spend)
+            results[label] = (ok, info)
+            conn.close()
+        except Exception as e:
+            errors[label] = e
+
+    t1 = threading.Thread(target=buy, args=(BOB, 20_000_000, "bob"))
+    t2 = threading.Thread(target=buy, args=(CAROL, 30_000_000, "carol"))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, f"thread errors: {errors}"
+    assert results["bob"][0] == "ok"
+    assert results["carol"][0] == "ok"
+
+    m = ledger.get_market(market_id)
+    escrow = int(m["escrow_micro"])
+    # subsidy (50M) + bob (20M) + carol (30M) = 100M
+    assert escrow == 100_000_000, f"escrow={escrow}, expected 100000000"
+
+    q = ledger.market_quantities(market_id)
+    total_shares = q[0]
+    assert total_shares == 50_000_000, f"shares={total_shares}, expected 50000000"
+
+    # Funding theorem: escrow >= max shares for any option
+    assert escrow >= total_shares
