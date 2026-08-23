@@ -1,6 +1,7 @@
 """Base network layer: USDC balance, deposit scanning, withdrawals."""
 
 import asyncio
+import logging
 import threading
 import time
 from decimal import ROUND_CEILING, Decimal
@@ -12,19 +13,53 @@ from web3 import Web3
 from . import config
 from .ledger import ledger
 
-# RPC timeout: a hung provider must not freeze the deposit watcher (deposits
-# would silently stop) or a dashboard request. web3 has no default timeout.
-w3 = Web3(Web3.HTTPProvider(config.BASE_RPC_URL, request_kwargs={"timeout": config.RPC_TIMEOUT_SECONDS}))
+log = logging.getLogger("tipbot.base")
+
+# ---------------------------------------------------------------------------
+# RPC provider with automatic failover
+# ---------------------------------------------------------------------------
+# Primary RPC from config
+_PRIMARY_RPC = config.BASE_RPC_URL
 
 # Optional fallback RPCs: comma-separated URLs in BASE_RPC_FALLBACK_URLS.
-# If the primary provider fails, the deposit scanner tries these in order.
 _RPC_FALLBACKS: list[str] = [
     u.strip() for u in (getattr(config, "BASE_RPC_FALLBACK_URLS", "") or "").split(",") if u.strip()
 ]
 
+_ALL_RPC_URLS = [_PRIMARY_RPC] + _RPC_FALLBACKS
+
+
+def _make_w3(url: str) -> Web3:
+    """Create a Web3 instance with timeout."""
+    return Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": config.RPC_TIMEOUT_SECONDS}))
+
+
+# Build provider list for failover
+_w3_providers = [_make_w3(u) for u in _ALL_RPC_URLS]
+w3 = _w3_providers[0]
+
+# Primary contract handles (bound to primary provider)
 HOT_WALLET = Web3.to_checksum_address(w3.eth.account.from_key(config.HOT_WALLET_KEY).address)
 USDC = Web3.to_checksum_address(config.USDC_ADDRESS)
 usdc = w3.eth.contract(address=USDC, abi=config.ERC20_ABI)
+
+
+def _rpc_call(fn, *args, **kwargs):
+    """Try `fn` on primary RPC, then fall back to alternatives.
+
+    Returns the result on success, raises the last exception if all fail.
+    """
+    last_err = None
+    for provider in _w3_providers:
+        try:
+            contract = provider.eth.contract(address=USDC, abi=config.ERC20_ABI)
+            return fn(contract, *args, **kwargs)
+        except Exception as e:
+            last_err = e
+            log.debug("RPC %s failed: %s", provider.provider.endpoint_url, e)
+            continue
+    raise RuntimeError(f"all RPC providers failed: {last_err}")
+
 
 _send_lock = threading.Lock()
 
@@ -39,7 +74,7 @@ def hot_wallet() -> ChecksumAddress:
 
 
 def _hot_balance_sync() -> float:
-    micro = usdc.functions.balanceOf(HOT_WALLET).call()
+    micro = _rpc_call(lambda c: c.functions.balanceOf(HOT_WALLET).call())
     return micro / 10**config.USDC_DECIMALS
 
 
@@ -97,7 +132,7 @@ def _vault_balance_sync() -> float | None:
     """
     if not config.VAULT_ADDRESS:
         return None
-    micro = usdc.functions.balanceOf(Web3.to_checksum_address(config.VAULT_ADDRESS)).call()
+    micro = _rpc_call(lambda c: c.functions.balanceOf(Web3.to_checksum_address(config.VAULT_ADDRESS)).call())
     return micro / 10**config.USDC_DECIMALS
 
 

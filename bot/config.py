@@ -70,6 +70,9 @@ LINK_NONCE_TTL_SECONDS: int = int(os.environ.get("LINK_NONCE_TTL_SECONDS", "3600
 MAX_OPTION_LEN: int = int(os.environ.get("MAX_OPTION_LEN", "60"))
 MONEY_CMD_COOLDOWN_SECONDS: int = int(os.environ.get("MONEY_CMD_COOLDOWN_SECONDS", "5"))
 
+# AML thresholds
+WITHDRAW_LARGE_USDC_THRESHOLD: int = int(os.environ.get("WITHDRAW_LARGE_USDC_THRESHOLD", "500"))
+
 # Owner/announcements (/broadcast) — Telegram numeric ID
 ADMIN_TG_ID: int | None = int(os.environ.get("ADMIN_TG_ID", "0")) or None
 

@@ -37,14 +37,18 @@ _RL_DISABLED: bool = os.environ.get('TESTING', '') != ''
 @app.middleware('http')
 async def rate_limit(request: Request, call_next):
     path = request.url.path
-    if not _RL_DISABLED and (path.startswith('/api/') or path == '/qr'):
-        client = request.client.host if request.client else 'unknown'
+    if not _RL_DISABLED and (path.startswith('/api/') or path in ('/qr', '/metrics', '/tos')):
+        client = request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or (request.client.host if request.client else 'unknown')
         now = time.time()
         cutoff = now - WEB_RATE_WINDOW
         window = _rl_state.setdefault(client, [])
         _rl_state[client] = [t for t in window if t > cutoff]
         if len(_rl_state[client]) >= WEB_RATE_LIMIT:
-            return JSONResponse(status_code=429, content={'detail': 'rate limit exceeded'})
+            return JSONResponse(
+                status_code=429,
+                content={'detail': 'rate limit exceeded'},
+                headers={'Retry-After': str(WEB_RATE_WINDOW)},
+            )
         _rl_state[client].append(now)
         if len(_rl_state) > WEB_RATE_MAX_CLIENTS:
             for ip, hits in list(_rl_state.items()):

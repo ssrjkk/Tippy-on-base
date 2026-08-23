@@ -30,6 +30,7 @@ TABLES = [
     "bets", "bet_positions", "last_block", "message_authors", "reaction_tips",
     "user_settings", "user_wallets", "x402_payments", "paywall_items", "paywall_purchases",
     "paywall_channels", "paywall_subscriptions", "markets", "market_shares",
+    "suspicious_activity",
 ]
 
 

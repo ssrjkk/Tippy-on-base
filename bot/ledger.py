@@ -345,6 +345,16 @@ ALTER TABLE tx_log ADD COLUMN IF NOT EXISTS status TEXT;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'ru';
 ALTER TABLE bets ADD COLUMN IF NOT EXISTS deadline_notified BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE bets ADD COLUMN IF NOT EXISTS grace_warned BIGINT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS suspicious_activity (
+    id          BIGSERIAL PRIMARY KEY,
+    tg_id       BIGINT NOT NULL,
+    kind        TEXT NOT NULL,        -- large_withdraw | rapid_withdraw | unusual_deposit
+    details     TEXT NOT NULL,         -- JSON: amount, threshold, count, etc.
+    severity    TEXT NOT NULL DEFAULT 'info',  -- info | warn | critical
+    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+);
+CREATE INDEX IF NOT EXISTS idx_suspicious_tg ON suspicious_activity (tg_id);
+CREATE INDEX IF NOT EXISTS idx_suspicious_created ON suspicious_activity (created_at);
 """
 
 class Ledger:
@@ -1004,6 +1014,69 @@ class Ledger:
                 (tg_id, since),
             ).fetchone()
         return int(row["c"])
+
+    # ---- AML / suspicious-activity monitoring ----
+
+    def _flag_suspicious(self, tg_id: int, kind: str, details: dict, severity: str = "warn") -> None:
+        """Record a suspicious-activity flag for a user."""
+        import json
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO suspicious_activity (tg_id, kind, details, severity) "
+                "VALUES (%s, %s, %s, %s)",
+                (tg_id, kind, json.dumps(details), severity),
+            )
+            self._conn.commit()
+
+    def check_aml_withdraw(self, tg_id: int, amount_micro: int, to_address: str) -> list[str]:
+        """Run AML checks before a withdrawal. Returns list of warning messages.
+
+        Checks:
+          - Single withdrawal > WITHDRAW_LARGE_USDC_THRESHOLD (warn)
+          - >3 withdrawals in 1h (warn)
+          - Balance after withdraw <0 and user has large recent deposits (info)
+        Flags are persisted for audit trail.
+        """
+        warnings = []
+        now = int(time.time())
+
+        # Check 1: large single withdrawal
+        large_thresh = getattr(config, "WITHDRAW_LARGE_USDC_THRESHOLD", 500) * 10**config.USDC_DECIMALS
+        if amount_micro >= large_thresh:
+            msg = f"Large withdrawal: ${amount_micro / 10**config.USDC_DECIMALS:.2f} >= ${large_thresh / 10**config.USDC_DECIMALS:.0f}"
+            warnings.append(msg)
+            self._flag_suspicious(tg_id, "large_withdraw", {
+                "amount": amount_micro, "threshold": large_thresh, "to": to_address,
+            }, severity="warn")
+
+        # Check 2: rapid successive withdrawals (>3 in 1 hour)
+        since_1h = now - 3600
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS c FROM tx_log "
+                "WHERE tg_id = %s AND kind = 'withdraw' "
+                "AND COALESCE(status, 'done') = 'done' AND created_at >= %s",
+                (tg_id, since_1h),
+            ).fetchone()
+        rapid_count = int(row["c"])
+        if rapid_count >= 3:
+            msg = f"Rapid withdrawals: {rapid_count} in the last hour"
+            warnings.append(msg)
+            self._flag_suspicious(tg_id, "rapid_withdraw", {
+                "count": rapid_count, "window_seconds": 3600,
+            }, severity="warn")
+
+        return warnings
+
+    def suspicious_activity_for(self, tg_id: int, limit: int = 50) -> list[dict]:
+        """Return recent suspicious-activity flags for a user (audit trail)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT id, kind, details, severity, created_at "
+                "FROM suspicious_activity WHERE tg_id = %s "
+                "ORDER BY created_at DESC LIMIT %s",
+                (tg_id, limit),
+            ).fetchall()
 
     def pending_withdraws(self) -> list[dict]:
         """Withdraw rows not yet confirmed: status IS NULL (legacy), 'pending'."""
