@@ -9,3 +9,4 @@ cryptography>=44.0
 Pillow>=11.0
 alembic>=1.14
 python-json-logger>=3.2
+mcp>=1.0
