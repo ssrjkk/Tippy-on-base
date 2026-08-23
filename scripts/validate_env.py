@@ -28,10 +28,12 @@ def require(name: str, pattern: str | None = None, min_len: int = 1, msg: str = 
     return val
 
 
-def optional(name: str, pattern: str | None = None, msg: str = ""):
+def optional(name: str, pattern: str | None = None, min_len: int = 0, msg: str = ""):
     val = os.environ.get(name, "").strip()
     if val and pattern and not re.fullmatch(pattern, val):
         WARNINGS.append(f"INVALID: {name} {msg or 'does not match expected format'}")
+    if val and min_len and len(val) < min_len:
+        WARNINGS.append(f"SHORT: {name} is {len(val)} chars, recommend >= {min_len}")
     return val
 
 

@@ -16,6 +16,12 @@ from .ledger import ledger
 # would silently stop) or a dashboard request. web3 has no default timeout.
 w3 = Web3(Web3.HTTPProvider(config.BASE_RPC_URL, request_kwargs={"timeout": config.RPC_TIMEOUT_SECONDS}))
 
+# Optional fallback RPCs: comma-separated URLs in BASE_RPC_FALLBACK_URLS.
+# If the primary provider fails, the deposit scanner tries these in order.
+_RPC_FALLBACKS: list[str] = [
+    u.strip() for u in (getattr(config, "BASE_RPC_FALLBACK_URLS", "") or "").split(",") if u.strip()
+]
+
 HOT_WALLET = Web3.to_checksum_address(w3.eth.account.from_key(config.HOT_WALLET_KEY).address)
 USDC = Web3.to_checksum_address(config.USDC_ADDRESS)
 usdc = w3.eth.contract(address=USDC, abi=config.ERC20_ABI)
@@ -101,15 +107,32 @@ async def vault_balance() -> float | None:
 
 
 def _scan_deposits(from_block: int, to_block: int) -> list[dict]:
-    """Return incoming USDC transfers to the hot wallet."""
-    logs = w3.eth.get_logs(
-        {
-            "fromBlock": from_block,
-            "toBlock": to_block,
-            "address": USDC,
-            "topics": [_transfer_topic, None, f"0x{'0'*24}{HOT_WALLET[2:].lower()}"],
-        }
-    )
+    """Return incoming USDC transfers to the hot wallet.
+
+    Tries the primary RPC first; on failure, falls back to BASE_RPC_FALLBACK_URLS
+    in order.  This prevents a single provider outage from silently dropping
+    deposits.
+    """
+    filter_params = {
+        "fromBlock": from_block,
+        "toBlock": to_block,
+        "address": USDC,
+        "topics": [_transfer_topic, None, f"0x{'0'*24}{HOT_WALLET[2:].lower()}"],
+    }
+    last_err = None
+    providers = [w3] + [
+        Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": config.RPC_TIMEOUT_SECONDS}))
+        for url in _RPC_FALLBACKS
+    ]
+    for provider in providers:
+        try:
+            logs = provider.eth.get_logs(filter_params)
+            break
+        except Exception as e:
+            last_err = e
+            continue
+    else:
+        raise RuntimeError(f"all RPC providers failed for get_logs: {last_err}")
     out = []
     for log in logs:
         try:

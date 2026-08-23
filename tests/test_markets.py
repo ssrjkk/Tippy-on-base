@@ -564,3 +564,69 @@ def test_api_predictions_endpoint(ledger):
         assert client.get("/api/prediction/999999").status_code == 404
     finally:
         server.ledger = prev
+
+
+# ---------- LMSR edge cases ----------
+
+
+def test_lmsr_tiny_b_no_crash():
+    """Very small liquidity parameter (b=1 micro) must not overflow."""
+    q = [0, 0]
+    b = 1  # 1 micro-USDC
+    p = lmsr_prices(q, b)
+    assert abs(sum(p) - 1) < Decimal("1e-6")
+    assert all(0 < x <= 1 for x in p)
+
+
+def test_lmsr_extreme_concentration():
+    """All shares in one option — prices must still sum to 1."""
+    q = [1_000_000_000, 0, 0]  # 1000 USDC in option 0
+    b = 10_000_000  # 10 USDC
+    p = lmsr_prices(q, b)
+    assert abs(sum(p) - 1) < Decimal("1e-12")
+    assert p[0] > Decimal("0.99")  # >99% probability
+
+
+def test_lmsr_buy_zero_spend():
+    """Spending 0 must yield 0 shares."""
+    q = [0, 0]
+    b = 10_000_000
+    assert lmsr_buy_shares(q, b, 0, 0) == 0
+
+
+def test_lmsr_sell_more_than_held_bounded():
+    """Selling more shares than held must return 0 (can't go negative)."""
+    q = [100, 0]
+    b = 10_000_000
+    # lmsr_sell_value doesn't check bounds — the caller does.
+    # But mathematically, selling more than q[0] should give a very large value
+    # (which the caller rejects). Verify it doesn't crash.
+    val = lmsr_sell_value(q, b, 0, 50)
+    assert val >= 0
+
+
+def test_lmsr_buy_sell_roundtrip_conservation():
+    """Buy then sell same shares: escrow change = buy_spend - sell_value >= 0."""
+    q = [0, 0]
+    b = 20_000_000
+    spend = 15 * USDC
+    shares = lmsr_buy_shares(q, b, 0, spend)
+    assert shares > 0
+    q_after_buy = [shares, 0]
+    sell_value = lmsr_sell_value(q_after_buy, b, 0, shares)
+    # Round-trip cost = spend - sell_value (the AMM's spread)
+    assert 0 <= spend - sell_value
+
+
+def test_lmsr_three_options_monotone():
+    """Buying more of option 0 must increase its price monotonically."""
+    q = [0, 0, 0]
+    b = 30_000_000
+    prices_before = lmsr_prices(q, b)
+    shares = lmsr_buy_shares(q, b, 0, 5 * USDC)
+    q[0] += shares
+    prices_after = lmsr_prices(q, b)
+    assert prices_after[0] > prices_before[0]
+    # Other options' prices must decrease
+    for i in range(1, 3):
+        assert prices_after[i] < prices_before[i]

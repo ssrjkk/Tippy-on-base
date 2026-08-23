@@ -12,6 +12,9 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 BOT_TOKEN: str = os.environ["BOT_TOKEN"]
 BASE_RPC_URL: str = os.environ.get("BASE_RPC_URL", "https://mainnet.base.org")
+# Comma-separated fallback RPC URLs (tried in order if primary fails).
+# Example: https://base-mainnet.g.alchemy.com/v2/KEY,https://base.infura.io/v3/KEY
+BASE_RPC_FALLBACK_URLS: str = os.environ.get("BASE_RPC_FALLBACK_URLS", "")
 HOT_WALLET_KEY: str = os.environ["HOT_WALLET_KEY"]
 
 # Signing key for web login sessions (/login -> /me). Empty -> derived from
