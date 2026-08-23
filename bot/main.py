@@ -1,6 +1,7 @@
 ﻿"""Tippy entrypoint. Run: python -m bot.main"""
 import asyncio
 import logging
+import os
 import time
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
@@ -10,8 +11,17 @@ from . import base, config
 from . import i18n
 from .handlers import router
 from .ledger import async_ledger as ledger
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
-log = logging.getLogger('tipbot')
+
+# Structured JSON logs for production (LOG_FORMAT=json), human-readable for dev.
+if os.environ.get("LOG_FORMAT") == "json":
+    from pythonjsonlogger.json import JsonFormatter
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
+else:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+log = logging.getLogger("tipbot")
 bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
 async def deposit_watcher() -> None:
