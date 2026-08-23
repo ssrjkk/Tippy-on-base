@@ -5,6 +5,11 @@ These wrap ledger.* methods for the agent loop. Each tool:
   2. Calls ledger
   3. Records action (caps.record_action) or error (caps.record_error)
 
+Security:
+  - Agent CANNOT resolve its own markets (oracle protection)
+  - Agent CANNOT bet more than 10% of pool on own markets (sybil cap)
+  - All amounts enforced against caps before execution
+
 For the demo, the agent uses ledger directly (same-process). Production
 would call the HTTP API with an agent-specific auth token.
 """
@@ -13,6 +18,10 @@ import asyncio
 import time
 from bot.ledger import ledger
 from . import config, caps
+
+# Track markets created by this agent (for oracle protection)
+_agent_markets: set[int] = set()
+_AGENT_MARKET_PCT_CAP = 0.10  # max 10% of pool on own markets
 
 
 async def create_market(
@@ -39,6 +48,7 @@ async def create_market(
         if market_id is None:
             caps.record_error()
             return {"error": "create_market returned None (schema issue?)"}
+        _agent_markets.add(market_id)
         caps.record_action(subsidy_usdc)
         return {
             "market_id": market_id,
@@ -57,8 +67,15 @@ async def place_bet(
 ) -> dict:
     """Place a bet on a prediction market.
 
+    Oracle protection: agent cannot bet on its own markets.
+    Sybil cap: agent cannot bet more than 10% of pool on own markets.
+
     Returns: {"status": str, "new_balance_usdc": float}
     """
+    # Oracle protection — agent cannot bet on own markets
+    if market_id in _agent_markets:
+        return {"error": "Oracle protection: agent cannot bet on its own markets"}
+
     err = caps.check_action(amount_usdc)
     if err:
         return {"error": err}
@@ -76,6 +93,24 @@ async def place_bet(
         return {"status": "ok", "info": info, "new_balance_usdc": bal}
     except Exception as e:
         caps.record_error()
+        return {"error": str(e)}
+
+
+async def resolve_market(market_id: int, winning_outcome: int) -> dict:
+    """Resolve a market. Only allowed for markets NOT created by this agent.
+
+    Returns: {"status": str}
+    """
+    if market_id in _agent_markets:
+        return {"error": "Oracle protection: agent cannot resolve its own markets"}
+
+    try:
+        tg_id = config.AGENT_TG_ID
+        status = await ledger.resolve_market(market_id, tg_id, winning_outcome)
+        if status != "ok":
+            return {"error": f"resolve failed: {status}"}
+        return {"status": "ok"}
+    except Exception as e:
         return {"error": str(e)}
 
 

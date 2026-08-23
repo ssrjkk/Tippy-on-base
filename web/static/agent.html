@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tippy Agent Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { color: #58a6ff; margin-bottom: 20px; font-size: 24px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        .card h2 { color: #8b949e; font-size: 14px; text-transform: uppercase; margin-bottom: 12px; }
+        .stat { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        .stat .label { color: #8b949e; }
+        .stat .value { color: #c9d1d9; font-weight: 600; }
+        .stat .value.positive { color: #3fb950; }
+        .stat .value.negative { color: #f85149; }
+        .stat .value.warning { color: #d29922; }
+        .bar { height: 8px; background: #21262d; border-radius: 4px; margin-top: 4px; }
+        .bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+        .bar-fill.green { background: #3fb950; }
+        .bar-fill.yellow { background: #d29922; }
+        .bar-fill.red { background: #f85149; }
+        .status-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .status-badge.active { background: #1a3a2a; color: #3fb950; }
+        .status-badge.cooldown { background: #3a1a1a; color: #f85149; }
+        .audit-log { max-height: 300px; overflow-y: auto; }
+        .audit-entry { padding: 8px; border-bottom: 1px solid #21262d; font-size: 13px; }
+        .audit-entry:last-child { border-bottom: none; }
+        .audit-entry .ts { color: #8b949e; }
+        .audit-entry .action { color: #58a6ff; }
+        #loading { text-align: center; padding: 40px; color: #8b949e; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Tippy Agent Dashboard</h1>
+
+        <div class="card">
+            <h2>Status</h2>
+            <div id="status">
+                <div id="loading">Loading...</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Spend Caps</h2>
+            <div id="caps"></div>
+        </div>
+
+        <div class="card">
+            <h2>Recent Activity</h2>
+            <div id="audit" class="audit-log"></div>
+        </div>
+    </div>
+
+    <script>
+    async function loadDashboard() {
+        try {
+            const statusRes = await fetch('/api/agent/status');
+            const status = await statusRes.json();
+
+            if (status.error) {
+                document.getElementById('status').innerHTML = `<div class="stat"><span class="label">Error</span><span class="value warning">${status.error}</span></div>`;
+                return;
+            }
+
+            // Status card
+            const capsStatus = status.caps || {};
+            document.getElementById('status').innerHTML = `
+                <div class="stat"><span class="label">Balance</span><span class="value">$${(status.balance_usdc || 0).toFixed(2)}</span></div>
+                <div class="stat"><span class="label">Markets Created</span><span class="value">${status.markets_created || 0}</span></div>
+                <div class="stat"><span class="label">Bets Placed</span><span class="value">${status.bets_placed || 0}</span></div>
+                <div class="stat"><span class="label">Status</span><span class="value ${capsStatus.cooldown_active ? 'negative' : 'positive'}">
+                    <span class="status-badge ${capsStatus.cooldown_active ? 'cooldown' : 'active'}">${capsStatus.cooldown_active ? 'COOLDOWN' : 'ACTIVE'}</span>
+                </span></div>
+            `;
+
+            // Caps card
+            const dailyPct = capsStatus.daily_cap_usdc ? (capsStatus.daily_spent_usdc / capsStatus.daily_cap_usdc * 100) : 0;
+            const hourlyPct = capsStatus.max_actions_per_hour ? (capsStatus.actions_this_hour / capsStatus.max_actions_per_hour * 100) : 0;
+            const dailyColor = dailyPct > 80 ? 'red' : dailyPct > 50 ? 'yellow' : 'green';
+            const hourlyColor = hourlyPct > 80 ? 'red' : hourlyPct > 50 ? 'yellow' : 'green';
+
+            document.getElementById('caps').innerHTML = `
+                <div class="stat"><span class="label">Daily Spend</span><span class="value">$${(capsStatus.daily_spent_usdc || 0).toFixed(2)} / $${capsStatus.daily_cap_usdc || 50}</span></div>
+                <div class="bar"><div class="bar-fill ${dailyColor}" style="width: ${dailyPct}%"></div></div>
+                <div class="stat" style="margin-top: 12px;"><span class="label">Hourly Actions</span><span class="value">${capsStatus.actions_this_hour || 0} / ${capsStatus.max_actions_per_hour || 20}</span></div>
+                <div class="bar"><div class="bar-fill ${hourlyColor}" style="width: ${hourlyPct}%"></div></div>
+                <div class="stat" style="margin-top: 12px;"><span class="label">Consecutive Errors</span><span class="value ${capsStatus.consecutive_errors > 0 ? 'warning' : ''}">${capsStatus.consecutive_errors || 0}</span></div>
+            `;
+
+            // Load audit log
+            loadAudit();
+
+        } catch (e) {
+            document.getElementById('status').innerHTML = `<div class="stat"><span class="label">Error</span><span class="value warning">Cannot reach server</span></div>`;
+        }
+    }
+
+    async function loadAudit() {
+        try {
+            const auditRes = await fetch('/api/agent/audit');
+            const entries = await auditRes.json();
+            const container = document.getElementById('audit');
+            if (!entries.length) {
+                container.innerHTML = '<div class="audit-entry" style="color: #8b949e;">No activity yet</div>';
+                return;
+            }
+            container.innerHTML = entries.slice(-20).reverse().map(e => `
+                <div class="audit-entry">
+                    <span class="ts">${new Date(e.ts * 1000).toLocaleTimeString()}</span>
+                    <span class="action">${e.action || e.market_id ? `Market #${e.market_id}` : 'unknown'}</span>
+                    ${e.bet_amount_usdc ? ` · Bet $${e.bet_amount_usdc.toFixed(2)}` : ''}
+                    ${e.confidence ? ` · ${Math.round(e.confidence * 100)}%` : ''}
+                </div>
+            `).join('');
+        } catch (e) {
+            document.getElementById('audit').innerHTML = '<div class="audit-entry" style="color: #8b949e;">Audit log unavailable</div>';
+        }
+    }
+
+    loadDashboard();
+    setInterval(loadDashboard, 30000);
+    </script>
+</body>
+</html>

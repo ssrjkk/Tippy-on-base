@@ -170,6 +170,20 @@ async def api_agent_status() -> dict:
         'caps': caps_status,
     }
 
+@app.get('/api/agent/audit', tags=['agent'])
+async def api_agent_audit() -> list[dict]:
+    """Agent audit trail — last 50 actions from local JSONL log."""
+    import json, pathlib
+    audit_file = pathlib.Path('agent_audit.jsonl')
+    if not audit_file.exists():
+        return []
+    entries = []
+    for line in audit_file.read_text().splitlines():
+        if not line.strip():
+            continue
+        entries.append(json.loads(line))
+    return entries[-50:]
+
 @app.get('/api/info', tags=['stats'])
 def api_info() -> dict:
     return {'bot_username': config.BOT_USERNAME}
