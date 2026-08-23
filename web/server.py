@@ -267,6 +267,22 @@ async def me_page() -> FileResponse:
 @app.get('/app', include_in_schema=False)
 async def mini_app():
     return FileResponse(STATIC / 'app.html')
+
+@app.get('/tos', tags=['legal'])
+async def tos() -> Response:
+    """Terms of Service page."""
+    from fastapi.responses import PlainTextResponse
+    tos_file = STATIC / 'tos.md'
+    if tos_file.exists():
+        return PlainTextResponse(tos_file.read_text(encoding='utf-8'))
+    return PlainTextResponse("Terms of Service not found.", status_code=404)
+
+@app.get('/metrics', tags=['monitoring'])
+async def metrics() -> Response:
+    from .metrics import collect_metrics
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(await collect_metrics())
+
 app.mount('/', StaticFiles(directory=str(STATIC), html=True), name='static')
 if __name__ == '__main__':
     import uvicorn

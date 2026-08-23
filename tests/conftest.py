@@ -18,11 +18,11 @@ os.environ.setdefault("BOT_TOKEN", "0:test")
 os.environ.setdefault("HOT_WALLET_KEY", "0x" + "11" * 32)
 os.environ.setdefault("WALLET_ENC_KEY", "a" * 32)  # Test-only: 32-char key for wallet encryption
 TEST_DB_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5433/tipbot_test"
+    "TEST_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5432/tipbot_test"
 )
 # Where to connect to CREATE/DROP the test database.
 TEST_ADMIN_URL = os.environ.get(
-    "TEST_ADMIN_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5433/postgres"
+    "TEST_ADMIN_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5432/postgres"
 )
 
 TABLES = [
@@ -42,9 +42,12 @@ def _reset_db(ledger) -> None:
 def _pg_test_db():
     import psycopg
 
-    with psycopg.connect(TEST_ADMIN_URL, autocommit=True) as admin:
-        admin.execute("DROP DATABASE IF EXISTS tipbot_test WITH (FORCE)")
-        admin.execute("CREATE DATABASE tipbot_test")
+    try:
+        with psycopg.connect(TEST_ADMIN_URL, connect_timeout=3) as admin:
+            admin.execute("DROP DATABASE IF EXISTS tipbot_test WITH (FORCE)")
+            admin.execute("CREATE DATABASE tipbot_test")
+    except Exception as e:
+        pytest.skip(f"PostgreSQL not available: {e}")
     yield
 
 

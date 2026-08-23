@@ -27,16 +27,26 @@ async def _balance_text(tg_id: int) -> str:
 
 async def _deposit_text(tg_id: int) -> str:
     lang = await common.user_lang(tg_id)
-    addr = common.base.hot_wallet()
     linked = await common.ledger.linked_address(tg_id)
     head = i18n.t(lang, 'dep_head')
     public = i18n.t(lang, 'dep_public')
     disc = i18n.t(lang, 'dep_disclaimer')
+
+    # Show CREATE2 address if enabled, else shared hot wallet
+    from bot.create2 import get_deposit_address, is_create2_enabled
+    c2_addr = get_deposit_address(tg_id)
+    if is_create2_enabled() and c2_addr:
+        addr = c2_addr
+        source_note = "\n\n🔑 Твой личный адрес — средства автоматически на баланс."
+    else:
+        addr = common.base.hot_wallet()
+        source_note = ""
+
     if linked:
         mid = i18n.t(lang, 'dep_linked', addr=common._esc(linked))
     else:
         mid = i18n.t(lang, 'dep_claim')
-    return f'{head}\n\n<code>{addr}</code>\n\n{mid}\n{public}\n\n{disc}'
+    return f'{head}\n\n<code>{addr}</code>\n\n{mid}{source_note}\n{public}\n\n{disc}'
 
 async def _donate_text(bot, tg_id: int) -> str:
     uname = await common._get_bot_username(bot)

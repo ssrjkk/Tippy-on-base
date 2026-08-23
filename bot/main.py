@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import time
+from .solvency import solvency_watcher
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramNetworkError
@@ -151,7 +152,7 @@ async def main() -> None:
         await bot.set_my_commands([AI_BOT_COMMAND, types.BotCommand(command='menu', description='Главное меню'), types.BotCommand(command='balance', description='Баланс кошелька'), types.BotCommand(command='deposit', description='Пополнить USDC'), types.BotCommand(command='withdraw', description='Вывести USDC'), types.BotCommand(command='tip', description='Чаевые USDC'), types.BotCommand(command='rain', description='Дождь: раздать USDC в чате'), types.BotCommand(command='markets', description='Рынки предсказаний'), types.BotCommand(command='market', description='Открыть рынок по id'), types.BotCommand(command='trade', description='Купить доли на рынке'), types.BotCommand(command='sell', description='Продать доли'), types.BotCommand(command='positions', description='Мои позиции и PnL'), types.BotCommand(command='bet', description='Ставка-пул: создать/поставить'), types.BotCommand(command='bets', description='Открытые ставки-пулы'), types.BotCommand(command='mybets', description='Мои ставки'), types.BotCommand(command='resolve', description='Закрыть ставку (создатель)'), types.BotCommand(command='cancel', description='Отменить свою ставку'), types.BotCommand(command='stats', description='Статистика бота'), types.BotCommand(command='top', description='Топ пользователей'), types.BotCommand(command='history', description='История операций'), types.BotCommand(command='donate', description='Твоя страница донатов'), types.BotCommand(command='link', description='Привязать внешний кошелёк'), types.BotCommand(command='confirm', description='Подтвердить привязку'), types.BotCommand(command='claim', description='Забрать с внешнего адреса'), types.BotCommand(command='wallet', description='Кошелёк: адрес и ключи'), types.BotCommand(command='import', description='Импорт по сид-фразе'), types.BotCommand(command='export', description='Выгрузить ключ и сид'), types.BotCommand(command='tx', description='Проверить транзакцию в Base'), types.BotCommand(command='paywall', description='Платные посты'), types.BotCommand(command='settings', description='Настройки'), types.BotCommand(command='language', description='Сменить язык / Language'), types.BotCommand(command='about', description='О боте — что это такое'), types.BotCommand(command='app', description='Мини-приложение')])
     except Exception as e:
         log.warning('set_my_commands failed: %s', e)
-    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(housekeeping_watcher())]
+    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot))]
     try:
         while True:
             try:

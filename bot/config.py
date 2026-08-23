@@ -110,6 +110,12 @@ AI_MAX_ANSWER_CHARS: int = int(os.environ.get("AI_MAX_ANSWER_CHARS", "3500"))
 # Agent: Telegram user ID for the autonomous agent (0 = disabled)
 AGENT_TG_ID: int = int(os.environ.get("AGENT_TG_ID", "0"))
 
+# Solvency alerting: Telegram chat/user ID for emergency alerts
+SOLVENCY_ALERT_CHAT_ID: int = int(os.environ.get("SOLVENCY_ALERT_CHAT_ID", os.environ.get("ADMIN_TG_ID", "0")))
+
+# CREATE2 factory contract address (empty = disabled)
+CREATE2_FACTORY_ADDRESS: str = os.environ.get("CREATE2_FACTORY_ADDRESS", "")
+
 # Block explorer for tx links (Base mainnet)
 BASESCAN_URL: str = os.environ.get("BASESCAN_URL", "https://basescan.org").rstrip("/")
 
