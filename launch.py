@@ -38,6 +38,7 @@ HEALTH_FAILS_BEFORE_RESTART = int(os.environ.get("TUNNEL_HEALTH_FAILS", "3"))
 
 CLOUDFLARED_CANDIDATES = [
     os.environ.get("CLOUDFLARED_BIN"),
+    "D:/base/tipbot/cloudflared.exe",
     "D:/Dev/Temp/opencode/cloudflared.exe",
     "cloudflared",
 ]
@@ -190,9 +191,11 @@ def main() -> int:
         if cfd is not None:
             if cfd.poll() is not None:
                 log.warning("cloudflared died; restarting tunnel")
-                cfd, url = start_cloudflared(bin_path)
-                os.environ["MINI_APP_URL"] = url
-                _restart_for_new_url()
+                cfd, new_url = start_cloudflared(bin_path)
+                if new_url:
+                    url = new_url
+                    os.environ["MINI_APP_URL"] = url
+                    _restart_for_new_url()
             elif _check(url):
                 fails = 0
             else:
@@ -206,9 +209,11 @@ def main() -> int:
                     except Exception:
                         pass
                     time.sleep(2)
-                    cfd, url = start_cloudflared(bin_path)
-                    os.environ["MINI_APP_URL"] = url
-                    _restart_for_new_url()
+                    cfd, new_url = start_cloudflared(bin_path)
+                    if new_url:
+                        url = new_url
+                        os.environ["MINI_APP_URL"] = url
+                        _restart_for_new_url()
                     fails = 0
 
         time.sleep(HEALTH_INTERVAL)
