@@ -7,3 +7,4 @@ qrcode==8.2
 psycopg[binary]==3.2.9
 cryptography>=44.0
 Pillow>=11.0
+alembic>=1.14

@@ -356,8 +356,30 @@ class Ledger:
         # constraints, row-level locking), not from this lock.
         self._lock = threading.RLock()
         self._conn = ReconnectingConn(database)
+        self._run_alembic(database)
         self.ensure_schema()  # idempotent; retries past lock contention
 
+    @staticmethod
+    def _run_alembic(database: str) -> None:
+        """Run ``alembic upgrade head`` to apply tracked schema migrations.
+
+        This is a best-effort non-blocking call: if alembic is not installed
+        or the alembic.ini / versions/ directory is missing (e.g. during
+        tests or clean installs), we silently fall back to ensure_schema()
+        which applies the full DDL idempotently.
+        """
+        try:
+            from alembic.config import Config
+            from alembic import command
+            import pathlib
+            ini = pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"
+            if not ini.exists():
+                return
+            cfg = Config(str(ini))
+            cfg.set_main_option("sqlalchemy.url", database)
+            command.upgrade(cfg, "head")
+        except Exception:
+            pass  # ensure_schema() is the safety net
 
     def ensure_schema(self, retries: int = 8, delay: float = 2.0) -> None:
         """Apply idempotent schema DDL, retrying past transient lock timeouts.
