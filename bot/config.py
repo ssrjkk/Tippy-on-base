@@ -119,6 +119,10 @@ SOLVENCY_ALERT_CHAT_ID: int = int(os.environ.get("SOLVENCY_ALERT_CHAT_ID", os.en
 # CREATE2 factory contract address (empty = disabled)
 CREATE2_FACTORY_ADDRESS: str = os.environ.get("CREATE2_FACTORY_ADDRESS", "")
 
+# Oracle for on-chain prediction markets (address + private key)
+ORACLE_ADDRESS: str = os.environ.get("ORACLE_ADDRESS", "")
+ORACLE_PRIVATE_KEY: str = os.environ.get("ORACLE_PRIVATE_KEY", "")
+
 # Block explorer for tx links (Base mainnet)
 BASESCAN_URL: str = os.environ.get("BASESCAN_URL", "https://basescan.org").rstrip("/")
 

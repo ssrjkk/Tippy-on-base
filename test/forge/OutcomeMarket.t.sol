@@ -199,7 +199,7 @@ contract OutcomeMarketTest is Test {
     // Resolution
     // ------------------------------------------------------------------
 
-    function test_resolve_and_redeem() public {
+    function test_owner_resolve_and_redeem() public {
         uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
 
         // Bob buys outcome 0
@@ -214,7 +214,7 @@ contract OutcomeMarketTest is Test {
 
         // Owner resolves outcome 0 as winner
         vm.prank(owner);
-        market.resolve(marketId, 0);
+        market.ownerResolve(marketId, 0);
 
         // Bob redeems his winning shares
         vm.prank(bob);
@@ -237,7 +237,7 @@ contract OutcomeMarketTest is Test {
 
         // Resolve outcome 0 as winner
         vm.prank(owner);
-        market.resolve(marketId, 0);
+        market.ownerResolve(marketId, 0);
 
         // Bob tries to redeem losing shares — should revert
         vm.prank(bob);
@@ -250,7 +250,7 @@ contract OutcomeMarketTest is Test {
 
         vm.prank(owner);
         vm.expectRevert(OutcomeMarket.MarketNotClosed.selector);
-        market.resolve(marketId, 0);
+        market.ownerResolve(marketId, 0);
     }
 
     function test_resolve_twice_reverts() public {
@@ -258,20 +258,148 @@ contract OutcomeMarketTest is Test {
         _timeTravel(1 days + 1);
 
         vm.prank(owner);
-        market.resolve(marketId, 0);
+        market.ownerResolve(marketId, 0);
 
         vm.prank(owner);
         vm.expectRevert(OutcomeMarket.AlreadyResolved.selector);
-        market.resolve(marketId, 0);
+        market.ownerResolve(marketId, 0);
     }
 
-    function test_only_owner_can_resolve() public {
+    function test_only_owner_can_ownerResolve() public {
         uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
         _timeTravel(1 days + 1);
 
         vm.prank(bob);
         vm.expectRevert();
-        market.resolve(marketId, 0);
+        market.ownerResolve(marketId, 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Oracle resolution
+    // ------------------------------------------------------------------
+
+    function test_oracle_resolve_and_redeem() public {
+        uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
+
+        vm.startPrank(bob);
+        usdc.approve(address(market), 20e6);
+        market.buy(marketId, 0, 20e6, 20e6);
+        vm.stopPrank();
+
+        _timeTravel(1 days + 1);
+
+        // Owner (who is also oracle by default) resolves
+        vm.prank(owner);
+        market.oracleResolve(marketId, 0);
+
+        vm.prank(bob);
+        uint256 payout = market.redeem(marketId);
+        assertGt(payout, 0);
+    }
+
+    function test_only_oracle_can_oracleResolve() public {
+        uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
+        _timeTravel(1 days + 1);
+
+        vm.prank(bob);
+        vm.expectRevert(OutcomeMarket.NotOracle.selector);
+        market.oracleResolve(marketId, 0);
+    }
+
+    function test_owner_can_dispute_within_window() public {
+        uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
+        _timeTravel(1 days + 1);
+
+        // Set a separate oracle address
+        address oracleAddr = makeAddr("oracle");
+        vm.prank(owner);
+        market.setOracle(oracleAddr);
+
+        // Oracle resolves
+        vm.prank(oracleAddr);
+        market.oracleResolve(marketId, 0);
+
+        // Owner disputes within 2h
+        vm.prank(owner);
+        market.disputeResolution(marketId);
+
+        // Market is back to unresolved
+        (, bool resolved, , , , , , , bool disputed, ) = market.markets(marketId);
+        assertFalse(resolved);
+        assertTrue(disputed);
+    }
+
+    function test_dispute_window_expires() public {
+        uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
+        _timeTravel(1 days + 1);
+
+        address oracleAddr = makeAddr("oracle");
+        vm.prank(owner);
+        market.setOracle(oracleAddr);
+
+        vm.prank(oracleAddr);
+        market.oracleResolve(marketId, 0);
+
+        // Time travel past dispute window (2h)
+        _timeTravel(2 hours + 1);
+
+        // Owner tries to dispute — should revert
+        vm.prank(owner);
+        vm.expectRevert(OutcomeMarket.DisputeWindowExpired.selector);
+        market.disputeResolution(marketId);
+    }
+
+    function test_cancel_expired_market() public {
+        uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
+
+        vm.startPrank(bob);
+        usdc.approve(address(market), 20e6);
+        market.buy(marketId, 0, 20e6, 20e6);
+        vm.stopPrank();
+
+        // Time travel past expiry (24h after close)
+        _timeTravel(1 days + 24 hours + 1);
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        market.cancelExpired(marketId);
+
+        (, , , , , , , , bool cancelled, ) = market.markets(marketId);
+        assertTrue(cancelled);
+    }
+
+    function test_cannot_cancel_before_expiry() public {
+        uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
+        _timeTravel(1 days + 1); // past close but not past expiry
+
+        vm.expectRevert(OutcomeMarket.MarketNotExpired.selector);
+        market.cancelExpired(marketId);
+    }
+
+    function test_setOracle() public {
+        address newOracle = makeAddr("newOracle");
+        vm.prank(owner);
+        market.setOracle(newOracle);
+        assertEq(market.oracle(), newOracle);
+    }
+
+    function test_only_owner_can_setOracle() public {
+        address newOracle = makeAddr("newOracle");
+        vm.prank(bob);
+        vm.expectRevert();
+        market.setOracle(newOracle);
+    }
+
+    function test_trading_disabled_after_cancel() public {
+        uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
+        _timeTravel(1 days + 24 hours + 1);
+
+        market.cancelExpired(marketId);
+
+        vm.startPrank(bob);
+        usdc.approve(address(market), 10e6);
+        vm.expectRevert(OutcomeMarket.AlreadyCancelled.selector);
+        market.buy(marketId, 0, 10e6, 10e6);
+        vm.stopPrank();
     }
 
     // ------------------------------------------------------------------

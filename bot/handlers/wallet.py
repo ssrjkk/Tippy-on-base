@@ -229,7 +229,10 @@ async def cmd_withdraw(message: types.Message) -> None:
         return
     amount_micro = common._to_micro(amount)
     fee_micro = common.base.withdraw_fee(amount_micro)
-    total_micro = amount_micro + fee_micro
+    # AML check: flag large/rapid withdrawals
+    aml_warnings = await common.ledger.check_aml_withdraw(message.from_user.id, amount_micro, to_address)
+    if aml_warnings:
+        await message.answer("⚠️ AML: " + "; ".join(aml_warnings))
     bal = await common.ledger.balance(message.from_user.id)
     if bal < Decimal(total_micro) / Decimal(10 ** common.config.USDC_DECIMALS):
         bal_str = f'{bal:.6f}'.rstrip('0').rstrip('.')

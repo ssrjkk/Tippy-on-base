@@ -3,6 +3,12 @@
 Wraps the OutcomeMarket Solidity contract for bot-side trading.  Provides
 quote/buy/sell/resolve/redeem functions that the Telegram handlers can call
 via asyncio.to_thread().
+
+Resolution model:
+  - Owner resolves via ownerResolve() (fallback)
+  - Oracle resolves via oracleResolve() (primary)
+  - Owner disputes via disputeResolution() (2h window after oracle)
+  - Anyone cancels via cancelExpired() (24h after close, no resolution)
 """
 
 import json
@@ -77,3 +83,71 @@ def price_of(w3: Web3, market_id: int, outcome_idx: int) -> int:
     if c is None:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
     return c.functions.priceOf(market_id, outcome_idx).call()
+
+
+def oracle_resolve(w3: Web3, market_id: int, winning_outcome: int) -> str:
+    """Oracle resolves the market. Returns tx hash."""
+    c = _contract(w3)
+    if c is None:
+        raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
+    tx = c.functions.oracleResolve(market_id, winning_outcome).build_transaction({
+        "from": config.ORACLE_ADDRESS,
+        "nonce": w3.eth.get_transaction_count(config.ORACLE_ADDRESS),
+        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+        "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
+        "chainId": w3.eth.chain_id,
+    })
+    acct = w3.eth.account.from_key(config.ORACLE_PRIVATE_KEY)
+    signed = acct.sign_transaction(tx)
+    return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+
+
+def owner_resolve(w3: Web3, market_id: int, winning_outcome: int) -> str:
+    """Owner resolves the market directly (fallback). Returns tx hash."""
+    c = _contract(w3)
+    if c is None:
+        raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
+    tx = c.functions.ownerResolve(market_id, winning_outcome).build_transaction({
+        "from": config.HOT_WALLET,
+        "nonce": w3.eth.get_transaction_count(config.HOT_WALLET),
+        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+        "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
+        "chainId": w3.eth.chain_id,
+    })
+    acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
+    signed = acct.sign_transaction(tx)
+    return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+
+
+def dispute_resolution(w3: Web3, market_id: int) -> str:
+    """Owner disputes oracle resolution within 2h window. Returns tx hash."""
+    c = _contract(w3)
+    if c is None:
+        raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
+    tx = c.functions.disputeResolution(market_id).build_transaction({
+        "from": config.HOT_WALLET,
+        "nonce": w3.eth.get_transaction_count(config.HOT_WALLET),
+        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+        "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
+        "chainId": w3.eth.chain_id,
+    })
+    acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
+    signed = acct.sign_transaction(tx)
+    return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+
+
+def cancel_expired(w3: Web3, market_id: int) -> str:
+    """Cancel expired market (>24h past close). Returns tx hash."""
+    c = _contract(w3)
+    if c is None:
+        raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
+    tx = c.functions.cancelExpired(market_id).build_transaction({
+        "from": config.HOT_WALLET,
+        "nonce": w3.eth.get_transaction_count(config.HOT_WALLET),
+        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+        "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
+        "chainId": w3.eth.chain_id,
+    })
+    acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
+    signed = acct.sign_transaction(tx)
+    return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
