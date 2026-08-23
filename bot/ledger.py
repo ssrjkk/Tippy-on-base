@@ -355,6 +355,46 @@ CREATE TABLE IF NOT EXISTS suspicious_activity (
 );
 CREATE INDEX IF NOT EXISTS idx_suspicious_tg ON suspicious_activity (tg_id);
 CREATE INDEX IF NOT EXISTS idx_suspicious_created ON suspicious_activity (created_at);
+CREATE TABLE IF NOT EXISTS community_treasuries (
+    id          BIGSERIAL PRIMARY KEY,
+    chat_id     BIGINT NOT NULL UNIQUE,
+    owner_tg    BIGINT NOT NULL,
+    balance     BIGINT NOT NULL DEFAULT 0,
+    quorum_pct  INTEGER NOT NULL DEFAULT 50,
+    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+);
+CREATE TABLE IF NOT EXISTS treasury_transactions (
+    id          BIGSERIAL PRIMARY KEY,
+    treasury_id BIGINT NOT NULL REFERENCES community_treasuries(id),
+    kind        TEXT NOT NULL,
+    tg_id       BIGINT,
+    amount      BIGINT NOT NULL,
+    note        TEXT,
+    tx_hash     TEXT,
+    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+);
+CREATE TABLE IF NOT EXISTS treasury_proposals (
+    id          BIGSERIAL PRIMARY KEY,
+    treasury_id BIGINT NOT NULL REFERENCES community_treasuries(id),
+    proposer_tg BIGINT NOT NULL,
+    amount      BIGINT NOT NULL,
+    to_address  TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'voting',
+    votes_yes   INTEGER NOT NULL DEFAULT 0,
+    votes_no    INTEGER NOT NULL DEFAULT 0,
+    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+    closes_at   BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS treasury_votes (
+    id          BIGSERIAL PRIMARY KEY,
+    treasury_id BIGINT NOT NULL REFERENCES community_treasuries(id),
+    proposal_id BIGINT NOT NULL,
+    tg_id       BIGINT NOT NULL,
+    vote        INTEGER NOT NULL,
+    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+    UNIQUE (proposal_id, tg_id)
+);
 """
 
 class Ledger:
