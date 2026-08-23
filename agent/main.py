@@ -17,10 +17,12 @@ from . import config, caps
 from .news import fetch_news
 from .decision import decide
 from .tools import create_market, place_bet, get_balance, get_market
+from .eas import attest_action, AttestationData
+from .signals import sell_signal
 
 
 async def single_cycle() -> bool:
-    """Run one perceive → decide → act cycle. Returns True if action taken."""
+    """Run one perceive → decide → act → attest cycle. Returns True if action taken."""
     print(f"[{time.strftime('%H:%M:%S')}] === Agent cycle ===")
 
     # 1. Check circuit breaker
@@ -65,7 +67,10 @@ async def single_cycle() -> bool:
     market_id = market_result["market_id"]
     print(f"  Market created: #{market_id}")
 
-    # 5. Act — place bet
+    # 5. Attest — EAS on-chain attestation for market creation
+    _attest_action("create_market", market_id, 10_000_000, decision.confidence, decision.reasoning)
+
+    # 6. Act — place bet
     if decision.bet_amount_usdc > 0:
         bet_result = await place_bet(
             market_id=market_id,
@@ -76,19 +81,50 @@ async def single_cycle() -> bool:
             print(f"  ERROR placing bet: {bet_result['error']}")
         else:
             print(f"  Bet placed! New balance: ${bet_result.get('new_balance_usdc', 0):.2f}")
+            _attest_action(
+                "place_bet",
+                market_id,
+                int(decision.bet_amount_usdc * 1_000_000),
+                decision.confidence,
+                decision.reasoning,
+            )
 
-    # 6. Attest — log action for audit trail
-    _attest(market_id, decision)
+    # 7. Sell signal — create paywall post with analysis
+    signal_result = await sell_signal(
+        market_id=market_id,
+        analysis=decision.reasoning,
+        price_usdc=1.0,
+    )
+    if "error" not in signal_result:
+        print(f"  Signal sold: paywall item #{signal_result['item_id']}")
+        _attest_action("sell_signal", market_id, 1_000_000, decision.confidence, decision.reasoning)
+    else:
+        print(f"  Signal creation failed: {signal_result['error']}")
+
+    # 8. Log local audit trail
+    _log_audit(market_id, decision)
 
     print(f"  Cycle complete. Market #{market_id} live.")
     return True
 
 
-def _attest(market_id: int, decision) -> None:
-    """Log action to local audit trail file.
+def _attest_action(action_type: str, market_id: int, amount_micro: int, confidence: float, reasoning: str) -> None:
+    """Submit EAS attestation (local fallback if no key)."""
+    data = AttestationData(
+        action_type=action_type,
+        market_id=market_id,
+        amount_micro=amount_micro,
+        confidence=int(confidence * 100),
+        reasoning=reasoning[:200],
+    )
+    tx_hash = attest_action(data)
+    if tx_hash:
+        print(f"    EAS attestation: {tx_hash}")
+    # Local audit trail always written by eas.py
 
-    In production this would emit an EAS attestation on Base.
-    """
+
+def _log_audit(market_id: int, decision) -> None:
+    """Log full cycle to local audit trail."""
     log_file = Path("agent_audit.jsonl")
     entry = {
         "ts": time.time(),

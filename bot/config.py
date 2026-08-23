@@ -107,6 +107,9 @@ AI_COOLDOWN_SECONDS: int = int(os.environ.get("AI_COOLDOWN_SECONDS", "15"))
 AI_MAX_QUESTION_LEN: int = int(os.environ.get("AI_MAX_QUESTION_LEN", "1000"))
 AI_MAX_ANSWER_CHARS: int = int(os.environ.get("AI_MAX_ANSWER_CHARS", "3500"))
 
+# Agent: Telegram user ID for the autonomous agent (0 = disabled)
+AGENT_TG_ID: int = int(os.environ.get("AGENT_TG_ID", "0"))
+
 # Block explorer for tx links (Base mainnet)
 BASESCAN_URL: str = os.environ.get("BASESCAN_URL", "https://basescan.org").rstrip("/")
 

@@ -19,6 +19,7 @@ from mcp.types import Tool, TextContent
 
 from . import config
 from .tools import create_market, place_bet, get_market, list_open_markets, get_balance
+from .signals import sell_signal
 
 server = Server("tippy-agent")
 
@@ -106,6 +107,23 @@ async def list_tools() -> list[Tool]:
             description="Get agent's USDC balance on Tippy.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        Tool(
+            name="tippy_sell_signal",
+            description="Create a paywall post with market analysis and sell it via x402.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "market_id": {"type": "integer", "description": "Market ID to analyze"},
+                    "analysis": {"type": "string", "description": "Analysis text to sell"},
+                    "price_usdc": {
+                        "type": "number",
+                        "description": "Price in USDC",
+                        "default": 1,
+                    },
+                },
+                "required": ["market_id", "analysis"],
+            },
+        ),
     ]
 
 
@@ -134,6 +152,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "tippy_get_balance":
             bal = await get_balance()
             result = {"balance_usdc": bal}
+        elif name == "tippy_sell_signal":
+            result = await sell_signal(
+                market_id=arguments["market_id"],
+                analysis=arguments["analysis"],
+                price_usdc=arguments.get("price_usdc", 1.0),
+            )
         else:
             result = {"error": f"Unknown tool: {name}"}
 

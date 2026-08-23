@@ -139,6 +139,37 @@ async def api_user(tg_id: int) -> dict:
     history = [{'kind': r['kind'], 'amount_usdc': _usdc(r['amount']), 'counterparty': r['counterparty'], 'note': r['note'], 'created_at': r['created_at']} for r in await ledger.history(tg_id, 12)]
     return {**v, 'balance_usdc': _usdc(v['balance_micro']), 'tips_sent_usdc': _usdc(v['tips_sent_micro']), 'tips_received_usdc': _usdc(v['tips_received_micro']), 'bets_won_usdc': _usdc(v['bets_won_micro']), 'bets_placed_usdc': _usdc(v['bets_placed_micro']), 'creator_fees_usdc': _usdc(v['creator_fees_micro']), 'positions': positions, 'history': history, 'deposit_address': str(hot_wallet())}
 
+@app.get('/api/agent/status', tags=['agent'])
+async def api_agent_status() -> dict:
+    """Agent PnL dashboard — public read-only view of agent performance."""
+    import json, pathlib
+    from agent.caps import get_status
+    tg_id = int(config.AGENT_TG_ID) if hasattr(config, 'AGENT_TG_ID') else 0
+    if not tg_id:
+        return {'error': 'AGENT_TG_ID not configured'}
+    if not await ledger.user_exists(tg_id):
+        return {'error': 'Agent user not found'}
+    v = await ledger.user_view(tg_id)
+    caps_status = get_status()
+    audit_file = pathlib.Path('agent_audit.jsonl')
+    market_count = 0
+    bet_count = 0
+    if audit_file.exists():
+        for line in audit_file.read_text().splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if entry.get('action_type') == 'create_market' or 'market_id' in entry:
+                market_count += 1
+            if entry.get('bet_amount_usdc', 0) > 0:
+                bet_count += 1
+    return {
+        'balance_usdc': _usdc(v['balance_micro']),
+        'markets_created': market_count,
+        'bets_placed': bet_count,
+        'caps': caps_status,
+    }
+
 @app.get('/api/info', tags=['stats'])
 def api_info() -> dict:
     return {'bot_username': config.BOT_USERNAME}
