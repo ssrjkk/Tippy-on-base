@@ -17,6 +17,9 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("BOT_TOKEN", "0:test")
 os.environ.setdefault("HOT_WALLET_KEY", "0x" + "11" * 32)
 os.environ.setdefault("WALLET_ENC_KEY", "a" * 32)  # Test-only: 32-char key for wallet encryption
+# Tests exercise the ENABLED (and now corrected) x402 path; production
+# defaults to X402_ENABLED=off (see bot/config.py) for safety.
+os.environ.setdefault("X402_ENABLED", "1")
 TEST_DB_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5432/tipbot_test"
 )

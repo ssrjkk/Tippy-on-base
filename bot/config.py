@@ -38,6 +38,12 @@ DATABASE_URL: str = os.environ.get(
 WEB_HOST: str = os.environ.get("WEB_HOST", "0.0.0.0")
 WEB_PORT: int = int(os.environ.get("WEB_PORT", "8000"))
 
+# x402 HTTP-402 agent payments. DISABLED by default: the endpoint shares the
+# deposit hot-wallet address with no per-invoice binding, so an attacker could
+# reuse any deposit tx to drain it. Enable only with a dedicated x402 receive
+# address that is NOT the deposit hot wallet.
+X402_ENABLED: bool = os.environ.get("X402_ENABLED") == "1"
+
 # Telegram webhook (instead of long polling). Set WEBHOOK_URL (public https
 # URL, e.g. https://tipbot.example.com/telegram-webhook) to enable it. The
 # secret is the Telegram Bot API secret token (empty -> derived from BOT_TOKEN).

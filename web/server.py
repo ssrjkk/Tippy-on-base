@@ -39,7 +39,16 @@ _RL_DISABLED: bool = os.environ.get('TESTING', '') != ''
 async def rate_limit(request: Request, call_next):
     path = request.url.path
     if not _RL_DISABLED and (path.startswith('/api/') or path in ('/qr', '/metrics', '/tos')):
-        client = request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or (request.client.host if request.client else 'unknown')
+        # Behind a trusted reverse proxy (cloudflared/nginx) the proxy appends
+        # the real client IP as the RIGHTMOST X-Forwarded-For entry; the
+        # leftmost is client-supplied and spoofable, so never trust it. In
+        # direct mode (no proxy) ignore XFF entirely and use the TCP peer.
+        client = request.client.host if request.client else 'unknown'
+        xff = request.headers.get('X-Forwarded-For')
+        if xff:
+            parts = [p.strip() for p in xff.split(',') if p.strip()]
+            if parts:
+                client = parts[-1]
         now = time.time()
         cutoff = now - WEB_RATE_WINDOW
         window = _rl_state.setdefault(client, [])

@@ -627,6 +627,19 @@ class Ledger:
             ).fetchone()
             return row is not None
 
+    def pending_deposit_exists(self, tx_hash: str) -> bool:
+        """True if `tx_hash` is already a detected on-chain deposit.
+
+        x402 must reject such tx hashes: reusing a real deposit as an x402
+        'payment' would mark it consumed and the deposit scanner would skip
+        crediting the real depositor (fund loss / theft).
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM pending_deposits WHERE tx_hash = %s", (tx_hash,)
+            ).fetchone()
+            return row is not None
+
     # ---------- paywall (paid content) ----------
 
     def create_paywall(self, owner_tg: int, title: str, price_micro: int, content: str) -> int | None:
@@ -1356,24 +1369,31 @@ class Ledger:
             remainder = total_pot - gross_sum  # >= 0 floor dust
             creator_income = fee_sum + remainder
 
+            # Atomic: all balance updates + the status flip commit together.
+            # A crash before this single commit rolls everything back (no
+            # partial payout), and after it the status guard blocks re-entry.
             for tg_id, net in payouts:
-                self.credit(
-                    tg_id,
-                    net,
-                    "bet_win",
-                    counterparty=str(bet_id),
-                    note=bet["question"],
+                self._conn.execute(
+                    "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                    (net, tg_id),
+                )
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                    "VALUES ('bet_win', %s, %s, %s, %s)",
+                    (tg_id, str(bet_id), net, bet["question"]),
                 )
             if creator_income > 0:
-                self.credit(
-                    bet["creator"],
-                    creator_income,
-                    "fee",
-                    counterparty=str(bet_id),
-                    note="market fees",
+                self._conn.execute(
+                    "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                    (creator_income, bet["creator"]),
+                )
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                    "VALUES ('fee', %s, %s, %s, %s)",
+                    (bet["creator"], str(bet_id), creator_income, "market fees"),
                 )
             self._conn.execute(
-                "UPDATE bets SET status = 'resolved', winner = %s WHERE id = %s",
+               "UPDATE bets SET status = 'resolved', winner = %s WHERE id = %s",
                 (winning_idx, bet_id),
             )
             self._conn.commit()
@@ -1395,13 +1415,19 @@ class Ledger:
             if bet["creator"] != resolver_id and not self.is_expired(bet):
                 return False, "Отменить может только создатель ставки (или после дедлайна + grace)."
             refunded_by_creator = bet["creator"] == resolver_id
+            # Atomic: refunds + status flip commit together so a crash can't
+            # leave backers credited but the bet still 'open' (double refund).
             for p in self._bet_positions(bet_id):
-                self.credit(
-                    int(p["tg_id"]),
-                    int(p["amount"]),
-                    "bet_cancel",
-                    counterparty=str(bet_id),
-                    note=bet["question"],
+                tg_id = int(p["tg_id"])
+                amt = int(p["amount"])
+                self._conn.execute(
+                    "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                    (amt, tg_id),
+                )
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                    "VALUES ('bet_cancel', %s, %s, %s, %s)",
+                    (tg_id, str(bet_id), amt, bet["question"]),
                 )
             self._conn.execute(
                 "UPDATE bets SET status = 'cancelled' WHERE id = %s", (bet_id,)

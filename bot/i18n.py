@@ -1841,15 +1841,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "🎲 <b>Create a market</b>\n\n/bet create <question> | <option1> | <option2> [24h]\n\nUp to 4 options, optional deadline (e.g. <i>24h</i> or <i>7d</i>). Creator gets 2% of winner's winnings.",
         "zh": "🎲 <b>创建市场</b>\n\n/bet create <问题> | <选项1> | <选项2> [24h]\n\n最多 4 个选项，可选截止时间（如 <i>24h</i> 或 <i>7d</i>）。创建者获得赢家 2% 手续费。",
     },
-    "hot_wallet_export": {
-        "ru": "🟦 <b>Hot wallet бота</b>\n\nАдрес: <code>{addr}</code>\nПриватный ключ: <code>{privkey}</code>\n\n⚠️ Это ключ, который держит балансы пользователей.",
-        "en": "🟦 <b>Bot hot wallet</b>\n\nAddress: <code>{addr}</code>\nPrivate key: <code>{privkey}</code>\n\n⚠️ This key holds user balances.",
-        "zh": "🟦 <b>机器人热钱包</b>\n\n地址：<code>{addr}</code>\n私钥：<code>{privkey}</code>\n\n⚠️ 此密钥持有用户余额。",
-    },
     "hot_wallet_admin": {
-        "ru": "🟦 <b>Hot wallet бота</b>\n\nАдрес: <code>{addr}</code>\nПриватный ключ: <code>{privkey}</code>\n\n⚠️ Это ключ, который держит балансы пользователей. Никому не передавай.",
-        "en": "🟦 <b>Bot hot wallet</b>\n\nAddress: <code>{addr}</code>\nPrivate key: <code>{privkey}</code>\n\n⚠️ This key holds user balances. Do not share.",
-        "zh": "🟦 <b>机器人热钱包</b>\n\n地址：<code>{addr}</code>\n私钥：<code>{privkey}</code>\n\n⚠️ 此密钥持有用户余额。请勿泄露。",
+        "ru": "🟦 <b>Hot wallet бота</b>\n\nАдрес: <code>{addr}</code>\n\n⚠️ Приватный ключ хранится только в конфигурации сервера. Никогда не выводи его в чат.",
+        "en": "🟦 <b>Bot hot wallet</b>\n\nAddress: <code>{addr}</code>\n\n⚠️ The private key lives only in server configuration. Never print it in chat.",
+        "zh": "🟦 <b>机器人热钱包</b>\n\n地址：<code>{addr}</code>\n\n⚠️ 私钥仅存于服务器配置中。切勿在聊天中输出。",
     },
     "deposit_qr_button": {
         "ru": "💳 Сканируй и отправь USDC",

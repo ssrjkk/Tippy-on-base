@@ -56,7 +56,7 @@ def _verify_payment(tx_hash: str, expected_micro: int) -> dict | None:
             total += int(args['value'])
             if sender is None:
                 sender = args['from']
-    if total < expected_micro or sender is None:
+    if total != expected_micro or sender is None:
         return None
     return {'sender': sender, 'amount_micro': total}
 
@@ -82,6 +82,8 @@ def _payment_rejected_response(amount_micro: int) -> JSONResponse:
 
 async def x402_tip(request: Request) -> JSONResponse:
     """POST /api/x402/tip?recipient=<username|tg_id>&amount=<usdc>"""
+    if not config.X402_ENABLED:
+        return JSONResponse(status_code=503, content={'detail': 'x402 payments are disabled'})
     q = request.query_params
     recipient = (q.get('recipient') or '').strip()
     amount_micro = _parse_amount((q.get('amount') or '').strip())
@@ -97,15 +99,19 @@ async def x402_tip(request: Request) -> JSONResponse:
         return JSONResponse(status_code=400, content={'detail': 'invalid x-402-payment header'})
     if await ledger.x402_paid(tx_hash):
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
+    if await ledger.pending_deposit_exists(tx_hash):
+        return JSONResponse(status_code=400, content={'detail': 'transaction is a deposit, not an x402 payment'})
     verified = _verify_payment(tx_hash, amount_micro)
     if verified is None:
         return _payment_rejected_response(amount_micro)
-    credited = await ledger.credit_x402(tg_id, tx_hash, verified['amount_micro'], verified['sender'])
+    credited = await ledger.credit_x402(tg_id, tx_hash, amount_micro, verified['sender'])
     if not credited:
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
     return JSONResponse(status_code=200, content={'status': 'ok', 'tip': {'recipient': recipient, 'amount_usdc': round(verified['amount_micro'] / MICRO, 2), 'sender': verified['sender'], 'tx_hash': tx_hash}})
 
 async def x402_paywall(request: Request) -> JSONResponse:
+    if not config.X402_ENABLED:
+        return JSONResponse(status_code=503, content={'detail': 'x402 payments are disabled'})
     """POST /api/x402/paywall?item=<id>&amount=<usdc>
 
     x402 handshake for paywall items: an agent pays the invoice on-chain and
@@ -130,10 +136,12 @@ async def x402_paywall(request: Request) -> JSONResponse:
         return JSONResponse(status_code=400, content={'detail': 'invalid x-402-payment header'})
     if await ledger.x402_paid(tx_hash):
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
+    if await ledger.pending_deposit_exists(tx_hash):
+        return JSONResponse(status_code=400, content={'detail': 'transaction is a deposit, not an x402 payment'})
     verified = _verify_payment(tx_hash, price_micro)
     if verified is None:
         return _payment_rejected_response(price_micro)
-    res = await ledger.x402_paywall_purchase(owner_tg, int(raw_item), tx_hash, verified['amount_micro'], verified['sender'])
+    res = await ledger.x402_paywall_purchase(owner_tg, int(raw_item), tx_hash, price_micro, verified['sender'])
     if res == 'replay':
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
     return JSONResponse(status_code=200, content={'status': 'ok', 'item': {'id': int(raw_item), 'title': item['title'], 'amount_usdc': round(verified['amount_micro'] / MICRO, 2), 'sender': verified['sender'], 'tx_hash': tx_hash}, 'content': item['content']})

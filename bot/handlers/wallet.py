@@ -140,9 +140,6 @@ async def cmd_wallet(message: types.Message) -> None:
     if len(parts) > 1 and parts[1].lower() == 'export':
         if not await common.require_private(message):
             return
-        if len(parts) > 2 and parts[2].lower() == 'hot':
-            await message.answer(i18n.t(lang, 'hot_wallet_export', addr=common.base.hot_wallet(), privkey=common.config.HOT_WALLET_KEY))
-            return
         row = await common.ledger.get_wallet(message.from_user.id)
         if not row:
             row = await _ensure_wallet(message.from_user.id)
@@ -192,7 +189,7 @@ async def cmd_export(message: types.Message) -> None:
     if message.from_user.id != common.config.ADMIN_TG_ID:
         await message.answer(i18n.t(lang, 'admin_only'))
         return
-    await message.answer(i18n.t(lang, 'hot_wallet_admin', addr=common.base.hot_wallet(), privkey=common.config.HOT_WALLET_KEY))
+    await message.answer(i18n.t(lang, 'hot_wallet_admin', addr=common.base.hot_wallet()))
 
 async def _ensure_wallet(tg_id: int) -> dict:
     row = await common.ledger.get_wallet(tg_id)
