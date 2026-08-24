@@ -32,9 +32,13 @@ async def solvency_watcher(bot, interval: int = 60) -> None:
 
 async def _check_solvency(bot) -> None:
     global _last_alert_ts
-    liabilities = await ledger.total_liabilities()
-    pending = await ledger.pending_deposit_total()
-    owed = liabilities + pending
+    try:
+        liabilities = await ledger.total_liabilities()
+        pending = await ledger.pending_deposit_total()
+        owed = liabilities + pending
+    except Exception as e:
+        log.warning("solvency: failed to read liabilities: %s", e)
+        return
 
     # Get reserves
     vault_addr = config.VAULT_ADDRESS

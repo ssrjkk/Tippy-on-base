@@ -262,6 +262,15 @@ input,textarea{font-family:inherit;outline:none}
         </div>
       </div>
 
+      <div class="section-title">🤖 AI Assistant</div>
+      <div class="card" style="padding:12px">
+        <div id="aiChat" style="max-height:200px;overflow-y:auto;margin-bottom:10px;font-size:13px;color:var(--text2)"></div>
+        <div style="display:flex;gap:8px">
+          <input class="input" id="aiInput" placeholder="Ask about markets..." style="flex:1" onkeydown="if(event.key==='Enter')askAI()">
+          <button class="btn btn-primary btn-sm" onclick="askAI()">→</button>
+        </div>
+      </div>
+
       <div class="section-title" data-i18n="about">About</div>
       <div class="card" id="aboutCard"></div>
 
@@ -449,18 +458,22 @@ function renderHistory() {
     return;
   }
   c.innerHTML = h.slice(0, 10).map(tx => {
+    const kind = tx.kind || tx.type || '';
     let icon = '💸', cls = 'tip', amt = tx.amount, sign = '';
-    if (tx.type === 'deposit') { icon = '💳'; cls = 'deposit'; sign = '+'; }
-    else if (tx.type === 'withdraw') { icon = '⬆️'; cls = 'withdraw'; sign = '-'; }
-    else if (tx.type === 'trade') { icon = '📈'; cls = 'trade'; sign = tx.amount > 0 ? '+' : ''; }
-    else if (tx.type === 'bet') { icon = '🎲'; cls = 'bet'; sign = tx.amount > 0 ? '+' : ''; }
+    if (kind === 'deposit') { icon = '💳'; cls = 'deposit'; sign = '+'; }
+    else if (kind === 'withdraw') { icon = '⬆️'; cls = 'withdraw'; sign = '-'; }
+    else if (kind === 'trade_buy' || kind === 'trade_sell') { icon = '📈'; cls = 'trade'; sign = tx.amount > 0 ? '+' : ''; }
+    else if (kind === 'bet') { icon = '🎲'; cls = 'bet'; sign = tx.amount > 0 ? '+' : ''; }
     else { sign = tx.amount < 0 ? '-' : '+'; }
     const isPos = tx.amount >= 0;
-    const timeStr = tx.time ? new Date(tx.time).toLocaleDateString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+    const ts = tx.created_at || tx.time;
+    const timeStr = ts ? new Date(ts).toLocaleDateString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+    const desc = tx.note || tx.description || kind;
+    const cpty = tx.counterparty ? ` @${tx.counterparty}` : '';
     return `<div class="tx-item">
       <div class="tx-icon ${cls}">${icon}</div>
       <div class="tx-details">
-        <div class="tx-title">${tx.description || tx.type || ''}</div>
+        <div class="tx-title">${esc(desc)}${cpty}</div>
         <div class="tx-time">${timeStr}</div>
       </div>
       <div class="tx-amount ${isPos?'pos':'neg'}">${sign}${Math.abs(Number(amt||0)).toFixed(2)}</div>
@@ -477,13 +490,12 @@ function renderMarkets() {
   }
   c.innerHTML = m.map(mk => {
     const opts = mk.options || [];
-    const total = opts.reduce((s, o) => s + (o.shares || 0), 0) || 1;
     return `<div class="market-card opt-colors" onclick="openMarketDetail('${mk.id}')">
       <div class="market-question">${esc(mk.question)}</div>
       <div class="prob-bars">${opts.map((o, i) => {
-        const pct = total > 0 ? ((o.shares||0)/total*100) : 0;
+        const pct = o.price_pct || 0;
         return `<div>
-          <div class="prob-bar-label"><span>${esc(o.name)}</span><span>${pct.toFixed(0)}%</span></div>
+          <div class="prob-bar-label"><span>${esc(o.label || o.name || 'Option '+(i+1))}</span><span>${pct.toFixed(1)}%</span></div>
           <div class="prob-bar"><div class="prob-bar-fill" style="width:${pct}%;background:var(--c${i})"></div></div>
         </div>`;
       }).join('')}</div>
@@ -504,15 +516,14 @@ function renderBets() {
   }
   c.innerHTML = b.map(bet => {
     const opts = bet.options || [];
-    const total = opts.reduce((s, o) => s + (o.bets || 0), 0) || 1;
     return `<div class="market-card" onclick="openBetDetail('${bet.id}')">
       <div class="market-question">${esc(bet.question)}</div>
-      <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Pot: <strong style="color:var(--text)">${Number(bet.pot||0).toFixed(2)} USDC</strong></div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Pot: <strong style="color:var(--text)">${Number(bet.pot_usdc||bet.pot||0).toFixed(2)} USDC</strong></div>
       <div class="prob-bars">${opts.map(o => {
-        const pct = total > 0 ? ((o.bets||0)/total*100) : 0;
+        const pct = o.chance_pct || 0;
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid var(--border)">
-          <span style="font-size:13px">${esc(o.name)}</span>
-          <span style="font-size:13px;font-weight:600;color:var(--accent)">${pct.toFixed(0)}%</span>
+          <span style="font-size:13px">${esc(o.label || o.name || 'Option')}</span>
+          <span style="font-size:13px;font-weight:600;color:var(--accent)">${pct.toFixed(1)}%</span>
         </div>`;
       }).join('')}</div>
     </div>`;
@@ -641,7 +652,6 @@ function openMarketDetail(id) {
   const mk = (STATE.markets || []).find(m => m.id == id);
   if (!mk) return;
   const opts = mk.options || [];
-  const total = opts.reduce((s, o) => s + (o.shares || 0), 0) || 1;
   showDetail(`
     <div class="detail-header">
       <div class="detail-back" onclick="hideDetail()">←</div>
@@ -650,10 +660,10 @@ function openMarketDetail(id) {
     <div class="detail-body">
       <div class="detail-question">${esc(mk.question)}</div>
       <div class="detail-options opt-colors">${opts.map((o, i) => {
-        const pct = total > 0 ? ((o.shares||0)/total*100) : 0;
+        const pct = o.price_pct || 0;
         return `<div class="detail-opt">
           <div class="detail-opt-head">
-            <div class="detail-opt-name">${esc(o.name)}</div>
+            <div class="detail-opt-name">${esc(o.label || o.name || 'Option '+(i+1))}</div>
             <div class="detail-opt-pct">${pct.toFixed(1)}%</div>
           </div>
           <div class="detail-opt-bar"><div class="detail-opt-bar-fill" style="width:${pct}%;background:var(--c${i})"></div></div>
@@ -665,7 +675,7 @@ function openMarketDetail(id) {
               <div class="chip" onclick="pickChip(this,'mktAmt_${i}',25)">25</div>
             </div>
             <input class="input" id="mktAmt_${i}" type="number" step="0.01" min="0" value="5" placeholder="5" style="margin-bottom:8px">
-            <button class="btn btn-primary btn-full btn-sm" onclick="doTrade('${mk.id}',${i})">${t('buy')} ${esc(o.name)}</button>
+            <button class="btn btn-primary btn-full btn-sm" onclick="doTrade('${mk.id}',${i})">${t('buy')} ${esc(o.label || o.name || 'Option')}</button>
           </div>
         </div>`;
       }).join('')}</div>
@@ -702,7 +712,6 @@ function openBetDetail(id) {
   const bet = (STATE.bets || []).find(b => b.id == id);
   if (!bet) return;
   const opts = bet.options || [];
-  const total = opts.reduce((s, o) => s + (o.bets || 0), 0) || 1;
   showDetail(`
     <div class="detail-header">
       <div class="detail-back" onclick="hideDetail()">←</div>
@@ -710,12 +719,12 @@ function openBetDetail(id) {
     </div>
     <div class="detail-body">
       <div class="detail-question">${esc(bet.question)}</div>
-      <div style="font-size:15px;color:var(--text2);margin-bottom:16px">Pot: <strong style="color:var(--text)">${Number(bet.pot||0).toFixed(2)} USDC</strong></div>
+      <div style="font-size:15px;color:var(--text2);margin-bottom:16px">Pot: <strong style="color:var(--text)">${Number(bet.pot_usdc||bet.pot||0).toFixed(2)} USDC</strong></div>
       <div class="detail-options">${opts.map((o, i) => {
-        const pct = total > 0 ? ((o.bets||0)/total*100) : 0;
+        const pct = o.chance_pct || 0;
         return `<div class="detail-opt">
           <div class="detail-opt-head">
-            <div class="detail-opt-name">${esc(o.name)}</div>
+            <div class="detail-opt-name">${esc(o.label || o.name || 'Option')}</div>
             <div class="detail-opt-pct">${pct.toFixed(1)}%</div>
           </div>
           <div class="detail-opt-bar"><div class="detail-opt-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
@@ -727,7 +736,7 @@ function openBetDetail(id) {
               <div class="chip" onclick="pickChip(this,'betAmt_${i}',25)">25</div>
             </div>
             <input class="input" id="betAmt_${i}" type="number" step="0.01" min="0" value="5" placeholder="5" style="margin-bottom:8px">
-            <button class="btn btn-primary btn-full btn-sm" onclick="doBet('${bet.id}',${i})">${t('buy')} ${esc(o.name)}</button>
+            <button class="btn btn-primary btn-full btn-sm" onclick="doBet('${bet.id}',${i})">${t('buy')} ${esc(o.label || o.name || 'Option')}</button>
           </div>
         </div>`;
       }).join('')}</div>
@@ -876,6 +885,36 @@ async function setLang(lang) {
       body: JSON.stringify({ lang })
     });
   } catch(e) {}
+}
+
+// ─── AI Chat ───
+async function askAI() {
+  const input = document.getElementById('aiInput');
+  const q = (input.value || '').trim();
+  if (!q) return;
+  input.value = '';
+  const chat = document.getElementById('aiChat');
+  chat.innerHTML += `<div style="margin-bottom:6px"><strong style="color:var(--accent)">You:</strong> ${esc(q)}</div>`;
+  chat.innerHTML += `<div style="margin-bottom:6px;color:var(--text3)">...</div>`;
+  chat.scrollTop = chat.scrollHeight;
+  try {
+    const r = await fetch('/api/ask', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q })
+    });
+    const d = await r.json();
+    chat.innerHTML = chat.innerHTML.replace(/<div[^>]*>\.\.\.<\/div>$/, '');
+    if (r.ok) {
+      chat.innerHTML += `<div style="margin-bottom:8px"><strong style="color:var(--success)">AI:</strong> ${esc(d.answer || 'No answer')}</div>`;
+    } else {
+      chat.innerHTML += `<div style="margin-bottom:8px;color:var(--danger)">Error: ${esc(d.detail || 'request failed')}</div>`;
+    }
+  } catch(e) {
+    chat.innerHTML = chat.innerHTML.replace(/<div[^>]*>\.\.\.<\/div>$/, '');
+    chat.innerHTML += `<div style="margin-bottom:8px;color:var(--danger)">Network error</div>`;
+  }
+  chat.scrollTop = chat.scrollHeight;
 }
 
 // ─── Chip picker ───

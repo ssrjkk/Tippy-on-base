@@ -16,7 +16,7 @@ from web3 import Web3
 from bot import base
 
 TEST_DB_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5433/tipbot_test"
+    "TEST_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5432/tipbot_test"
 )
 
 

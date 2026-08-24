@@ -457,7 +457,7 @@ def test_ask_success(ledger, monkeypatch):
     async def _ask(q):
         return "Base — это L2 от Coinbase."
 
-    monkeypatch.setattr(ai_mod, "ask", _ask)
+    monkeypatch.setattr(ai_mod, "ask_about_markets", _ask)
     m = Message("/ask что такое base?")
     run(cmd_ask(m))
     assert "Tippy AI" in m.answers[0][0]
@@ -470,7 +470,7 @@ def test_ask_error_is_friendly(ledger, monkeypatch):
     async def boom(q):
         raise RuntimeError("AI HTTP 429: rate limited")
 
-    monkeypatch.setattr(ai_mod, "ask", boom)
+    monkeypatch.setattr(ai_mod, "ask_about_markets", boom)
     m = Message("/ask привет")
     run(cmd_ask(m))
     assert "недоступен" in m.answers[0][0]
@@ -484,7 +484,7 @@ def test_ask_with_reply_context(ledger, monkeypatch):
         captured.update(q=q)
         return "ок"
 
-    monkeypatch.setattr(ai_mod, "ask", _ask)
+    monkeypatch.setattr(ai_mod, "ask_about_markets", _ask)
     ref = Message("ETH газ дорогой")
     m = Message("/ask объясни", )
     m.reply_to_message = ref

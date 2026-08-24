@@ -74,7 +74,11 @@ def hot_wallet() -> ChecksumAddress:
 
 
 def _hot_balance_sync() -> float:
-    micro = _rpc_call(lambda c: c.functions.balanceOf(HOT_WALLET).call())
+    try:
+        micro = usdc.functions.balanceOf(HOT_WALLET).call()
+    except Exception:
+        # Fallback: try all providers
+        micro = _rpc_call(lambda c: c.functions.balanceOf(HOT_WALLET).call())
     return micro / 10**config.USDC_DECIMALS
 
 
@@ -132,7 +136,10 @@ def _vault_balance_sync() -> float | None:
     """
     if not config.VAULT_ADDRESS:
         return None
-    micro = _rpc_call(lambda c: c.functions.balanceOf(Web3.to_checksum_address(config.VAULT_ADDRESS)).call())
+    try:
+        micro = usdc.functions.balanceOf(Web3.to_checksum_address(config.VAULT_ADDRESS)).call()
+    except Exception:
+        micro = _rpc_call(lambda c: c.functions.balanceOf(Web3.to_checksum_address(config.VAULT_ADDRESS)).call())
     return micro / 10**config.USDC_DECIMALS
 
 

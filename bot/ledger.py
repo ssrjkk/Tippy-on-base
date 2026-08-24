@@ -409,6 +409,10 @@ class Ledger:
         self._run_alembic(database)
         self.ensure_schema()  # idempotent; retries past lock contention
 
+    def _ensure(self) -> None:
+        """Reconnect if the underlying connection is dead/broken."""
+        self._conn._ensure()
+
     @staticmethod
     def _run_alembic(database: str) -> None:
         """Run ``alembic upgrade head`` to apply tracked schema migrations.

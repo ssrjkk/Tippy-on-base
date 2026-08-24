@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -251,6 +252,32 @@ async def api_qr(data: str, size: int=220) -> Response:
         return Response(content=await qrlib.qr_bytes(data, size=size), media_type='image/png', headers={'Cache-Control': 'public, max-age=86400'})
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+class AskRequest(BaseModel):
+    question: str
+
+
+@app.post('/api/ask', tags=['markets'])
+async def api_ask(body: AskRequest) -> dict:
+    """Same assistant as Telegram's /ask — tool-calling, so answers about
+    specific markets are grounded in real current odds, not guessed. Shares
+    the global per-IP rate limiter above; no separate throttle here."""
+    from bot import ai
+    if not ai.ai_enabled():
+        raise HTTPException(status_code=503, detail='AI is not configured')
+    question = (body.question or '').strip()
+    if not question:
+        raise HTTPException(status_code=400, detail='question must not be empty')
+    if len(question) > config.AI_MAX_QUESTION_LEN:
+        raise HTTPException(status_code=400, detail=f'question must be under {config.AI_MAX_QUESTION_LEN} chars')
+    try:
+        answer = await ai.ask_about_markets(question)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    if len(answer) > config.AI_MAX_ANSWER_CHARS:
+        answer = answer[:config.AI_MAX_ANSWER_CHARS - 1] + '…'
+    return {'answer': answer}
 
 @app.get('/api/wallet', tags=['treasury'])
 async def api_wallet() -> dict:

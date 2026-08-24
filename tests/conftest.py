@@ -45,7 +45,7 @@ def _pg_test_db():
     import psycopg
 
     try:
-        with psycopg.connect(TEST_ADMIN_URL, connect_timeout=3) as admin:
+        with psycopg.connect(TEST_ADMIN_URL, connect_timeout=3, autocommit=True) as admin:
             admin.execute("DROP DATABASE IF EXISTS tipbot_test WITH (FORCE)")
             admin.execute("CREATE DATABASE tipbot_test")
     except Exception as e:

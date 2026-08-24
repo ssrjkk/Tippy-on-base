@@ -104,7 +104,7 @@ MARKET_MAX_TRADE_USDC: Decimal = Decimal(os.environ.get("MARKET_MAX_TRADE_USDC",
 # (OpenAI, OpenRouter, local llama/vLLM server, ...). Empty key disables /ask.
 AI_API_URL: str = os.environ.get("AI_API_URL", "https://api.groq.com/openai/v1").rstrip("/")
 AI_API_KEY: str | None = os.environ.get("AI_API_KEY", "").strip() or None
-AI_MODEL: str = os.environ.get("AI_MODEL", "llama-3.3-70b-versatile")
+AI_MODEL: str = os.environ.get("AI_MODEL", "openai/gpt-oss-120b")
 AI_TIMEOUT_SECONDS: int = int(os.environ.get("AI_TIMEOUT_SECONDS", "45"))
 AI_COOLDOWN_SECONDS: int = int(os.environ.get("AI_COOLDOWN_SECONDS", "15"))
 AI_MAX_QUESTION_LEN: int = int(os.environ.get("AI_MAX_QUESTION_LEN", "1000"))
@@ -154,6 +154,16 @@ USDC_DECIMALS = 6
 # vault contract; the dashboard reads its USDC balance as the primary
 # proof-of-reserves. Leave empty to keep the hot wallet as the sole reserve.
 VAULT_ADDRESS: str | None = os.environ.get("VAULT_ADDRESS", "").strip() or None
+
+# On-chain LMSR markets (contracts/OutcomeMarket.sol, see bot/onchain_market.py).
+# Empty -> on-chain markets are simply off; the existing off-chain ones in
+# ledger.py are unaffected either way.
+OUTCOME_MARKET_ADDRESS: str | None = os.environ.get("OUTCOME_MARKET_ADDRESS", "").strip() or None
+# A fresh custodial wallet has 0 ETH, so its first on-chain tx would fail
+# outright — onchain_market tops it up from the hot wallet when it dips below
+# the threshold. Both in whole ETH (Base gas is cheap; this is a few cents).
+GAS_DRIP_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_ETH", "0.0002"))
+GAS_DRIP_THRESHOLD_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_THRESHOLD_ETH", "0.00005"))
 
 
 def validate() -> None:
