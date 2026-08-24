@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 
 from web3 import Web3
+from eth_abi import encode as abi_encode
 
 # EAS contract on Base mainnet
 EAS_ADDRESS = "0xC2679fBD36d5E93C340e118209b9F0D949c0b167"
@@ -65,7 +66,7 @@ class AttestationData:
 
     def encode_data(self) -> bytes:
         """ABI-encode the attestation data."""
-        return Web3.codec.encode(
+        return abi_encode(
             ["string", "uint256", "uint256", "uint8", "bytes32", "uint256"],
             [
                 self.action_type,

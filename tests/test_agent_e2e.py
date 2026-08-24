@@ -35,10 +35,13 @@ def _clean_state():
 
 class TestE2EAgentCycle:
     @pytest.mark.asyncio
-    async def test_full_cycle_mock(self):
+    async def test_full_cycle_mock(self, monkeypatch):
         """Full cycle: news → LLM filter → LLM decide → create_market → place_bet → sell_signal."""
         from agent.main import single_cycle
         from agent import caps
+
+        # Provide a key so _call_llm reaches the mocked urlopen below.
+        monkeypatch.setenv("AI_API_KEY", "test-key")
 
         # Mock news
         mock_news = MagicMock()
@@ -89,7 +92,7 @@ class TestE2EAgentCycle:
         mock_ledger.balance.return_value = 95_000_000
         mock_ledger.create_paywall.return_value = 99
 
-        with patch("agent.news.fetch_news", return_value=[mock_news]), \
+        with patch("agent.main.fetch_news", return_value=[mock_news]), \
              patch("urllib.request.urlopen", side_effect=mock_urlopen), \
              patch("agent.tools.ledger", mock_ledger), \
              patch("agent.signals.ledger", mock_ledger), \
@@ -99,8 +102,9 @@ class TestE2EAgentCycle:
         assert result is True
         # Verify market was created
         mock_ledger.create_market.assert_called_once()
-        # Verify bet was placed
-        mock_ledger.buy_shares.assert_called_once()
+        # Verify bet was placed — the agent cannot bet on its own market
+        # (oracle protection), so buy_shares must NOT be called here.
+        mock_ledger.buy_shares.assert_not_called()
         # Verify paywall was created (signal sold)
         mock_ledger.create_paywall.assert_called_once()
 
@@ -187,7 +191,7 @@ class TestE2EAgentCycle:
             resp.__exit__ = MagicMock(return_value=False)
             return resp
 
-        with patch("agent.news.fetch_news", return_value=[mock_news]), \
+        with patch("agent.main.fetch_news", return_value=[mock_news]), \
              patch("urllib.request.urlopen", side_effect=mock_urlopen):
             result = await single_cycle()
 

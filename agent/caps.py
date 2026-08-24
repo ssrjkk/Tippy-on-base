@@ -46,6 +46,11 @@ def check_action(cost_usdc: float) -> str | None:
         remaining = int(state["cooldown_until"] - now)
         return f"Circuit breaker active, cooldown {remaining}s remaining"
 
+    # Per-tx cap — checked first: a single oversized action is invalid
+    # regardless of how much daily budget remains.
+    if cost_usdc > config.PER_TX_CAP_USDC:
+        return f"Per-tx cap ${config.PER_TX_CAP_USDC} exceeded (requested ${cost_usdc:.2f})"
+
     # Daily cap
     today = _today()
     if state["daily_date"] != today:
@@ -53,10 +58,6 @@ def check_action(cost_usdc: float) -> str | None:
         state["daily_spent"] = 0.0
     if state["daily_spent"] + cost_usdc > config.DAILY_SPEND_CAP_USDC:
         return f"Daily cap ${config.DAILY_SPEND_CAP_USDC} reached (${state['daily_spent']:.2f} spent)"
-
-    # Per-tx cap
-    if cost_usdc > config.PER_TX_CAP_USDC:
-        return f"Per-tx cap ${config.PER_TX_CAP_USDC} exceeded (requested ${cost_usdc:.2f})"
 
     # Rate limit
     hour = _hour_bucket()

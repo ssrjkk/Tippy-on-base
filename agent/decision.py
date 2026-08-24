@@ -70,7 +70,7 @@ def _call_llm(messages: list[dict], model: str | None = None, temperature: float
     """Call LLM via Groq/OpenAI-compatible API. Returns parsed JSON."""
     api_key = os.environ.get("AI_API_KEY", "")
     if not api_key:
-        return {"error": "No AI_API_KEY set"}
+        return {"create_market": False, "reasoning": "No AI_API_KEY set"}
 
     api_url = os.environ.get(
         "AI_API_URL", "https://api.groq.com/openai/v1/chat/completions"

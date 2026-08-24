@@ -53,7 +53,7 @@ class TestCaps:
             "daily_spent": 0.0,
             "daily_date": __import__("time").strftime("%Y-%m-%d", __import__("time").gmtime()),
             "actions_this_hour": 20,
-            "hour_ts": __import__("time").int(__import__("time").time()) // 3600,
+            "hour_ts": int(time.time()) // 3600,
             "consecutive_errors": 0,
             "cooldown_until": 0.0,
         })
@@ -176,7 +176,7 @@ class TestSignals:
             "daily_spent": 0.0,
             "daily_date": __import__("time").strftime("%Y-%m-%d", __import__("time").gmtime()),
             "actions_this_hour": 20,
-            "hour_ts": __import__("time").int(__import__("time").time()) // 3600,
+            "hour_ts": int(time.time()) // 3600,
             "consecutive_errors": 0,
             "cooldown_until": 0.0,
         })
