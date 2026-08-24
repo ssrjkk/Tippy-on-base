@@ -43,7 +43,8 @@ async def create_market(
 
     try:
         market_id = await ledger.create_market(
-            tg_id, question, options, close_at=close_at
+            tg_id, question, options,
+            int(round(subsidy_usdc * 1_000_000)), close_at=close_at
         )
         if market_id is None:
             caps.record_error()

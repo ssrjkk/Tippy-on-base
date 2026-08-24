@@ -163,9 +163,16 @@ async def cb_market_card(cb: types.CallbackQuery) -> None:
         await cb.answer(i18n.t(lang, 'market_not_found'), show_alert=True)
         return
     user = cb.from_user
+    options = json.loads(m['options'])
     rows = []
     if m['status'] == 'open':
-        rows.append([InlineKeyboardButton(text=i18n.t(lang, 'btn_buy'), callback_data=f'mkbuy:{mid}:0'), InlineKeyboardButton(text=i18n.t(lang, 'btn_sell'), callback_data=f'mksell:{mid}:0')])
+        for i, _opt in enumerate(options):
+            rows.append([InlineKeyboardButton(text=f"{i18n.t(lang, 'btn_buy')} {i + 1}", callback_data=f'mkbuy:{mid}:{i}')])
+        if user:
+            pos = await common.ledger.user_market_position(mid, user.id)
+            for i, _opt in enumerate(options):
+                if int(pos.get(i, {}).get('shares', 0)) > 0:
+                    rows.append([InlineKeyboardButton(text=f"{i18n.t(lang, 'btn_sell')} {i + 1}", callback_data=f'mksell:{mid}:{i}')])
         if user and int(m['creator']) == user.id:
             rows.append([InlineKeyboardButton(text=i18n.t(lang, 'btn_close_market'), callback_data=f'mkres:{mid}'), InlineKeyboardButton(text=i18n.t(lang, 'btn_cancel_action'), callback_data=f'mkcancel:{mid}')])
     rows.append([InlineKeyboardButton(text=i18n.t(lang, 'btn_all_markets_v2'), callback_data='markets_amm'), InlineKeyboardButton(text=i18n.t(lang, 'btn_bets'), callback_data='bets')])
@@ -198,6 +205,9 @@ async def cb_mk_do(cb: types.CallbackQuery) -> None:
         spend = common._to_micro(Decimal(amt))
     except Exception:
         await cb.answer(i18n.t(lang, 'bad_amount'), show_alert=True)
+        return
+    if spend <= 0:
+        await cb.answer(i18n.t(lang, 'market_trade_toosmall'), show_alert=True)
         return
     wait = await common._throttle(user.id, 'market')
     if wait:

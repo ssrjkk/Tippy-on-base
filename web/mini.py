@@ -159,6 +159,7 @@ class CreateBody(BaseModel):
     question: str
     options: list[str]
     hours: float | None = None
+    subsidy_usdc: float = 10.0
 
 def _parse_deadline(hours: float | None) -> int | None:
     if not hours or hours <= 0:
@@ -174,9 +175,14 @@ async def mini_create(body: CreateBody, request: Request) -> dict:
         raise HTTPException(400, 'question too short or fewer than 2 options')
     if len(options) > 4 or max((len(o) for o in options)) > 64:
         raise HTTPException(400, 'max 4 options, 64 chars each')
+    if len(question) > 200:
+        raise HTTPException(400, 'question too long (max 200 chars)')
     close_at = _parse_deadline(body.hours)
     if body.kind == 'market':
-        mid = await ledger.create_market(tg_id, question, options, close_at=close_at)
+        subsidy_micro = int(round(body.subsidy_usdc * MICRO))
+        if subsidy_micro < 1:
+            raise HTTPException(400, 'subsidy too small')
+        mid = await ledger.create_market(tg_id, question, options, subsidy_micro, close_at=close_at)
         return {'ok': True, 'id': mid}
     if body.kind == 'bet':
         bid = await ledger.create_bet(tg_id, question, options, close_at=close_at)

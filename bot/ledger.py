@@ -1780,6 +1780,12 @@ class Ledger:
             if winning_idx < 0 or winning_idx >= len(options):
                 return False, "Неверный номер варианта.", []
 
+            # Anti-manipulation: the autonomous agent must never resolve its own
+            # markets. Enforced here (persists across restarts) in addition to
+            # the in-memory guard in agent/tools.py.
+            if resolver_id == config.AGENT_TG_ID and int(m["creator"]) == resolver_id:
+                return False, "Агент не может резолвить собственные рынки.", []
+
             winner_rows = self._conn.execute(
                 "SELECT tg_id, SUM(shares) AS s FROM market_shares "
                 "WHERE market_id = %s AND option_idx = %s AND shares > 0 "
@@ -1802,20 +1808,38 @@ class Ledger:
                 if gross <= 0:
                     continue
                 distributed += gross
-                self.credit(int(w["tg_id"]), gross, "market_win",
-                            counterparty=str(market_id), note=m["question"])
-                payouts.append({"tg_id": int(w["tg_id"]), "net_micro": gross, "win": True})
+                tg = int(w["tg_id"])
+                self._conn.execute(
+                    "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                    (gross, tg),
+                )
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                    "VALUES ('market_win', %s, %s, %s, %s)",
+                    (tg, str(market_id), gross, m["question"]),
+                )
+                payouts.append({"tg_id": tg, "net_micro": gross, "win": True})
 
             leftover = escrow - distributed
             if leftover > 0:
-                self.credit(int(m["creator"]), leftover, "fee",
-                            counterparty=str(market_id), note="market fees")
+                self._conn.execute(
+                    "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                    (leftover, int(m["creator"])),
+                )
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                    "VALUES ('fee', %s, %s, %s, %s)",
+                    (int(m["creator"]), str(market_id), leftover, "market fees"),
+                )
             # holders of losing outcomes get nothing (their cost was spent into
             # the escrow when they bought).
             for r in self._market_share_rows(market_id):
                 if int(r["option_idx"]) != winning_idx and int(r["shares"]) > 0:
                     payouts.append({"tg_id": int(r["tg_id"]), "net_micro": 0, "win": False})
 
+            # Atomic: all balance updates + the status flip commit together, so a
+            # crash before this point rolls everything back (no partial payout),
+            # and after it the status guard blocks re-entry (no double payout).
             self._conn.execute(
                 "UPDATE markets SET status = 'resolved', winner = %s, escrow_micro = 0 "
                 "WHERE id = %s",
@@ -1837,6 +1861,8 @@ class Ledger:
                 return False, "Рынок не найден или уже закрыт."
             if m["creator"] != resolver_id and not self.market_is_expired(m):
                 return False, "Отменить может только создатель рынка (или после дедлайна + grace)."
+            if resolver_id == config.AGENT_TG_ID and int(m["creator"]) == resolver_id:
+                return False, "Агент не может отменять собственные рынки.", []
             escrow = int(m["escrow_micro"])
             rows = sorted(
                 self._market_share_rows(market_id),
@@ -1849,11 +1875,28 @@ class Ledger:
                 if refund <= 0:
                     continue
                 available -= refund
-                self.credit(int(r["tg_id"]), refund, "market_cancel",
-                            counterparty=str(market_id), note=m["question"])
+                tg = int(r["tg_id"])
+                self._conn.execute(
+                    "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                    (refund, tg),
+                )
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                    "VALUES ('market_cancel', %s, %s, %s, %s)",
+                    (tg, str(market_id), refund, m["question"]),
+                )
             if available > 0:
-                self.credit(int(m["creator"]), available, "fee",
-                            counterparty=str(market_id), note="market subsidy back")
+                self._conn.execute(
+                    "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                    (available, int(m["creator"])),
+                )
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                    "VALUES ('fee', %s, %s, %s, %s)",
+                    (int(m["creator"]), str(market_id), available, "market subsidy back"),
+                )
+            # Atomic: refunds + status flip commit together so a crash can't
+            # leave backers credited but the market still 'open' (double refund).
             self._conn.execute(
                 "UPDATE markets SET status = 'cancelled', escrow_micro = 0 WHERE id = %s",
                 (market_id,),

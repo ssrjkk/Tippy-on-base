@@ -150,7 +150,10 @@ async def api_user(tg_id: int) -> dict:
         raise HTTPException(status_code=404, detail='User not found')
     v = await ledger.user_view(tg_id)
     positions = [{**p, 'stake_usdc': _usdc(p['stake_micro']), 'potential_usdc': _usdc(p['potential_micro'])} for p in await ledger.user_positions(tg_id)]
-    history = [{'kind': r['kind'], 'amount_usdc': _usdc(r['amount']), 'counterparty': r['counterparty'], 'note': r['note'], 'created_at': r['created_at']} for r in await ledger.history(tg_id, 12)]
+    # Public profile endpoint: expose only non-sensitive stats. Counterparty /
+    # note are intentionally omitted (they leak who-tipped-whom; the donate
+    # page's frontend never renders them).
+    history = [{'kind': r['kind'], 'amount_usdc': _usdc(r['amount']), 'created_at': r['created_at']} for r in await ledger.history(tg_id, 12)]
     return {**v, 'balance_usdc': _usdc(v['balance_micro']), 'tips_sent_usdc': _usdc(v['tips_sent_micro']), 'tips_received_usdc': _usdc(v['tips_received_micro']), 'bets_won_usdc': _usdc(v['bets_won_micro']), 'bets_placed_usdc': _usdc(v['bets_placed_micro']), 'creator_fees_usdc': _usdc(v['creator_fees_micro']), 'positions': positions, 'history': history, 'deposit_address': str(hot_wallet())}
 
 @app.get('/api/agent/status', tags=['agent'])

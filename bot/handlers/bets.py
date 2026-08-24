@@ -72,6 +72,7 @@ def _parse_deadline(s: str) -> int | None:
     n = int(m.group(1))
     unit = m.group(2)
     secs = n * (3600 if unit == 'h' else 86400)
+    secs = min(secs, 365 * 86400)  # bound the close horizon (max 1 year)
     return int(time.time()) + secs
 
 async def _bet_place(message: types.Message, parts: list[str]) -> None:
