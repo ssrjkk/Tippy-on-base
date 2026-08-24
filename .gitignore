@@ -31,7 +31,7 @@ htmlcov/
 Thumbs.db
 backups/
 
-# Dev junk / one-off scripts (never commit)
+# Dev junk / one-off scripts (never commit). Prod scripts are whitelisted.
 *.err
 *.out
 out.txt
@@ -45,7 +45,12 @@ i18n_keys.txt
 transform_await.py
 bot/handlers/wallet_part1.py
 bot/i18n_temp.py
-scripts/
+scripts/*
+!scripts/setup_foundry.sh
+!scripts/deploy_vault.py
+!scripts/deploy_outcome_market.py
+!scripts/reencrypt_wallets.py
+!scripts/validate_env.py
 
 # Agent runtime artifacts
 .agent_seen_news.json
