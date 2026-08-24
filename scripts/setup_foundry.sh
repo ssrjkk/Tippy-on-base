@@ -1,19 +1,34 @@
 #!/bin/bash
-# Install Foundry dependencies for OutcomeMarket contracts.
-# Run once after cloning: bash scripts/setup_foundry.sh
+# Vendor Solidity dependencies for the OutcomeMarket contracts.
+#
+# Pure git-based and idempotent: works in CI (no forge binary required)
+# and locally. After this, both `forge test` and the solcx-based pytest
+# EVM suite (tests/test_outcome_market_evm.py) can compile contracts/.
+#
+# Usage: bash scripts/setup_foundry.sh
 set -e
 cd "$(dirname "$0")/.."
+mkdir -p contracts/lib
 
-echo "Installing OpenZeppelin contracts..."
-forge install OpenZeppelin/openzeppelin-contracts@v5.1.0 --no-commit
+clone() {
+    local dest="$1" repo="$2" tag="$3"
+    if [ -d "$dest" ]; then
+        echo "OK  $dest already present"
+        return
+    fi
+    echo "Cloning $repo ($tag)..."
+    if [ "$tag" = "latest" ]; then
+        git clone -q --depth 1 "$repo" "$dest"
+    else
+        git clone -q --depth 1 --branch "$tag" "$repo" "$dest"
+    fi
+}
 
-echo "Installing PRBMath..."
-forge install PaulRBerg/prb-math@v4.0.0 --no-commit
+clone contracts/lib/openzeppelin-contracts https://github.com/OpenZeppelin/openzeppelin-contracts.git v5.1.0
+clone contracts/lib/prb-math           https://github.com/PaulRBerg/prb-math.git            v4.0.0
+clone contracts/lib/forge-std          https://github.com/foundry-rs/forge-std.git          latest
 
-echo "Installing forge-std (required by contracts/test/forge)..."
-forge install foundry-rs/forge-std@v1.9.7 --no-commit
-
-echo "Creating .gitkeep for contracts/lib/"
 touch contracts/lib/.gitkeep
 
-echo "Done. Run 'forge test' to verify."
+echo "Done. Contracts deps vendored under contracts/lib/."
+echo "Run 'forge test --match-contract SecurityFixesTest' or 'python -m pytest tests/test_outcome_market_evm.py'."

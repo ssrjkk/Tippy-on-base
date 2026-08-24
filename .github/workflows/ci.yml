@@ -54,6 +54,10 @@ jobs:
       - name: Install solc (EVM contract tests)
         run: python -c "import solcx; solcx.install_solc('0.8.24')"
 
+      # OutcomeMarket/LMSR EVM tests need vendored OZ/prb-math/forge-std.
+      - name: Vendor Solidity dependencies
+        run: bash scripts/setup_foundry.sh
+
       - name: Lint (ruff)
         run: ruff check bot web tests deploy
 

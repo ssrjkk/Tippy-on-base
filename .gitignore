@@ -49,3 +49,7 @@ scripts/
 
 # Agent runtime artifacts
 .agent_seen_news.json
+
+# Foundry dependencies (restored via scripts/setup_foundry.sh)
+contracts/lib/*
+!contracts/lib/.gitkeep
