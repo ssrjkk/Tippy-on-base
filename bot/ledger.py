@@ -945,13 +945,38 @@ class Ledger:
             self._conn.commit()
 
     def total_liabilities(self) -> int:
-        """Sum of all internal user balances in micro-units (what the hot wallet
-        must be able to cover)."""
+        """Sum of all internal liabilities the hot wallet must be able to cover,
+        in micro-units. Four categories:
+
+          1. user balances (users.balance)
+          2. AMM market escrows of open markets (markets.escrow_micro)
+          3. parimutuel bet pools of open bets (sum of bet_positions)
+          4. community treasury balances (community_treasuries.balance)
+
+        Only counting user balances would understate real obligations: escrowed
+        market funds, open bet pools and treasury deposits are all money the bot
+        still owes even though they are not currently on a user's balance.
+        """
         with self._lock:
             row = self._conn.execute(
-                "SELECT COALESCE(SUM(balance), 0) AS s FROM users"
+                """
+                SELECT
+                    (SELECT COALESCE(SUM(balance), 0) FROM users) AS user_bal,
+                    (SELECT COALESCE(SUM(escrow_micro), 0)
+                       FROM markets WHERE status = 'open') AS market_escrow,
+                    (SELECT COALESCE(SUM(bp.amount_micro), 0)
+                       FROM bet_positions bp
+                       JOIN bets b ON bp.bet_id = b.id
+                      WHERE b.status = 'open') AS bet_pool,
+                    (SELECT COALESCE(SUM(balance), 0) FROM community_treasuries) AS treasury_bal
+                """
             ).fetchone()
-        return int(row["s"])
+        return (
+            int(row["user_bal"])
+            + int(row["market_escrow"])
+            + int(row["bet_pool"])
+            + int(row["treasury_bal"])
+        )
 
     def pending_deposit_total(self) -> int:
         """Sum of unclaimed pending deposits in micro-units (funds held on-chain

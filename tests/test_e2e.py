@@ -859,14 +859,16 @@ def test_e2e_dashboard_values(e2e, monkeypatch, api):
     lb = api.get("/api/leaderboard").json()
     assert lb[0]["total_usdc"] == 5.0 and lb[0]["username"] == "alice"
 
-    # solvency: hot balance 500 covers liabilities + pending
+    # solvency: hot balance 500 covers liabilities + pending.
+    # liabilities now correctly include the open bet pool (15 USDC) on top of
+    # user balances (85 USDC): 100 total.
     sol = api.get("/api/solvency").json()
-    assert sol["liabilities_usdc"] == 85.0  # 100 - 5 tip - 10 bet
+    assert sol["liabilities_usdc"] == 100.0  # 85 user bal + 15 bet pool
     assert sol["pending_deposits_usdc"] == 0.0
-    assert sol["owed_usdc"] == 85.0
+    assert sol["owed_usdc"] == 100.0
     assert sol["hot_wallet_balance_usdc"] == 500.0
     assert sol["solvent"] is True
-    assert sol["reserve_usdc"] == 415.0
+    assert sol["reserve_usdc"] == 400.0
 
     # health with the fake RPC chain
     h = api.get("/api/health").json()
@@ -1131,11 +1133,13 @@ def test_e2e_concurrent_transfers_and_bets(e2e):
         t.join()
 
     assert not errors
-    # transfers conserve balances; bets move money into positions
+    # total_liabilities now includes both user balances AND the open bet pool,
+    # so a bet moving money from a user's balance into positions leaves the
+    # grand total unchanged. Conservation => final liabilities == initial.
     positions = e2e._conn.execute(
         "SELECT COALESCE(SUM(amount_micro), 0) AS s FROM bet_positions WHERE bet_id=%s", (bid,)
     ).fetchone()["s"]
-    assert e2e.total_liabilities() + positions == initial
+    assert e2e.total_liabilities() == initial
     # no user went negative
     negatives = e2e._conn.execute("SELECT COUNT(*) AS c FROM users WHERE balance < 0").fetchone()["c"]
     assert negatives == 0

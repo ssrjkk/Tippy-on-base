@@ -14,50 +14,6 @@ import time
 
 from . import config
 
-# Schema for community_treasuries table (added via ensure_schema)
-TREASURY_DDL = """
-CREATE TABLE IF NOT EXISTS community_treasuries (
-    id          BIGSERIAL PRIMARY KEY,
-    chat_id     BIGINT NOT NULL UNIQUE,
-    owner_tg    BIGINT NOT NULL,
-    balance     BIGINT NOT NULL DEFAULT 0,
-    quorum_pct  INTEGER NOT NULL DEFAULT 50,
-    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
-);
-CREATE TABLE IF NOT EXISTS treasury_transactions (
-    id          BIGSERIAL PRIMARY KEY,
-    treasury_id BIGINT NOT NULL REFERENCES community_treasuries(id),
-    kind        TEXT NOT NULL,          -- deposit | withdraw | spend
-    tg_id       BIGINT,
-    amount      BIGINT NOT NULL,
-    note        TEXT,
-    tx_hash     TEXT,
-    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
-);
-CREATE TABLE IF NOT EXISTS treasury_votes (
-    id          BIGSERIAL PRIMARY KEY,
-    treasury_id BIGINT NOT NULL REFERENCES community_treasuries(id),
-    proposal_id BIGINT NOT NULL,
-    tg_id       BIGINT NOT NULL,
-    vote        INTEGER NOT NULL,       -- 1 = yes, -1 = no
-    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
-    UNIQUE (proposal_id, tg_id)
-);
-CREATE TABLE IF NOT EXISTS treasury_proposals (
-    id          BIGSERIAL PRIMARY KEY,
-    treasury_id BIGINT NOT NULL REFERENCES community_treasuries(id),
-    proposer_tg BIGINT NOT NULL,
-    amount      BIGINT NOT NULL,
-    to_address  TEXT NOT NULL,
-    description TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'voting',
-    votes_yes   INTEGER NOT NULL DEFAULT 0,
-    votes_no    INTEGER NOT NULL DEFAULT 0,
-    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
-    closes_at   BIGINT NOT NULL
-);
-"""
-
 
 class TreasuryManager:
     """Manages community treasuries in PostgreSQL."""
@@ -98,8 +54,11 @@ class TreasuryManager:
             treasury = self.get_treasury(chat_id)
             if not treasury:
                 return False
-            ok = self._ledger.transfer(tg_id, -amount_micro, "treasury_deposit",
-                                       counterparty=str(treasury["id"]), note=note)
+            # transfer() moves money between two users (from_id, to_id) — a
+            # treasury isn't a tg_id, so debit() (the same primitive
+            # buy_shares/withdraw use to remove spendable balance) is the
+            # right call here, not transfer().
+            ok = self._ledger.debit(tg_id, amount_micro)
             if not ok:
                 return False
             self._conn().execute(
