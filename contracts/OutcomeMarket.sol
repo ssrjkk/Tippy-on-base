@@ -37,6 +37,16 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     uint64 public constant DISPUTE_WINDOW = 2 hours;
     uint64 public constant EXPIRY_WINDOW = 24 hours;
 
+    /// @dev Hard cap on one outcome's outstanding supply (micro-shares).
+    ///      Keeps q[] far below the int256 cast boundary AND inside the range
+    ///      where SD59x18 exp/ln stay well-conditioned. $1B par is ~5 orders
+    ///      of magnitude above any real market this contract will host.
+    uint256 public constant MAX_SUPPLY_PER_OUTCOME = 1e15; // == $1B par
+
+    /// @dev Fixed-point scale for the per-share cancellation rate:
+    ///      claimRatePerShare = escrowMicro * RATE_SCALE / totalShares.
+    uint256 public constant RATE_SCALE = 1e12;
+
     address public oracle;
 
     struct Market {
@@ -56,6 +66,12 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     mapping(uint256 => Market) public markets;
     uint256 public nextMarketId = 1;
 
+    // --- Cancelled-market accounting (pull-based refunds) ---
+    /// @notice marketId -> per-micro-share refund rate (RATE_SCALE fixed point).
+    mapping(uint256 => uint256) public claimRatePerShare;
+    /// @notice marketId -> escrow still waiting to be claimed by holders.
+    mapping(uint256 => uint256) public unclaimedEscrowMicro;
+
     // --- Events ---
     event MarketCreated(uint256 indexed marketId, address indexed creator, uint8 numOutcomes, uint256 subsidyMicro, int256 b, uint64 closesAt);
     event Traded(uint256 indexed marketId, address indexed trader, uint8 outcomeIdx, bool isBuy, uint256 shares, uint256 usdcMicro);
@@ -66,6 +82,8 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     event ResolutionDisputed(uint256 indexed marketId, address indexed by);
     event MarketCancelled(uint256 indexed marketId);
     event Redeemed(uint256 indexed marketId, address indexed holder, uint256 shares, uint256 usdcMicro);
+    event CancelClaimed(uint256 indexed marketId, address indexed holder, uint256 sharesBurned, uint256 usdcMicro);
+    event CreatorSwept(uint256 indexed marketId, address indexed creator, uint256 usdcMicro);
     event OracleUpdated(address indexed oldOracle, address indexed newOracle);
 
     // --- Errors ---
@@ -85,6 +103,8 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     error NotDisputeWindow();
     error DisputeWindowExpired();
     error MarketNotExpired();
+    error InvalidShares();
+    error NothingToClaim();
 
     modifier onlyOracleOrOwner() {
         if (msg.sender != oracle && msg.sender != owner()) revert NotOwnerOrOracle();
@@ -143,6 +163,14 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     function mintCompleteSet(uint256 marketId, uint256 amountMicro) external nonReentrant {
         Market storage m = _existingMarket(marketId);
         if (m.cancelled) revert AlreadyCancelled();
+        if (amountMicro == 0) revert InvalidShares();
+        // Complete sets raise every outcome's supply equally; still enforce
+        // the global per-outcome ceiling so q[] stays inside safe math range.
+        for (uint8 i = 0; i < m.numOutcomes; i++) {
+            if (totalSupply(_tokenId(marketId, i)) + amountMicro > MAX_SUPPLY_PER_OUTCOME) {
+                revert InvalidShares();
+            }
+        }
         usdc.safeTransferFrom(msg.sender, address(this), amountMicro);
         m.escrowMicro += amountMicro;
         for (uint8 i = 0; i < m.numOutcomes; i++) {
@@ -170,6 +198,8 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
         external nonReentrant returns (uint256 costMicro)
     {
         Market storage m = _tradeableMarket(marketId, outcomeIdx);
+        if (shares == 0 || shares > MAX_SUPPLY_PER_OUTCOME) revert InvalidShares();
+
         int256[] memory q = _currentQ(marketId, m.numOutcomes);
 
         costMicro = LMSR.buyCost(q, m.b, outcomeIdx, shares);
@@ -185,6 +215,8 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
         external nonReentrant returns (uint256 proceedsMicro)
     {
         Market storage m = _tradeableMarket(marketId, outcomeIdx);
+        if (shares == 0) revert InvalidShares();
+
         int256[] memory q = _currentQ(marketId, m.numOutcomes);
 
         proceedsMicro = LMSR.sellProceeds(q, m.b, outcomeIdx, shares);
@@ -267,35 +299,90 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
         emit OwnerResolved(marketId, winningOutcome);
     }
 
-    /// @notice Cancel expired market (>24h past close, no resolution). Refund all holders.
+    /// @notice Cancel an expired market (>24h past close, no resolution).
+    ///
+    ///      SECURITY: refunds go to SHAREHOLDERS, never to the creator. The
+    ///      escrow is reserved at a fixed per-share rate and holders pull it
+    ///      via claimCancelled() — ERC1155 has no on-chain holder enumeration,
+    ///      so a push loop over "all holders" is impossible by construction
+    ///      (and the previous push-to-creator variant was exactly the bug
+    ///      Mudit reported). Only when NO shares exist does the creator get
+    ///      their subsidy back.
     function cancelExpired(uint256 marketId) external nonReentrant {
         Market storage m = _existingMarket(marketId);
         if (m.resolved) revert AlreadyResolved();
         if (m.cancelled) revert AlreadyCancelled();
         if (block.timestamp < m.closesAt + EXPIRY_WINDOW) revert MarketNotExpired();
 
-        m.cancelled = true;
-        emit MarketCancelled(marketId);
-
-        // Refund pro-rata escrow to all holders
         uint256 escrow = m.escrowMicro;
         uint256 totalShares = 0;
         for (uint8 i = 0; i < m.numOutcomes; i++) {
             totalShares += totalSupply(_tokenId(marketId, i));
         }
 
-        if (totalShares > 0 && escrow > 0) {
-            for (uint8 i = 0; i < m.numOutcomes; i++) {
-                uint256 tokenId = _tokenId(marketId, i);
-                uint256 shares = totalSupply(tokenId);
-                if (shares == 0) continue;
-                uint256 refund = (escrow * shares) / totalShares;
-                if (refund > 0) {
-                    usdc.safeTransfer(m.creator, refund);
-                }
+        m.cancelled = true;
+        m.escrowMicro = 0;
+        emit MarketCancelled(marketId);
+
+        if (totalShares == 0) {
+            // Nobody ever traded: the whole pot is the creator's subsidy back.
+            if (escrow > 0) {
+                usdc.safeTransfer(m.creator, escrow);
+                emit CreatorSwept(marketId, m.creator, escrow);
+            }
+        } else {
+            // Reserve every micro-USDC for shareholders at one uniform
+            // per-share rate; they claim (burn -> refund) individually.
+            claimRatePerShare[marketId] = (escrow * RATE_SCALE) / totalShares;
+            unclaimedEscrowMicro[marketId] = escrow;
+        }
+    }
+
+    /// @notice Pull-side refund for a cancelled market: burns ALL of the
+    ///         caller's outcome tokens for `marketId` and pays the pro-rata
+    ///         escrow share. The last claimant also sweeps any rounding dust
+    ///         left in the reserve to the creator, so nothing stays locked.
+    function claimCancelled(uint256 marketId) external nonReentrant returns (uint256 payoutMicro) {
+        Market storage m = _existingMarket(marketId);
+        if (!m.cancelled) revert NotResolved(); // reuse: nothing claimable yet
+
+        uint256 rate = claimRatePerShare[marketId];
+        uint256 reserved = unclaimedEscrowMicro[marketId];
+        if (rate == 0 || reserved == 0) revert NothingToClaim();
+
+        uint256 burned = 0;
+        for (uint8 i = 0; i < m.numOutcomes; i++) {
+            uint256 id = _tokenId(marketId, i);
+            uint256 bal = balanceOf(msg.sender, id);
+            if (bal > 0) {
+                _burn(msg.sender, id, bal);
+                burned += bal;
             }
         }
-        m.escrowMicro = 0;
+        if (burned == 0) revert NothingToRedeem();
+
+        payoutMicro = (burned * rate) / RATE_SCALE;
+        if (payoutMicro > reserved) {
+            // Cannot happen mathematically (rate*totalShares <= escrow), but
+            // never trust rounding: cap at the reserve.
+            payoutMicro = reserved;
+        }
+        unclaimedEscrowMicro[marketId] = reserved - payoutMicro;
+        usdc.safeTransfer(msg.sender, payoutMicro);
+        emit CancelClaimed(marketId, msg.sender, burned, payoutMicro);
+
+        // Dust sweep: once every token is burned, whatever is still in the
+        // reserve is floor-division dust — hand it to the creator.
+        uint256 leftSupply = 0;
+        for (uint8 i = 0; i < m.numOutcomes; i++) {
+            leftSupply += totalSupply(_tokenId(marketId, i));
+        }
+        uint256 leftover = unclaimedEscrowMicro[marketId];
+        if (leftSupply == 0 && leftover > 0) {
+            unclaimedEscrowMicro[marketId] = 0;
+            usdc.safeTransfer(m.creator, leftover);
+            emit CreatorSwept(marketId, m.creator, leftover);
+        }
     }
 
     // ---------------------------------------------------------------------

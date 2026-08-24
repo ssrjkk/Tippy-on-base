@@ -278,6 +278,23 @@ def test_resolve_market_only_creator(ledger):
     assert not ok and "создатель" in msg
 
 
+def test_resolve_blocked_while_creator_holds_winning_side(ledger):
+    """Creator must exit their position before declaring that side the winner."""
+    mid = make_market(ledger)
+    ledger.credit(ALICE, 100 * USDC, "deposit")
+    _, b = ledger.buy_shares(mid, ALICE, 0, 10 * USDC)
+    ok, msg, _ = ledger.resolve_market(mid, 0, ALICE)
+    assert not ok
+    assert "продайте" in msg or "запрещено" in msg
+    assert ledger.get_market(mid)["status"] == "open"
+    # After exiting the position the market resolves normally.
+    st, _ = ledger.sell_shares(mid, ALICE, 0, b["shares"])
+    assert st == "ok"
+    ok, msg, _ = ledger.resolve_market(mid, 0, ALICE)
+    assert ok
+    assert ledger.get_market(mid)["status"] == "resolved"
+
+
 def test_cancel_market_refunds_cost_basis(ledger):
     mid = make_market(ledger)
     ledger.credit(BOB, 100 * USDC, "deposit")

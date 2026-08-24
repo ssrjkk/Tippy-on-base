@@ -57,7 +57,11 @@ async def rate_limit(request: Request, call_next):
             return JSONResponse(
                 status_code=429,
                 content={'detail': 'rate limit exceeded'},
-                headers={'Retry-After': str(WEB_RATE_WINDOW)},
+                headers={
+                    'Retry-After': str(WEB_RATE_WINDOW),
+                    'X-Content-Type-Options': 'nosniff',
+                    'Referrer-Policy': 'no-referrer',
+                },
             )
         _rl_state[client].append(now)
         if len(_rl_state) > WEB_RATE_MAX_CLIENTS:
@@ -65,6 +69,10 @@ async def rate_limit(request: Request, call_next):
                 if not any((t > cutoff for t in hits)):
                     del _rl_state[ip]
     response = await call_next(request)
+    # No X-Frame-Options here on purpose: the Mini App runs inside Telegram's
+    # iframe and must stay framable. These two are safe everywhere.
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('Referrer-Policy', 'no-referrer')
     try:
         await ledger.rollback()
     except Exception:

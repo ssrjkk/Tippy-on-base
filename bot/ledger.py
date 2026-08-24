@@ -1228,6 +1228,17 @@ class Ledger:
                 "SELECT * FROM bets WHERE id = %s", (bet_id,)
             ).fetchone()
 
+    def get_bet_for_update(self, bet_id: int) -> dict | None:
+        """SELECT FOR UPDATE — exclusive lock on the bets row until the
+        transaction commits or rolls back. The web service and the bot are
+        separate processes over one database, so every mutating bet
+        operation must serialize here (same pattern as markets)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM bets WHERE id = %s FOR UPDATE",
+                (bet_id,),
+            ).fetchone()
+
     def open_bets(self, limit: int = 20) -> list[dict]:
         with self._lock:
             return self._conn.execute(
@@ -1304,15 +1315,19 @@ class Ledger:
     def place_bet(self, bet_id: int, tg_id: int, option_idx: int, amount_micro: int) -> str:
         """Returns 'ok' | 'closed' | 'deadline' | 'badopt' | 'balance'."""
         with self._lock:
-            bet = self.get_bet(bet_id)
+            bet = self.get_bet_for_update(bet_id)
             if not bet or bet["status"] != "open":
+                self._conn.rollback()
                 return "closed"
             if bet["close_at"] is not None and int(time.time()) > bet["close_at"]:
+                self._conn.rollback()
                 return "deadline"
             options = json.loads(bet["options"])
             if option_idx < 0 or option_idx >= len(options):
+                self._conn.rollback()
                 return "badopt"
             if not self.debit(tg_id, amount_micro):
+                self._conn.rollback()
                 return "balance"
             self.ensure_user(tg_id, None)
             self._conn.execute(
@@ -1333,22 +1348,27 @@ class Ledger:
         creator receives all fees + floor dust, so nothing is created or lost.
         """
         with self._lock:
-            bet = self.get_bet(bet_id)
+            bet = self.get_bet_for_update(bet_id)
             if not bet or bet["status"] != "open":
+                self._conn.rollback()
                 return False, "Ставка не найдена или уже закрыта."
             if bet["creator"] != resolver_id:
+                self._conn.rollback()
                 return False, "Закрыть может только создатель ставки."
             options = json.loads(bet["options"])
             if winning_idx < 0 or winning_idx >= len(options):
+                self._conn.rollback()
                 return False, "Неверный номер варианта."
 
             positions = self._bet_positions(bet_id)
             total_pot = sum(int(p["amount"]) for p in positions)
             if total_pot <= 0:
+                self._conn.rollback()
                 return False, "В ставке пока нет денег — закрыть нечего."
 
             winners = [p for p in positions if int(p["option_idx"]) == winning_idx]
             if not winners:
+                self._conn.rollback()
                 return False, "Никто не поставил на этот вариант."
 
             win_stake = sum(int(p["amount"]) for p in winners)
@@ -1409,10 +1429,12 @@ class Ledger:
     def cancel_bet(self, bet_id: int, resolver_id: int) -> tuple[bool, str]:
         """Refund all backers. Creator always; anyone once grace passed."""
         with self._lock:
-            bet = self.get_bet(bet_id)
+            bet = self.get_bet_for_update(bet_id)
             if not bet or bet["status"] != "open":
+                self._conn.rollback()
                 return False, "Ставка не найдена или уже закрыта."
             if bet["creator"] != resolver_id and not self.is_expired(bet):
+                self._conn.rollback()
                 return False, "Отменить может только создатель ставки (или после дедлайна + grace)."
             refunded_by_creator = bet["creator"] == resolver_id
             # Atomic: refunds + status flip commit together so a crash can't
@@ -1669,19 +1691,24 @@ class Ledger:
             self._ensure()
             m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
+                self._conn.rollback()
                 return "closed", {}
             if m["close_at"] is not None and int(time.time()) > m["close_at"]:
+                self._conn.rollback()
                 return "deadline", {}
             options = json.loads(m["options"])
             if option_idx < 0 or option_idx >= len(options):
+                self._conn.rollback()
                 return "badopt", {}
             if not self.debit(tg_id, spend_micro):
+                self._conn.rollback()
                 return "balance", {}
             q = self.market_quantities(market_id)
             shares = lmsr_buy_shares(q, int(m["b_micro"]), option_idx, spend_micro)
             if shares <= 0:
-                self.credit(tg_id, spend_micro, "market_refund", counterparty=str(market_id),
-                            note="trade too small")
+                # Nothing has been committed yet, so a plain rollback undoes
+                # the debit — no need for an explicit refund credit.
+                self._conn.rollback()
                 return "toosmall", {}
             prices = lmsr_prices([*q[:option_idx], q[option_idx] + shares, *q[option_idx + 1:]],
                                  int(m["b_micro"]))
@@ -1722,22 +1749,28 @@ class Ledger:
             self._ensure()
             m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
+                self._conn.rollback()
                 return "closed", {}
             if m["close_at"] is not None and int(time.time()) > m["close_at"]:
+                self._conn.rollback()
                 return "deadline", {}
             options = json.loads(m["options"])
             if option_idx < 0 or option_idx >= len(options):
+                self._conn.rollback()
                 return "badopt", {}
             pos = self.user_market_position(market_id, tg_id)
             held = pos.get(option_idx, {}).get("shares", 0)
             if held <= 0:
+                self._conn.rollback()
                 return "noshare", {}
             shares = min(shares_micro, held)
             if shares <= 0:
+                self._conn.rollback()
                 return "toosmall", {}
             q = self.market_quantities(market_id)
             value = lmsr_sell_value(q, int(m["b_micro"]), option_idx, shares)
             if value <= 0:
+                self._conn.rollback()
                 return "toosmall", {}
             new_cost = pos[option_idx]["cost"] - value  # realized profit lowers basis
             self._conn.execute(
@@ -1749,8 +1782,17 @@ class Ledger:
                 "UPDATE markets SET escrow_micro = escrow_micro - %s WHERE id = %s",
                 (value, market_id),
             )
-            self.credit(tg_id, value, "market_sell", counterparty=str(market_id),
-                        note=options[option_idx])
+            # Direct credit (no intermediate commit) so the whole trade —
+            # shares, escrow and payout — lands in one atomic transaction.
+            self._conn.execute(
+                "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                (value, tg_id),
+            )
+            self._conn.execute(
+                "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                "VALUES ('market_sell', %s, %s, %s, %s)",
+                (tg_id, str(market_id), value, options[option_idx]),
+            )
             prices = lmsr_prices(q, int(m["b_micro"]))
             self._conn.commit()
             return "ok", {
@@ -1773,18 +1815,39 @@ class Ledger:
             self._ensure()
             m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
+                self._conn.rollback()
                 return False, "Рынок не найден или уже закрыт.", []
             if m["creator"] != resolver_id:
+                self._conn.rollback()
                 return False, "Закрыть может только создатель рынка.", []
             options = json.loads(m["options"])
             if winning_idx < 0 or winning_idx >= len(options):
+                self._conn.rollback()
                 return False, "Неверный номер варианта.", []
 
             # Anti-manipulation: the autonomous agent must never resolve its own
             # markets. Enforced here (persists across restarts) in addition to
             # the in-memory guard in agent/tools.py.
             if resolver_id == config.AGENT_TG_ID and int(m["creator"]) == resolver_id:
+                self._conn.rollback()
                 return False, "Агент не может резолвить собственные рынки.", []
+
+            # Anti-manipulation: a creator holding shares of the outcome they
+            # are about to declare could mint themselves a payout. Force them
+            # to exit the position first (sell works while the market is open
+            # and before the deadline), so resolution stays conflict-free.
+            held = self._conn.execute(
+                "SELECT SUM(shares) AS s FROM market_shares "
+                "WHERE market_id = %s AND tg_id = %s AND option_idx = %s AND shares > 0",
+                (market_id, resolver_id, winning_idx),
+            ).fetchone()
+            if held and int(held["s"] or 0) > 0:
+                self._conn.rollback()
+                label = options[winning_idx]
+                return False, (
+                    f"У вас есть доли варианта «{label}» — сначала продайте их: "
+                    "резолвить рынок со ставкой на исход запрещено."
+                ), []
 
             winner_rows = self._conn.execute(
                 "SELECT tg_id, SUM(shares) AS s FROM market_shares "
@@ -1858,11 +1921,14 @@ class Ledger:
             self._ensure()
             m = self.get_market_for_update(market_id)
             if not m or m["status"] != "open":
+                self._conn.rollback()
                 return False, "Рынок не найден или уже закрыт."
             if m["creator"] != resolver_id and not self.market_is_expired(m):
+                self._conn.rollback()
                 return False, "Отменить может только создатель рынка (или после дедлайна + grace)."
             if resolver_id == config.AGENT_TG_ID and int(m["creator"]) == resolver_id:
-                return False, "Агент не может отменять собственные рынки.", []
+                self._conn.rollback()
+                return False, "Агент не может отменять собственные рынки."
             escrow = int(m["escrow_micro"])
             rows = sorted(
                 self._market_share_rows(market_id),

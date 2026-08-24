@@ -30,6 +30,17 @@ import {SD59x18, convert, exp, ln, UNIT} from "prb-math/SD59x18.sol";
 ///      a `maxCost`/`minProceeds` slippage bound — same pattern as any AMM
 ///      exact-output quote.
 library LMSR {
+    /// @dev `shares` enters the math through uint256 -> int256 casts. That
+    ///      conversion wraps silently in Solidity, so a value above
+    ///      type(int256).max would flip NEGATIVE and corrupt the cost curve
+    ///      (afterC < beforeC -> quoted cost of 0 -> free giant buys).
+    ///      Every entry point therefore rejects such values outright.
+    error SharesTooLarge();
+
+    function _checkShares(uint256 shares) private pure {
+        if (shares > uint256(type(int256).max)) revert SharesTooLarge();
+    }
+
     /// @dev Numerical-stability shift, mirrors the `m = max(q_micro)` trick in
     ///      bot/ledger.py: b*ln(sum(exp(q_i/b))) == m + b*ln(sum(exp((q_i-m)/b))).
     ///      Without this, exp() overflows/underflows badly once q gets large.
@@ -71,6 +82,7 @@ library LMSR {
     ///         rounded UP (house-favorable, mirrors the off-chain ceil-on-buy
     ///         convention — see bot/ledger.py buy_shares comment).
     function buyCost(int256[] memory q, int256 b, uint256 idx, uint256 shares) internal pure returns (uint256) {
+        _checkShares(shares);
         SD59x18 before = cost(q, b);
         q[idx] += int256(shares);
         SD59x18 afterC = cost(q, b);
@@ -82,6 +94,7 @@ library LMSR {
     ///         `idx`, rounded DOWN (house-favorable, mirrors off-chain floor-on-
     ///         sell convention).
     function sellProceeds(int256[] memory q, int256 b, uint256 idx, uint256 shares) internal pure returns (uint256) {
+        _checkShares(shares);
         SD59x18 before = cost(q, b);
         q[idx] -= int256(shares);
         SD59x18 afterC = cost(q, b);
