@@ -13,8 +13,8 @@ our bug bounty program and are fixed in this revision.
 Base mainnet (empty in `.env` → on-chain markets off). **No user funds were
 at risk at any point.** The fixes land before first deployment.
 
-**Credit:** [Mudit](https://x.com/Mudit__Gupta) — responsible disclosure
-through BUG_BOUNTY.md. Both reports included working PoCs against real
+**Credit:** reported through our responsible-disclosure channel
+(BUG_BOUNTY.md). Both reports included working PoCs against real
 USDC semantics. Bounty: Critical tier.
 
 ---
@@ -89,8 +89,8 @@ holder" cannot be implemented without unbounded off-chain indexing.
 
 ### Regression tests
 
-`test_CancelExpiredRefundsTraders_NotCreator` (original Mudit PoC now fails
-to enrich anyone but the trader),
+`test_CancelExpiredRefundsTraders_NotCreator` (the original exploit PoC now
+fails to enrich anyone but the trader),
 `test_CancelExpiredWithNoHoldersReturnsSubsidyToCreator`,
 `test_TwoTradersConservation_LastClaimSweepsDustToCreator` (strict
 conservation: payouts + dust == escrow, contract drained to 0),
@@ -102,7 +102,7 @@ conservation: payouts + dust == escrow, contract drained to 0),
 
 | When | Event |
 |---|---|
-| 2026-08-24 | Reports received from Mudit (2× Critical, with PoCs) |
+| 2026-08-24 | Two external critical reports received (with PoCs) |
 | 2026-08-24 | Both findings verified against source; deployment check confirmed contracts never deployed |
 | 2026-08-24 | Fixes implemented + forge regression tests added |
 

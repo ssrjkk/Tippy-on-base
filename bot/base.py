@@ -233,21 +233,30 @@ def _poll_deposits_sync() -> list[dict]:
     if current <= last:
         return credited
     start = max(1, min(last + 1, current - config.DEPOSIT_CONFIRM_BLOCKS))
-    for dep in _scan_deposits(start, current):
-        if ledger.x402_paid(dep["tx_hash"]):
-            continue  # already credited via /api/x402 — never double-credit
-        ledger.record_pending(dep["tx_hash"], dep["sender"], dep["amount_micro"])
-        owner = ledger.tg_id_of_address(dep["sender"])
-        if owner:
-            for c in ledger.claim_for_sender(owner, dep["sender"]):
-                credited.append(
-                    {
-                        "tg_id": owner,
-                        "amount_micro": c["amount_micro"],
-                        "tx_hash": c["tx_hash"],
-                    }
-                )
-    ledger.set_last_block(current)
+    # Public RPCs reject wide eth_getLogs ranges with 413, so walk the gap in
+    # bounded chunks, checkpointing after each one. Idempotency of
+    # record_pending/claim_for_sender makes re-scans safe.
+    max_end = current
+    swept = 0
+    while start <= max_end and swept < config.DEPOSIT_SCAN_MAX_CHUNKS_PER_SWEEP:
+        chunk_end = min(start + config.DEPOSIT_SCAN_CHUNK_BLOCKS - 1, max_end)
+        for dep in _scan_deposits(start, chunk_end):
+            if ledger.x402_paid(dep["tx_hash"]):
+                continue  # already credited via /api/x402 — never double-credit
+            ledger.record_pending(dep["tx_hash"], dep["sender"], dep["amount_micro"])
+            owner = ledger.tg_id_of_address(dep["sender"])
+            if owner:
+                for c in ledger.claim_for_sender(owner, dep["sender"]):
+                    credited.append(
+                        {
+                            "tg_id": owner,
+                            "amount_micro": c["amount_micro"],
+                            "tx_hash": c["tx_hash"],
+                        }
+                    )
+        ledger.set_last_block(chunk_end)
+        start = chunk_end + 1
+        swept += 1
     return credited
 
 

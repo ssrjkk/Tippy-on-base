@@ -12,6 +12,7 @@ from . import base, config
 from . import i18n
 from .handlers import router
 from .ledger import async_ledger as ledger
+from .telegram_transport import make_session
 
 # Structured JSON logs for production (LOG_FORMAT=json), human-readable for dev.
 if os.environ.get("LOG_FORMAT") == "json":
@@ -23,7 +24,9 @@ else:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 log = logging.getLogger("tipbot")
-bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+_session = make_session(config.TELEGRAM_API_IP)
+_bot_kwargs = {"session": _session} if _session else {}
+bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML), **_bot_kwargs)
 
 async def deposit_watcher() -> None:
     while True:

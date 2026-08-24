@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
 import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
@@ -252,7 +252,7 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------------
-    // Resolution — oracle-first with owner dispute window
+    // Resolution вЂ” oracle-first with owner dispute window
     // ---------------------------------------------------------------------
 
     /// @notice Oracle resolves the market. Owner has 2h to dispute.
@@ -303,10 +303,10 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     ///
     ///      SECURITY: refunds go to SHAREHOLDERS, never to the creator. The
     ///      escrow is reserved at a fixed per-share rate and holders pull it
-    ///      via claimCancelled() — ERC1155 has no on-chain holder enumeration,
+    ///      via claimCancelled() вЂ” ERC1155 has no on-chain holder enumeration,
     ///      so a push loop over "all holders" is impossible by construction
-    ///      (and the previous push-to-creator variant was exactly the bug
-    ///      Mudit reported). Only when NO shares exist does the creator get
+    ///      (and the previous push-to-creator variant was the exact bug
+    ///      fixed here). Only when NO shares exist does the creator get
     ///      their subsidy back.
     function cancelExpired(uint256 marketId) external nonReentrant {
         Market storage m = _existingMarket(marketId);
@@ -372,7 +372,7 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
         emit CancelClaimed(marketId, msg.sender, burned, payoutMicro);
 
         // Dust sweep: once every token is burned, whatever is still in the
-        // reserve is floor-division dust — hand it to the creator.
+        // reserve is floor-division dust вЂ” hand it to the creator.
         uint256 leftSupply = 0;
         for (uint8 i = 0; i < m.numOutcomes; i++) {
             leftSupply += totalSupply(_tokenId(marketId, i));

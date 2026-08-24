@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 import logging
 import os
 import re
@@ -25,6 +25,8 @@ SECRET_KEY: str = (
     or hashlib.sha256(f"tippy-session:{BOT_TOKEN}".encode()).hexdigest()
 )
 POLL_SECONDS: int = int(os.environ.get("POLL_SECONDS", "15"))
+# Pin api.telegram.org to a reachable Telegram DC IP when DNS is poisoned/blocked.
+TELEGRAM_API_IP: str = os.environ.get("TELEGRAM_API_IP", "").strip()
 # RPC request timeout in seconds (guards watchers/web against a hung provider)
 RPC_TIMEOUT_SECONDS: int = int(os.environ.get("RPC_TIMEOUT_SECONDS", "10"))
 
@@ -85,10 +87,10 @@ MONEY_CMD_COOLDOWN_SECONDS: int = int(os.environ.get("MONEY_CMD_COOLDOWN_SECONDS
 # AML thresholds
 WITHDRAW_LARGE_USDC_THRESHOLD: int = int(os.environ.get("WITHDRAW_LARGE_USDC_THRESHOLD", "500"))
 
-# Owner/announcements (/broadcast) — Telegram numeric ID
+# Owner/announcements (/broadcast) вЂ” Telegram numeric ID
 ADMIN_TG_ID: int | None = int(os.environ.get("ADMIN_TG_ID", "0")) or None
 
-# Group rain (/rain <amount> [count]) — giveaway, pure transfers
+# Group rain (/rain <amount> [count]) вЂ” giveaway, pure transfers
 RAIN_MAX_USDC: Decimal = Decimal(os.environ.get("RAIN_MAX_USDC", "100"))
 RAIN_MAX_RECIPIENTS: int = int(os.environ.get("RAIN_MAX_RECIPIENTS", "25"))
 RAIN_MIN_RECIPIENTS: int = int(os.environ.get("RAIN_MIN_RECIPIENTS", "3"))
@@ -96,6 +98,11 @@ RAIN_MIN_RECIPIENTS: int = int(os.environ.get("RAIN_MIN_RECIPIENTS", "3"))
 # Deposit scanning robustness
 DEPOSIT_SCAN_LOOKBACK_BLOCKS: int = int(os.environ.get("DEPOSIT_SCAN_LOOKBACK_BLOCKS", "2000"))
 DEPOSIT_CONFIRM_BLOCKS: int = int(os.environ.get("DEPOSIT_CONFIRM_BLOCKS", "10"))
+# Public RPCs reject eth_getLogs over wide block ranges (HTTP 413), so the
+# deposit sweep walks the chain in bounded chunks. MAX_CHUNKS_PER_SWEEP caps
+# how far a single poll may catch up (chunks * chunk_size blocks).
+DEPOSIT_SCAN_CHUNK_BLOCKS: int = int(os.environ.get("DEPOSIT_SCAN_CHUNK_BLOCKS", "1500"))
+DEPOSIT_SCAN_MAX_CHUNKS_PER_SWEEP: int = int(os.environ.get("DEPOSIT_SCAN_MAX_CHUNKS_PER_SWEEP", "40"))
 
 # Withdrawal lifecycle: if a withdraw tx is not mined within this window it is
 # considered stuck/dropped and the user is refunded automatically.
@@ -141,11 +148,11 @@ BASESCAN_URL: str = os.environ.get("BASESCAN_URL", "https://basescan.org").rstri
 # Reaction tips (emoji -> USDC amount). Requires bot admin in the group and
 # privacy mode off (BotFather -> /setprivacy -> Disable) to index messages.
 REACTION_TIPS: dict[str, Decimal] = {
-    "🔥": Decimal("1"),
-    "❤️": Decimal("2"),
-    "⚡": Decimal("5"),
-    "👏": Decimal("10"),
-    "🎉": Decimal("25"),
+    "рџ”Ґ": Decimal("1"),
+    "вќ¤пёЏ": Decimal("2"),
+    "вљЎ": Decimal("5"),
+    "рџ‘Џ": Decimal("10"),
+    "рџЋ‰": Decimal("25"),
 }
 
 # Paywall abuse protection: per-user caps on paid content/channels
@@ -172,7 +179,7 @@ VAULT_ADDRESS: str | None = os.environ.get("VAULT_ADDRESS", "").strip() or None
 # ledger.py are unaffected either way.
 OUTCOME_MARKET_ADDRESS: str | None = os.environ.get("OUTCOME_MARKET_ADDRESS", "").strip() or None
 # A fresh custodial wallet has 0 ETH, so its first on-chain tx would fail
-# outright — onchain_market tops it up from the hot wallet when it dips below
+# outright вЂ” onchain_market tops it up from the hot wallet when it dips below
 # the threshold. Both in whole ETH (Base gas is cheap; this is a few cents).
 GAS_DRIP_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_ETH", "0.0002"))
 GAS_DRIP_THRESHOLD_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_THRESHOLD_ETH", "0.00005"))

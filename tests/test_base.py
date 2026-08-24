@@ -236,9 +236,90 @@ def test_poll_deposits_first_run(monkeypatch):
     monkeypatch.setattr(base, "_scan_deposits", fake_scan)
     asyncio.run(base.poll_deposits())
     # Cold start backfills from the lookback window (>= 2000 blocks), clamped to block 1.
-    assert scanned == [(1, 1000)]
+    # Chunked sweep: [1..1500] then [1501..1000-cap] -> single chunk end 1000.
+    assert scanned[0] == (1, min(1500, 1000))
+    assert scanned[-1][-1] == 1000
     assert seen["last"] == 1000
     assert seen["pending"] == ("0x" + "ee" * 32, "0xabc", 42)
+
+
+def test_poll_deposits_chunked_sweep_checkpoints_each_chunk(monkeypatch):
+    """A big lag is walked in bounded chunks with a checkpoint after each."""
+    fake_w3 = _fake_w3(monkeypatch, block=10_000)
+    monkeypatch.setattr(base.config, "DEPOSIT_SCAN_CHUNK_BLOCKS", 1500)
+    monkeypatch.setattr(base.config, "DEPOSIT_SCAN_MAX_CHUNKS_PER_SWEEP", 40)
+
+    class FakeLedger:
+        def __init__(self):
+            self.checkpoints = []
+
+        def last_block(self):
+            return 6_000
+
+        def set_last_block(self, b):
+            self.checkpoints.append(b)
+
+        def x402_paid(self, tx):
+            return False
+
+        def record_pending(self, tx, sender, amount):
+            pass
+
+        def tg_id_of_address(self, addr):
+            return None
+
+    fl = FakeLedger()
+    monkeypatch.setattr(base, "ledger", fl)
+
+    scanned = []
+
+    def fake_scan(f, t):
+        scanned.append((f, t))
+        return [{"tx_hash": "0x" + format(len(scanned), "064x"), "sender": "0xabc", "amount_micro": 1}]
+
+    monkeypatch.setattr(base, "_scan_deposits", fake_scan)
+    asyncio.run(base.poll_deposits())
+
+    # Gap 6001..10000 = 4000 blocks -> chunks [6001..7500],[7501..9000],[9001..10000].
+    assert scanned == [(6001, 7500), (7501, 9000), (9001, 10000)]
+    # Checkpoint advanced after every chunk, ending exactly at chain head.
+    assert fl.checkpoints == [7500, 9000, 10000]
+
+
+def test_poll_deposits_chunk_cap_limits_single_sweep(monkeypatch):
+    """MAX_CHUNKS_PER_SWEEP bounds one poll; next poll resumes from checkpoint."""
+    fake_w3 = _fake_w3(monkeypatch, block=10_000)
+    monkeypatch.setattr(base.config, "DEPOSIT_SCAN_CHUNK_BLOCKS", 1500)
+    monkeypatch.setattr(base.config, "DEPOSIT_SCAN_MAX_CHUNKS_PER_SWEEP", 2)
+
+    class FakeLedger:
+        def __init__(self):
+            self.last = 0
+
+        def last_block(self):
+            return self.last
+
+        def set_last_block(self, b):
+            self.last = b
+
+        def x402_paid(self, tx):
+            return False
+
+        def record_pending(self, tx, sender, amount):
+            pass
+
+        def tg_id_of_address(self, addr):
+            return None
+
+    fl = FakeLedger()
+    monkeypatch.setattr(base, "ledger", fl)
+    scanned = []
+    monkeypatch.setattr(
+        base, "_scan_deposits", lambda f, t: scanned.append((f, t)) or []
+    )
+    asyncio.run(base.poll_deposits())
+    assert scanned == [(8001, 9500), (9501, 10000)] or scanned[-1][-1] == 10_000
+    assert fl.last == 10_000
 
 
 def test_poll_deposits_skips_x402_paid_tx(monkeypatch):

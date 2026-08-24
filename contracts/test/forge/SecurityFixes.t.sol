@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// Regression tests for the 2026-08-24 security fixes reported by Mudit:
+/// Regression tests for the 2026-08-24 security fixes:
 ///
 ///   #1 Signed-cast wrap in LMSR.buyCost/sellProceeds -> free giant buys.
 ///      Fixed with explicit bounds checks (LMSR.SharesTooLarge) plus a
