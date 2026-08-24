@@ -1,4 +1,4 @@
-﻿import hashlib
+import hashlib
 import logging
 import os
 import re
@@ -87,10 +87,10 @@ MONEY_CMD_COOLDOWN_SECONDS: int = int(os.environ.get("MONEY_CMD_COOLDOWN_SECONDS
 # AML thresholds
 WITHDRAW_LARGE_USDC_THRESHOLD: int = int(os.environ.get("WITHDRAW_LARGE_USDC_THRESHOLD", "500"))
 
-# Owner/announcements (/broadcast) вЂ” Telegram numeric ID
+# Owner/announcements (/broadcast) — Telegram numeric ID
 ADMIN_TG_ID: int | None = int(os.environ.get("ADMIN_TG_ID", "0")) or None
 
-# Group rain (/rain <amount> [count]) вЂ” giveaway, pure transfers
+# Group rain (/rain <amount> [count]) — giveaway, pure transfers
 RAIN_MAX_USDC: Decimal = Decimal(os.environ.get("RAIN_MAX_USDC", "100"))
 RAIN_MAX_RECIPIENTS: int = int(os.environ.get("RAIN_MAX_RECIPIENTS", "25"))
 RAIN_MIN_RECIPIENTS: int = int(os.environ.get("RAIN_MIN_RECIPIENTS", "3"))
@@ -148,11 +148,11 @@ BASESCAN_URL: str = os.environ.get("BASESCAN_URL", "https://basescan.org").rstri
 # Reaction tips (emoji -> USDC amount). Requires bot admin in the group and
 # privacy mode off (BotFather -> /setprivacy -> Disable) to index messages.
 REACTION_TIPS: dict[str, Decimal] = {
-    "рџ”Ґ": Decimal("1"),
-    "вќ¤пёЏ": Decimal("2"),
-    "вљЎ": Decimal("5"),
-    "рџ‘Џ": Decimal("10"),
-    "рџЋ‰": Decimal("25"),
+    "🔥": Decimal("1"),
+    "❤️": Decimal("2"),
+    "⚡": Decimal("5"),
+    "👏": Decimal("10"),
+    "🎉": Decimal("25"),
 }
 
 # Paywall abuse protection: per-user caps on paid content/channels
@@ -179,7 +179,7 @@ VAULT_ADDRESS: str | None = os.environ.get("VAULT_ADDRESS", "").strip() or None
 # ledger.py are unaffected either way.
 OUTCOME_MARKET_ADDRESS: str | None = os.environ.get("OUTCOME_MARKET_ADDRESS", "").strip() or None
 # A fresh custodial wallet has 0 ETH, so its first on-chain tx would fail
-# outright вЂ” onchain_market tops it up from the hot wallet when it dips below
+# outright — onchain_market tops it up from the hot wallet when it dips below
 # the threshold. Both in whole ETH (Base gas is cheap; this is a few cents).
 GAS_DRIP_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_ETH", "0.0002"))
 GAS_DRIP_THRESHOLD_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_THRESHOLD_ETH", "0.00005"))

@@ -3,8 +3,8 @@
 ## Summary
 
 Two critical vulnerabilities in the on-chain prediction market contracts
-(`contracts/OutcomeMarket.sol`, `contracts/LMSR.sol`) were reported through
-our bug bounty program and are fixed in this revision.
+(`contracts/OutcomeMarket.sol`, `contracts/LMSR.sol`) were found in an
+external security review and are fixed in this revision.
 
 **Affected:** all pre-deploy revisions of `OutcomeMarket` / `LMSR`
 (solidity ^0.8.24) prior to the fix commit.
@@ -12,10 +12,6 @@ our bug bounty program and are fixed in this revision.
 **Deployed status:** `OUTCOME_MARKET_ADDRESS` was **never configured** on
 Base mainnet (empty in `.env` → on-chain markets off). **No user funds were
 at risk at any point.** The fixes land before first deployment.
-
-**Credit:** reported through our responsible-disclosure channel
-(BUG_BOUNTY.md). Both reports included working PoCs against real
-USDC semantics. Bounty: Critical tier.
 
 ---
 
@@ -112,5 +108,3 @@ conservation: payouts + dust == escrow, contract drained to 0),
   `OutcomeMarket`, discard those markets — do not migrate them.
 * Run `bash scripts/setup_foundry.sh && forge test --match-contract SecurityFixesTest`
   to reproduce both fixes locally.
-
-*Bounty paid per docs/BUG_BOUNTY.md Critical tier ($5,000–$10,000).*

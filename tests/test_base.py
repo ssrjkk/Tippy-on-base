@@ -236,7 +236,7 @@ def test_poll_deposits_first_run(monkeypatch):
     monkeypatch.setattr(base, "_scan_deposits", fake_scan)
     asyncio.run(base.poll_deposits())
     # Cold start backfills from the lookback window (>= 2000 blocks), clamped to block 1.
-    # Chunked sweep: [1..1500] then [1501..1000-cap] -> single chunk end 1000.
+    # Chunked sweep: [1..1500] then remainder -> last chunk ends at head.
     assert scanned[0] == (1, min(1500, 1000))
     assert scanned[-1][-1] == 1000
     assert seen["last"] == 1000
@@ -287,7 +287,7 @@ def test_poll_deposits_chunked_sweep_checkpoints_each_chunk(monkeypatch):
 
 
 def test_poll_deposits_chunk_cap_limits_single_sweep(monkeypatch):
-    """MAX_CHUNKS_PER_SWEEP bounds one poll; next poll resumes from checkpoint."""
+    """MAX_CHUNKS_PER_SWEEP bounds one poll; the next poll resumes from checkpoint."""
     fake_w3 = _fake_w3(monkeypatch, block=10_000)
     monkeypatch.setattr(base.config, "DEPOSIT_SCAN_CHUNK_BLOCKS", 1500)
     monkeypatch.setattr(base.config, "DEPOSIT_SCAN_MAX_CHUNKS_PER_SWEEP", 2)
@@ -313,12 +313,17 @@ def test_poll_deposits_chunk_cap_limits_single_sweep(monkeypatch):
 
     fl = FakeLedger()
     monkeypatch.setattr(base, "ledger", fl)
+
     scanned = []
-    monkeypatch.setattr(
-        base, "_scan_deposits", lambda f, t: scanned.append((f, t)) or []
-    )
+
+    def fake_scan(f, t):
+        scanned.append((f, t))
+        return []
+
+    monkeypatch.setattr(base, "_scan_deposits", fake_scan)
     asyncio.run(base.poll_deposits())
-    assert scanned == [(8001, 9500), (9501, 10000)] or scanned[-1][-1] == 10_000
+    # Only 2 chunks this sweep; checkpoint stops where the cap hit.
+    assert scanned == [(8001, 9500), (9501, 10000)]
     assert fl.last == 10_000
 
 

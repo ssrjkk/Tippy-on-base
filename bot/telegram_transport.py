@@ -12,6 +12,7 @@ import asyncio
 import logging
 import socket
 
+from aiohttp.abc import AbstractResolver
 from aiogram.client.session.aiohttp import AiohttpSession
 
 log = logging.getLogger("tipbot.telegram_transport")
@@ -19,7 +20,7 @@ log = logging.getLogger("tipbot.telegram_transport")
 API_HOST = "api.telegram.org"
 
 
-class _PinnedHostResolver(asyncio.AbstractResolver):
+class _PinnedHostResolver(AbstractResolver):
     """Resolve API_HOST to a fixed IP; everything else via normal DNS.
 
     The fallback ThreadedResolver is created lazily inside the event loop
@@ -28,9 +29,9 @@ class _PinnedHostResolver(asyncio.AbstractResolver):
 
     def __init__(self, ip: str) -> None:
         self._ip = ip
-        self._fallback: asyncio.AbstractResolver | None = None
+        self._fallback: AbstractResolver | None = None
 
-    async def _get_fallback(self) -> asyncio.AbstractResolver:
+    async def _get_fallback(self) -> AbstractResolver:
         if self._fallback is None:
             from aiohttp.resolver import ThreadedResolver
 
