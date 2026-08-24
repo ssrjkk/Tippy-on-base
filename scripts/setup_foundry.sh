@@ -10,7 +10,7 @@ forge install OpenZeppelin/openzeppelin-contracts@v5.1.0 --no-commit
 echo "Installing PRBMath..."
 forge install PaulRBerg/prb-math@v4.0.0 --no-commit
 
-echo "Creating .gitkeep for lib/"
-touch lib/.gitkeep
+echo "Creating .gitkeep for contracts/lib/"
+touch contracts/lib/.gitkeep
 
 echo "Done. Run 'forge test' to verify."
