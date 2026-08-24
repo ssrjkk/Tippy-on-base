@@ -1,4 +1,5 @@
 ﻿"""Wallet handlers: balance, deposit, link, confirm, import/export, withdraw."""
+import logging
 import time
 from decimal import Decimal
 from aiogram import types
@@ -7,6 +8,18 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboar
 from eth_utils import is_address, to_checksum_address
 from bot import i18n
 from . import _common as common
+
+async def _notify_aml(bot, tg_id: int, warnings: list[str]) -> None:
+    """Send AML flags to the configured admin chat (no-op if unset)."""
+    chat_id = common.config.SOLVENCY_ALERT_CHAT_ID
+    if not chat_id:
+        return
+    text = (
+        f"🚩 <b>AML flag</b> (user <code>{tg_id}</code>):\n"
+        + "\n".join(f"• {w}" for w in warnings)
+    )
+    await bot.send_message(chat_id, text, parse_mode="HTML")
+
 
 async def _balance_text(tg_id: int) -> str:
     await common.ledger.ensure_user(tg_id, None)
@@ -232,8 +245,16 @@ async def cmd_withdraw(message: types.Message) -> None:
         bal_str = f'{bal:.6f}'.rstrip('0').rstrip('.')
         await message.answer(i18n.t(lang, 'withdraw_balance_short', need=common._fmt(total_micro), fee=common._fmt(fee_micro), bal=bal_str))
         return
-    # AML check: flag large/rapid withdrawals (silent — admin sees in audit log)
-    await common.ledger.check_aml_withdraw(message.from_user.id, amount_micro, to_address)
+    # AML check: flag large/rapid withdrawals and ALERT the admin so the P0
+    # monitor is actually actionable (flags were previously only persisted).
+    warnings = await common.ledger.check_aml_withdraw(
+        message.from_user.id, amount_micro, to_address
+    )
+    if warnings:
+        try:
+            await _notify_aml(message.bot, message.from_user.id, warnings)
+        except Exception as e:  # never block a withdrawal on a notify failure
+            logging.getLogger("tipbot.aml").warning("failed to send AML alert: %s", e)
     wd_id = await common.ledger.reserve_withdraw(message.from_user.id, to_address, amount_micro, fee_micro)
     if wd_id is None:
         await message.answer(i18n.t(lang, 'tip_no_balance'))
