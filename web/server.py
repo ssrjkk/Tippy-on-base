@@ -318,9 +318,14 @@ async def tos() -> Response:
     return PlainTextResponse("Terms of Service not found.", status_code=404)
 
 @app.get('/metrics', tags=['monitoring'])
-async def metrics() -> Response:
+async def metrics(request: Request) -> Response:
     from .metrics import collect_metrics
     from fastapi.responses import PlainTextResponse
+
+    if config.METRICS_TOKEN:
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {config.METRICS_TOKEN}":
+            return PlainTextResponse("unauthorized", status_code=401)
     return PlainTextResponse(await collect_metrics())
 
 app.mount('/', StaticFiles(directory=str(STATIC), html=True), name='static')

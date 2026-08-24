@@ -44,6 +44,12 @@ WEB_PORT: int = int(os.environ.get("WEB_PORT", "8000"))
 # address that is NOT the deposit hot wallet.
 X402_ENABLED: bool = os.environ.get("X402_ENABLED") == "1"
 
+# Metrics endpoint protection. Empty (default) -> /metrics is open so a local
+# Prometheus can scrape it directly. Set METRICS_TOKEN to require
+# `Authorization: Bearer <token>`, keeping operational data (liabilities, user
+# counts, volume) off the public internet.
+METRICS_TOKEN: str = os.environ.get("METRICS_TOKEN", "").strip()
+
 # Telegram webhook (instead of long polling). Set WEBHOOK_URL (public https
 # URL, e.g. https://tipbot.example.com/telegram-webhook) to enable it. The
 # secret is the Telegram Bot API secret token (empty -> derived from BOT_TOKEN).
