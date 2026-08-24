@@ -55,7 +55,7 @@ jobs:
         run: python -c "import solcx; solcx.install_solc('0.8.24')"
 
       - name: Lint (ruff)
-        run: ruff check bot web tests scripts
+        run: ruff check bot web tests deploy
 
       - name: Security audit (pip-audit)
         run: |

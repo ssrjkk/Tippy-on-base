@@ -38,8 +38,8 @@ HEALTH_FAILS_BEFORE_RESTART = int(os.environ.get("TUNNEL_HEALTH_FAILS", "3"))
 
 CLOUDFLARED_CANDIDATES = [
     os.environ.get("CLOUDFLARED_BIN"),
-    "D:/base/tipbot/cloudflared.exe",
-    "D:/Dev/Temp/opencode/cloudflared.exe",
+    os.path.join(os.path.dirname(__file__), "cloudflared.exe"),
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "cloudflared.exe"),
     "cloudflared",
 ]
 

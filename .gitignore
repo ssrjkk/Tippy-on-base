@@ -46,3 +46,6 @@ transform_await.py
 bot/handlers/wallet_part1.py
 bot/i18n_temp.py
 scripts/
+
+# Agent runtime artifacts
+.agent_seen_news.json
