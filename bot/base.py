@@ -281,9 +281,17 @@ def _check_pending_withdrawn_sync() -> None:
             continue
         try:
             receipt = w3.eth.get_transaction_receipt(tx_hash)
+            rpc_ok = True
         except Exception:
             receipt = None
+            rpc_ok = False
         if receipt is None:
+            if not rpc_ok:
+                # RPC unreachable: we cannot determine the tx state. Do NOT
+                # refund — a successful on-chain tx would otherwise be
+                # double-paid (user keeps the funds and gets a refund). Leave
+                # the row pending; the next sweep re-checks once RPC recovers.
+                continue
             if now - int(row["created_at"]) > config.WITHDRAW_STUCK_TIMEOUT_SECONDS:
                 ledger.refund_withdraw(wd_id, int(row["tg_id"]), total_micro)
         elif bool(receipt.get("status")):

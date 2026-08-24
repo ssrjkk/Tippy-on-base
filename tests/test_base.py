@@ -539,11 +539,13 @@ def test_check_pending_withdraws_rpc_error_handled(monkeypatch, tmp_path):
 
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
     asyncio.run(base.check_pending_withdraws())  # must not raise on RPC error
-    # Old + RPC down -> treated as stuck, refunded.
-    assert fresh.balance(777) == Decimal("5.050000")
+    # RPC down -> we can't confirm the tx state, so we must NOT refund a
+    # withdrawal that may have succeeded on-chain (that would double-pay the
+    # user). The row stays pending and is re-checked once RPC recovers.
+    assert fresh.balance(777) == 0
     assert fresh._conn.execute(
         "SELECT status FROM tx_log WHERE kind = 'withdraw'"
-    ).fetchone()["status"] == "refunded"
+    ).fetchone()["status"] == "pending"
 
 
 def test_check_pending_withdraws_legacy_marked_done(monkeypatch, tmp_path):
