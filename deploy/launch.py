@@ -43,9 +43,7 @@ CLOUDFLARED_CANDIDATES = [
     "cloudflared",
 ]
 
-TUNNEL_RE = re.compile(
-    r"https://[a-zA-Z0-9][a-zA-Z0-9.\-]*[.](?:trycloudflared[.]com|trycloudflare[.]com|cfargotunnel[.]com)"
-)
+TUNNEL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
 
 def find_cloudflared() -> str | None:
