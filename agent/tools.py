@@ -14,10 +14,11 @@ For the demo, the agent uses ledger directly (same-process). Production
 would call the HTTP API with an agent-specific auth token.
 """
 
-import asyncio
 import time
+
 from bot.ledger import ledger
-from . import config, caps
+
+from . import caps, config
 
 # Track markets created by this agent (for oracle protection)
 _agent_markets: set[int] = set()
@@ -44,7 +45,7 @@ async def create_market(
     try:
         market_id = await ledger.create_market(
             tg_id, question, options,
-            int(round(subsidy_usdc * 1_000_000)), close_at=close_at
+            round(subsidy_usdc * 1_000_000), close_at=close_at
         )
         if market_id is None:
             caps.record_error()
@@ -81,7 +82,7 @@ async def place_bet(
     if err:
         return {"error": err}
 
-    micro = int(round(amount_usdc * 1_000_000))
+    micro = round(amount_usdc * 1_000_000)
     tg_id = config.AGENT_TG_ID
 
     try:

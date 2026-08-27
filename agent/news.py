@@ -6,8 +6,6 @@ All content is treated as untrusted data (wrapped in delimiters for LLM).
 
 import hashlib
 import html
-import re
-import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass

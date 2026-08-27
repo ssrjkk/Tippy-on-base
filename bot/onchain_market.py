@@ -37,7 +37,7 @@ def _load_abi() -> list:
 
 
 def _w3() -> Web3:
-    from .base import rpc_url
+    from .chain.core import rpc_url
     return Web3(Web3.HTTPProvider(rpc_url()))
 
 
@@ -53,9 +53,8 @@ def _market_contract(w3: Web3 | None = None):
 
 
 def _usdc_contract(w3: Web3):
-    from .base import USDC_ADDRESS
     return w3.eth.contract(
-        address=Web3.to_checksum_address(USDC_ADDRESS),
+        address=Web3.to_checksum_address(config.USDC_ADDRESS),
         abi=_ERC20_EXTRAS_ABI,
     )
 
@@ -133,7 +132,7 @@ async def buy(market_id: int, outcome: int, shares: int, max_cost_micro: int,
     `shares`: exact number of shares to buy.
     `max_cost_micro`: slippage cap — tx reverts if cost exceeds this.
     """
-    from .base import send_eth
+    from .chain.transfers import send_eth
     w3 = _w3()
     account = w3.eth.account.from_key(user_private_key)
     user_addr = account.address
@@ -248,7 +247,7 @@ async def create_market(num_outcomes: int, subsidy_micro: int, closes_at: int,
     needed_wei = int(Decimal("0.0005") * Decimal(10**18))
     if balance < needed_wei:
         drip_wei = int(config.GAS_DRIP_ETH * Decimal(10**18))
-        from .base import send_eth
+        from .chain.transfers import send_eth
         await send_eth(user_addr, drip_wei)
         for _ in range(20):
             await asyncio.sleep(0.5)

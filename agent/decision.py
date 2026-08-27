@@ -156,7 +156,7 @@ def decide(news_items: list[str], balance: float) -> MarketDecision | None:
     Returns None if no market should be created.
     """
     # Stage 1: cheap model filters noise
-    relevant, rejected = _filter_news(news_items)
+    relevant, _rejected = _filter_news(news_items)
     if not relevant:
         return None
 

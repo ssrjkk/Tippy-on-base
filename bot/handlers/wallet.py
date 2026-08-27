@@ -402,6 +402,16 @@ async def cmd_withdraw(message: types.Message) -> None:
         await common.ledger.record_withdraw_fee(message.from_user.id, to_address, fee_micro, tx_hash)
         tx_url = f'{common.config.BASESCAN_URL}/tx/{tx_hash}'
         await message.answer(i18n.t(lang, 'withdraw_ok', amount=common._fmt(amount_micro), fee=common._fmt(fee_micro), tx_url=tx_url, tx=tx_hash[:22]))
+    except common.base.BroadcastUncertainError as e:
+        # The tx may or may not have landed in the mempool; its hash is known.
+        # NEVER refund now (a late-confirming tx would double-pay). Record the
+        # hash and let the pending-withdraw watcher settle from the real
+        # receipt (success -> done, revert/stuck -> refund, RPC down -> wait).
+        await common.ledger.set_withdraw_pending_hash(wd_id, e.tx_hash)
+        await message.answer(
+            i18n.t(lang, 'withdraw_checking',
+                   amount=common._fmt(amount_micro), fee=common._fmt(fee_micro))
+        )
     except Exception as e:
         await common.ledger.refund_withdraw(wd_id, message.from_user.id, total_micro)
         await message.answer(i18n.t(lang, 'withdraw_error', error=str(e)))

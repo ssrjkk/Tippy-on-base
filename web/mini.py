@@ -76,7 +76,9 @@ async def mini_auth(body: InitAuth, request: Request):
     await ledger.ensure_user(tg_id, username)
     resp = JSONResponse({'ok': True, 'tg_id': tg_id})
     resp.set_cookie(COOKIE_NAME, make_session(tg_id), max_age=SESSION_TTL_SECONDS,
-                    httponly=True, samesite='lax', secure=request.url.scheme == 'https')
+                    httponly=True, samesite='lax',
+                    secure=request.url.scheme == 'https'
+                    or request.headers.get('x-forwarded-proto', '').lower() == 'https')
     return resp
 
 @router.get('/api/mini/state', tags=['users'])

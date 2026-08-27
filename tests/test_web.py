@@ -364,7 +364,8 @@ def test_x402_verifies_real_transfer_logs(client, ledger, monkeypatch):
     from web import x402
 
     ledger.credit(777, 1_000_000, "deposit")
-    pay_to = str(x402.hot_wallet())[2:].lower()
+    receive = x402._x402_receive_address() or str(x402.hot_wallet())
+    pay_to = receive[2:].lower()
     logs = [
         _transfer_log("0x" + "99" * 20, 9_999_999),  # unrelated transfer — ignored
         _transfer_log("0x" + pay_to, 5_000_000, from_addr="33" * 20),  # the payment

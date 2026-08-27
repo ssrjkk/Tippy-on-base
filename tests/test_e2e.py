@@ -917,16 +917,18 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     fund(e2e, ALICE, 100)
     to_addr = ACC2.address
 
-    # 1) send fails on-chain -> immediate full refund incl. fee
+    # 1) send fails on-chain (after broadcast) -> row stays pending with the
+    # pre-computed tx hash; the watcher settles from the real receipt later.
+    # NEVER an immediate refund — that would double-pay if the tx confirmed.
     m = Message(f"/withdraw {to_addr} 10", from_id=ALICE, bot=bot)
 
     def boom(raw):
         raise ConnectionError("no gas")
     base.w3.eth.send_raw_transaction = boom
     run(cmd_withdraw(m))
-    assert "Ошибка отправки" in m.answers[0][0]
-    assert e2e.balance(ALICE) == Decimal("100.000000")  # nothing lost
-    assert e2e.pending_withdraws() == []
+    assert "⏳" in m.answers[0][0]  # BroadcastUncertainError message
+    assert e2e.balance(ALICE) == Decimal("89.900000")  # debited (amount+fee), not refunded
+    assert len(e2e.pending_withdraws()) == 1  # pending with tx hash
 
     # 2) pending with no tx_hash, past the stuck timeout -> refunded by watcher
     cur = e2e._conn.execute(
@@ -939,7 +941,7 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     e2e._conn.execute("UPDATE users SET balance = balance - %s WHERE tg_id = %s", (5 * USDC + 50_000, ALICE))
     e2e._conn.commit()
     asyncio.run(base.check_pending_withdraws())
-    assert e2e.balance(ALICE) == Decimal("100.000000")  # refunded
+    assert e2e.balance(ALICE) == Decimal("89.900000")  # step1 pending still debited; step2 refunded
     assert e2e._conn.execute("SELECT status FROM tx_log WHERE id=%s", (wd_id,)).fetchone()["status"] == "refunded"
 
     # 3) receipt status=0 (reverted) -> refund
@@ -955,7 +957,7 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     e2e._conn.commit()
     install_rpc(monkeypatch, block=1500, receipts={tx3: {"status": 0}})
     asyncio.run(base.check_pending_withdraws())
-    assert e2e.balance(ALICE) == Decimal("100.000000")
+    assert e2e.balance(ALICE) == Decimal("89.900000")  # step1 pending; step3 reverted->refunded
 
     # 4) receipt status=1 -> done, no refund
     tx4 = "0x" + "11" * 32
@@ -971,7 +973,7 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     install_rpc(monkeypatch, block=1500, receipts={tx4: {"status": 1}})
     asyncio.run(base.check_pending_withdraws())
     assert e2e._conn.execute("SELECT status FROM tx_log WHERE id=%s", (wd_id4,)).fetchone()["status"] == "done"
-    assert e2e.balance(ALICE) == Decimal("94.950000")  # 100 minus 5.05 debited at creation, no refund
+    assert e2e.balance(ALICE) == Decimal("84.850000")  # 89.9 minus 5.05 debited at creation, no refund
 
     # 5) receipt still missing but not timed out -> still pending
     tx5 = "0x" + "22" * 32
@@ -985,7 +987,7 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     e2e._conn.commit()
     install_rpc(monkeypatch, block=1500, receipts={})
     asyncio.run(base.check_pending_withdraws())
-    assert e2e.balance(ALICE) == Decimal("89.900000")  # untouched yet
+    assert e2e.balance(ALICE) == Decimal("79.800000")  # step1 pending; step5 not timed out yet
 
     # 6) legacy NULL-status row with tx_hash -> marked done, never refunded
     tx6 = "0x" + "33" * 32

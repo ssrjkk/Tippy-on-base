@@ -3,13 +3,12 @@
 Requires: AIGRAM_BOT_TOKEN and ALERT_CHAT_ID env vars.
 """
 
-import asyncio
 import os
 import time
 
 from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-
 
 _bot: Bot | None = None
 
@@ -20,7 +19,7 @@ def _get_bot() -> Bot | None:
     if not token:
         return None
     if _bot is None:
-        _bot = Bot(token=token, default=BotProperties(parse_mode=ParseMode.HTML))
+        _bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     return _bot
 
 

@@ -14,12 +14,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 # Config reads these at import time.
-os.environ.setdefault("BOT_TOKEN", "0:test")
+os.environ.setdefault("BOT_TOKEN", "0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
 os.environ.setdefault("HOT_WALLET_KEY", "0x" + "11" * 32)
 os.environ.setdefault("WALLET_ENC_KEY", "a" * 32)  # Test-only: 32-char key for wallet encryption
-# Tests exercise the ENABLED (and now corrected) x402 path; production
-# defaults to X402_ENABLED=off (see bot/config.py) for safety.
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-ci-only-32ch!")
 os.environ.setdefault("X402_ENABLED", "1")
+os.environ.setdefault("X402_RECEIVE_ADDRESS", "0x0000000000000000000000000000000000000001")
 TEST_DB_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5432/tipbot_test"
 )
@@ -52,7 +52,7 @@ def _pg_test_db():
             admin.execute("DROP DATABASE IF EXISTS tipbot_test WITH (FORCE)")
             admin.execute("CREATE DATABASE tipbot_test")
     except Exception as e:
-        pytest.skip(f"PostgreSQL not available: {e}")
+        pytest.exit(f"PostgreSQL not available: {e}", returncode=1)
     yield
 
 

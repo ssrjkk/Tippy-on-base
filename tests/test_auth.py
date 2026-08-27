@@ -7,6 +7,7 @@ eth_account keypair and real EIP-191 recovery.
 
 import hashlib
 import hmac
+import os
 import time
 
 import pytest
@@ -32,7 +33,7 @@ def tg_signed(tg_id: int, username: str = "alice", auth_date: int | None = None)
         "photo_url": "https://t.me/i/userpic/320/alice.jpg",
     }
     check = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
-    secret = hashlib.sha256(b"0:test").digest()
+    secret = hashlib.sha256(os.environ["BOT_TOKEN"].encode()).digest()
     params["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
     return params
 

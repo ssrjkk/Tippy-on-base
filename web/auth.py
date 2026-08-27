@@ -127,7 +127,8 @@ def _session_response(request: Request, tg_id: int, redirect: str | None=None) -
     resp.set_cookie(
         COOKIE_NAME, make_session(tg_id), max_age=SESSION_TTL_SECONDS,
         httponly=True, samesite='lax',
-        secure=request.url.scheme == 'https',
+        secure=request.url.scheme == 'https'
+        or request.headers.get('x-forwarded-proto', '').lower() == 'https',
     )
     return resp
 

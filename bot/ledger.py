@@ -1183,6 +1183,21 @@ class Ledger:
             )
             self._conn.commit()
 
+    def set_withdraw_pending_hash(self, wd_id: int, tx_hash: str) -> None:
+        """Record a known-but-unconfirmed tx hash, leaving the row pending.
+
+        Used when broadcast could not confirm whether the tx landed. The
+        pending-withdraw watcher later settles it from the real receipt
+        (success -> done, revert/stuck -> refund, RPC down -> keep pending).
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE tx_log SET tx_hash = %s WHERE id = %s "
+                "AND COALESCE(status, '') NOT IN ('done', 'refunded')",
+                (tx_hash, wd_id),
+            )
+            self._conn.commit()
+
     def refund_withdraw(self, wd_id: int, tg_id: int, total_micro: int) -> None:
         """Full refund of amount + fee; keeps the row as an audit trail."""
         with self._lock:

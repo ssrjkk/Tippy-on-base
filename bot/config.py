@@ -51,6 +51,11 @@ WEB_PORT: int = int(os.environ.get("WEB_PORT", "8000"))
 # reuse any deposit tx to drain it. Enable only with a dedicated x402 receive
 # address that is NOT the deposit hot wallet.
 X402_ENABLED: bool = os.environ.get("X402_ENABLED") == "1"
+# Dedicated receive address for x402 payments. MUST differ from the deposit
+# hot wallet — otherwise any deposit tx can be replayed as an x402 payment
+# and the real depositor loses funds. Empty -> x402 stays disabled even if
+# X402_ENABLED=1.
+X402_RECEIVE_ADDRESS: str = os.environ.get("X402_RECEIVE_ADDRESS", "").strip()
 
 # Metrics endpoint protection. Empty (default) -> /metrics is open so a local
 # Prometheus can scrape it directly. Set METRICS_TOKEN to require

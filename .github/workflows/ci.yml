@@ -20,8 +20,8 @@ jobs:
           python-version: "3.12"
       - name: Install ruff
         run: pip install ruff==0.16.4
-      - name: Ruff check (bot web tests deploy)
-        run: ruff check bot web tests deploy
+      - name: Ruff check (bot web tests deploy agent scripts)
+        run: ruff check bot web tests deploy agent scripts
 
   test:
     name: Tests (pytest)
@@ -41,9 +41,10 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
-      BOT_TOKEN: "0:test"
+      BOT_TOKEN: "0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
       HOT_WALLET_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111"
       WALLET_ENC_KEY: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      SECRET_KEY: "test-secret-key-for-ci-only-32ch!"
       TEST_DATABASE_URL: "postgresql://tipbot:tipbot@localhost:5432/tipbot_test"
       TEST_ADMIN_DATABASE_URL: "postgresql://tipbot:tipbot@localhost:5432/postgres"
     steps:

@@ -11,8 +11,10 @@ from the SURGE-AGENT-PROMPT.
 """
 
 import time
-from bot.ledger import ledger
+
 from bot import config
+from bot.ledger import ledger
+
 from . import caps
 
 
@@ -34,7 +36,7 @@ async def sell_signal(
         title = f"Signal: Market #{market_id} analysis ({time.strftime('%Y-%m-%d %H:%M')})"
 
     title = title[: config.PAYWALL_MAX_TITLE_LEN]
-    price_micro = int(round(price_usdc * 10**config.USDC_DECIMALS))
+    price_micro = round(price_usdc * 10**config.USDC_DECIMALS)
     tg_id = 0  # agent's tg_id (0 = system)
 
     content = (

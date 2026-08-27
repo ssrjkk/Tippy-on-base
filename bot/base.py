@@ -81,6 +81,22 @@ def _rpc_call(fn, *args, **kwargs):
 
 _send_lock = threading.Lock()
 
+
+class BroadcastUncertainError(Exception):
+    """send_raw_transaction could not confirm whether the tx was broadcast.
+
+    The tx hash was pre-computed from the signed payload BEFORE broadcast, so
+    even on a thrown error we know the potential hash. Callers must NEVER
+    auto-refund on this error: the tx may have landed in the mempool and later
+    confirmed, in which case a refund would double-pay the user. Record the
+    hash and let the pending-withdraw watcher settle from the real receipt.
+    """
+
+    def __init__(self, tx_hash: str):
+        super().__init__(f"broadcast result unknown for tx {tx_hash}")
+        self.tx_hash = tx_hash
+
+
 # Address "0x0000...0000" = mint events; "0x0000...0001" = burn (weird EdgeCase)
 EDGE_1 = Web3.to_checksum_address("0x0000000000000000000000000000000000000001")
 
@@ -360,7 +376,16 @@ def _send_usdc_sync(to_address: str, amount_micro: int) -> str:
             }
         )
         signed = acct.sign_transaction(tx)
-        return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+        # Pre-compute the tx hash before broadcast: it is deterministically
+        # derivable from the signed payload. If broadcast then throws (timeout,
+        # connection drop) we still KNOW the potential hash — without this, a
+        # late-confirming tx would be double-paid by an immediate refund.
+        tx_hash = "0x" + Web3.keccak(signed.raw_transaction).hex()
+        try:
+            raw = w3.eth.send_raw_transaction(signed.raw_transaction)
+        except Exception:
+            raise BroadcastUncertainError(tx_hash) from None
+        return "0x" + raw.hex()
 
 
 async def send_usdc(to_address: str, amount_micro: int) -> str:

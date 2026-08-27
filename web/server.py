@@ -27,6 +27,14 @@ from web.mini import router as mini_router
 from web.x402 import x402_paywall, x402_tip
 
 _ENABLE_OPENAPI: bool = os.environ.get('ENABLE_OPENAPI', '0') == '1'
+
+# Validate critical secrets at import time — NOT just __main__. Every uvicorn
+# / launch.py deployment imports this module, so validate() here prevents the
+# silent "session key derived from BOT_TOKEN" fallback (attackers forge cookies
+# for any tg_id including ADMIN).
+from bot.config import validate as _validate_config
+
+_validate_config()
 app = FastAPI(title='Tippy API', version='1.1.0',
     description='Public API of **Tippy** — a community economy in USDC on Base.\n\nFeatures: instant tips, Polymarket-style prediction markets (LMSR AMM), paywalled content, and **x402 HTTP payments for AI agents** (`POST /api/x402/tip`, `POST /api/x402/paywall`).\n\n* All amounts are USDC; `_usdc` fields are human-readable floats, `_micro` fields are integer micro-units (1e6 = 1 USDC).\n* `/api/solvency` is the Proof of Reserves: bot liabilities vs on-chain USDC (TipBotVault contract when deployed, else hot wallet).\n* Rate-limited per IP to protect the RPC quota.',
     contact={'name': 'ssrjkk', 'url': 'https://github.com/ssrjkk/Tippy-on-base'},
@@ -326,6 +334,8 @@ async def api_qr(data: str, size: int=220) -> Response:
     """Render a QR PNG locally (no external service). Used by /u pages."""
     if not data or len(data) > 1024:
         raise HTTPException(status_code=400, detail='data must be 1..1024 chars')
+    if size < 64 or size > 1024:
+        raise HTTPException(status_code=400, detail='size must be 64..1024')
     try:
         return Response(content=await qrlib.qr_bytes(data, size=size), media_type='image/png', headers={'Cache-Control': 'public, max-age=86400'})
     except Exception as exc:

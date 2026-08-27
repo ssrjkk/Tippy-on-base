@@ -478,6 +478,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "⬆️ Format: /withdraw &lt;address&gt; &lt;amount&gt;\nExample: /withdraw 0x123...abc 10",
         "zh": "⬆️ 格式：/withdraw &lt;地址&gt; &lt;金额&gt;\n示例：/withdraw 0x123...abc 10",
     },
+    "withdraw_checking": {
+        "ru": "⏳ Транзакция отправлена, проверяем подтверждение на сети…\nСумма: <b>{amount} USDC</b>, комиссия: <b>{fee} USDC</b>.\nЕсли транзакция не подтвердится, средства вернутся автоматически.",
+        "en": "⏳ Transaction sent, confirming on-chain…\nAmount: <b>{amount} USDC</b>, fee: <b>{fee} USDC</b>.\nIf the transaction is not confirmed, funds are refunded automatically.",
+        "zh": "⏳ 交易已发送，正在链上确认…\n金额：<b>{amount} USDC</b>，手续费：<b>{fee} USDC</b>。\n如果交易未确认，资金将自动退回。",
+    },
     # ----- link -----
     "link_ok": {
         "ru": "🔗 Кошелёк <code>{addr}</code> привязан! Депозиты будут зачисляться автоматически.",

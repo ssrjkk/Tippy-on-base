@@ -9,16 +9,15 @@ Usage:
 import argparse
 import asyncio
 import json
-import sys
 import time
 from pathlib import Path
 
-from . import config, caps
-from .news import fetch_news
+from . import caps, config
 from .decision import decide
-from .tools import create_market, place_bet, get_balance, get_market
-from .eas import attest_action, AttestationData
+from .eas import AttestationData, attest_action
+from .news import fetch_news
 from .signals import sell_signal
+from .tools import create_market, get_balance, place_bet
 
 
 async def single_cycle() -> bool:
@@ -28,7 +27,7 @@ async def single_cycle() -> bool:
     # 1. Check circuit breaker
     status = caps.get_status()
     if status["cooldown_active"]:
-        print(f"  Circuit breaker active, skipping cycle")
+        print("  Circuit breaker active, skipping cycle")
         return False
 
     # 2. Perceive — fetch news

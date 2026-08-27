@@ -6,6 +6,7 @@ Every agent action MUST pass through `check_action()` before execution.
 import json
 import time
 from pathlib import Path
+
 from . import config
 
 _STATE_FILE = Path(__file__).resolve().parent / ".agent_state.json"

@@ -52,11 +52,12 @@ async function load() {
   const r = await fetch('/api/me');
   if (r.status === 401) { location.href = '/login'; return; }
   const me = await r.json();
+  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
   const pos = me.positions.length
     ? me.positions.map(p => `
         <div class="pos">
-          <span class="q">#${p.market_id} ${p.question}<br/>
-            <span class="muted">${p.option} — ${p.shares} shares @ ${(p.price*100).toFixed(1)}¢</span></span>
+          <span class="q">#${esc(String(p.market_id))} ${esc(p.question)}<br/>
+            <span class="muted">${esc(p.option)} — ${esc(String(p.shares))} shares @ ${(p.price*100).toFixed(1)}¢</span></span>
           <span class="v">$${p.value_usdc.toFixed(2)}<br/>
             <span class="muted">cost $${p.cost_usdc.toFixed(2)}</span></span>
         </div>`).join('')

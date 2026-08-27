@@ -29,14 +29,28 @@ MAX_TIP_USDC = 1000
 PAYMENT_TTL_SECONDS = 300
 _TX_HASH_RE = re.compile('^0x[0-9a-f]{64}$')
 
+
+def _x402_receive_address() -> str | None:
+    """Return the dedicated x402 receive address.
+
+    Must differ from the deposit hot wallet to prevent deposit-tx replay.
+    """
+    addr = config.X402_RECEIVE_ADDRESS.strip()
+    if addr and addr.lower() != hot_wallet().lower():
+        return addr
+    return None
+
+
 def _invoice_headers(amount_micro: int) -> dict:
-    return {'x-402-recipient': str(hot_wallet()), 'x-402-amount': str(amount_micro), 'x-402-expires-at': str(int(time.time()) + PAYMENT_TTL_SECONDS), 'x-402-idempotency-key': str(uuid.uuid4())}
+    receive = _x402_receive_address() or hot_wallet()
+    return {'x-402-recipient': receive, 'x-402-amount': str(amount_micro), 'x-402-expires-at': str(int(time.time()) + PAYMENT_TTL_SECONDS), 'x-402-idempotency-key': str(uuid.uuid4())}
 
 def _verify_payment(tx_hash: str, expected_micro: int) -> dict | None:
-    """Read the USDC Transfer to our address from the tx receipt (via RPC).
+    """Read the USDC Transfer to our x402 receive address from the tx receipt.
 
     Returns {"sender", "amount_micro"} or None when the payment is missing,
-    reverted, too small, or the RPC is unreachable.
+    reverted, too small, sent to the deposit hot wallet (not x402), or the
+    RPC is unreachable.
     """
     try:
         receipt = base.w3.eth.get_transaction_receipt(tx_hash)
@@ -44,7 +58,7 @@ def _verify_payment(tx_hash: str, expected_micro: int) -> dict | None:
         return None
     if not receipt or not bool(receipt.get('status')):
         return None
-    pay_to = hot_wallet().lower()
+    pay_to = (_x402_receive_address() or hot_wallet()).lower()
     total = 0
     sender = None
     for log in receipt.get('logs', []):
@@ -85,8 +99,8 @@ def _payment_rejected_response(amount_micro: int) -> JSONResponse:
 
 async def x402_tip(request: Request) -> JSONResponse:
     """POST /api/x402/tip?recipient=<username|tg_id>&amount=<usdc>"""
-    if not config.X402_ENABLED:
-        return JSONResponse(status_code=503, content={'detail': 'x402 payments are disabled'})
+    if not config.X402_ENABLED or _x402_receive_address() is None:
+        return JSONResponse(status_code=503, content={'detail': 'x402 payments are disabled (set X402_RECEIVE_ADDRESS)'})
     q = request.query_params
     recipient = (q.get('recipient') or '').strip()
     amount_micro = _parse_amount((q.get('amount') or '').strip())
@@ -106,6 +120,21 @@ async def x402_tip(request: Request) -> JSONResponse:
         return JSONResponse(status_code=400, content={'detail': 'transaction is a deposit, not an x402 payment'})
     verified = _verify_payment(tx_hash, amount_micro)
     if verified is None:
+        # Reject payments sent to the deposit hot wallet — those are regular
+        # deposits, not x402 payments. This closes the redirect/race drain.
+        hot = hot_wallet().lower()
+        try:
+            receipt = base.w3.eth.get_transaction_receipt(tx_hash)
+            for log in (receipt or {}).get('logs', []):
+                if str(log.get('address', '')).lower() == config.USDC_ADDRESS.lower():
+                    try:
+                        ev = base.usdc.events.Transfer().process_log(log)
+                        if ev['args']['to'].lower() == hot:
+                            return JSONResponse(status_code=400, content={'detail': 'tx is a deposit to the hot wallet, not an x402 payment'})
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         return _payment_rejected_response(amount_micro)
     credited = await ledger.credit_x402(tg_id, tx_hash, amount_micro, verified['sender'])
     if not credited:
@@ -113,8 +142,8 @@ async def x402_tip(request: Request) -> JSONResponse:
     return JSONResponse(status_code=200, content={'status': 'ok', 'tip': {'recipient': recipient, 'amount_usdc': round(verified['amount_micro'] / MICRO, 2), 'sender': verified['sender'], 'tx_hash': tx_hash}})
 
 async def x402_paywall(request: Request) -> JSONResponse:
-    if not config.X402_ENABLED:
-        return JSONResponse(status_code=503, content={'detail': 'x402 payments are disabled'})
+    if not config.X402_ENABLED or _x402_receive_address() is None:
+        return JSONResponse(status_code=503, content={'detail': 'x402 payments are disabled (set X402_RECEIVE_ADDRESS)'})
     """POST /api/x402/paywall?item=<id>&amount=<usdc>
 
     x402 handshake for paywall items: an agent pays the invoice on-chain and

@@ -10,16 +10,13 @@ Usage:
 
 import asyncio
 import json
-import os
-import sys
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
-from . import config
-from .tools import create_market, place_bet, get_market, list_open_markets, get_balance
 from .signals import sell_signal
+from .tools import create_market, get_balance, get_market, list_open_markets, place_bet
 
 server = Server("tippy-agent")
 
@@ -175,7 +172,7 @@ async def _run_stdio():
 async def _run_sse(port: int):
     from mcp.server.sse import SseServerTransport
     from starlette.applications import Starlette
-    from starlette.routing import Route, Mount
+    from starlette.routing import Mount, Route
 
     sse = SseServerTransport("/messages/")
 
@@ -190,8 +187,23 @@ async def _run_sse(port: int):
         ],
     )
 
+    import os as _os
+    mcp_token = _os.environ.get("MCP_AUTH_TOKEN", "").strip()
+    if mcp_token:
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.responses import JSONResponse as _JSONResponse
+
+        class _AuthMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                auth = request.headers.get("authorization", "")
+                if auth != f"Bearer {mcp_token}":
+                    return _JSONResponse({"detail": "unauthorized"}, status_code=401)
+                return await call_next(request)
+
+        app.add_middleware(_AuthMiddleware)
+
     import uvicorn
-    config_uvicorn = uvicorn.Config(app, host="0.0.0.0", port=port)
+    config_uvicorn = uvicorn.Config(app, host="127.0.0.1", port=port)
     srv = uvicorn.Server(config_uvicorn)
     await srv.serve()
 

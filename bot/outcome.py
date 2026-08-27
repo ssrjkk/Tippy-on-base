@@ -23,6 +23,13 @@ _CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
 _OUTCOME_ABI: list | None = None
 _OUTCOME_ADDRESS: str | None = None
 
+# Derive the hot-wallet checksum address once at import time (same derivation
+# as bot/base.py). Previously config.HOT_WALLET was referenced but never
+# defined, causing AttributeError on every owner/dispute/cancel call.
+_HOT_WALLET = Web3.to_checksum_address(
+    Web3().eth.account.from_key(config.HOT_WALLET_KEY).address
+)
+
 
 def _load_abi() -> list:
     global _OUTCOME_ABI
@@ -107,8 +114,8 @@ def owner_resolve(w3: Web3, market_id: int, winning_outcome: int) -> str:
     if c is None:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
     tx = c.functions.ownerResolve(market_id, winning_outcome).build_transaction({
-        "from": config.HOT_WALLET,
-        "nonce": w3.eth.get_transaction_count(config.HOT_WALLET),
+        "from": _HOT_WALLET,
+        "nonce": w3.eth.get_transaction_count(_HOT_WALLET),
         "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
         "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
         "chainId": w3.eth.chain_id,
@@ -124,8 +131,8 @@ def dispute_resolution(w3: Web3, market_id: int) -> str:
     if c is None:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
     tx = c.functions.disputeResolution(market_id).build_transaction({
-        "from": config.HOT_WALLET,
-        "nonce": w3.eth.get_transaction_count(config.HOT_WALLET),
+        "from": _HOT_WALLET,
+        "nonce": w3.eth.get_transaction_count(_HOT_WALLET),
         "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
         "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
         "chainId": w3.eth.chain_id,
@@ -141,8 +148,8 @@ def cancel_expired(w3: Web3, market_id: int) -> str:
     if c is None:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
     tx = c.functions.cancelExpired(market_id).build_transaction({
-        "from": config.HOT_WALLET,
-        "nonce": w3.eth.get_transaction_count(config.HOT_WALLET),
+        "from": _HOT_WALLET,
+        "nonce": w3.eth.get_transaction_count(_HOT_WALLET),
         "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
         "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
         "chainId": w3.eth.chain_id,

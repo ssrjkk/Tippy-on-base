@@ -16,7 +16,7 @@ services:
       sh -c "pip install -q -r requirements-dev.txt &&
              python -c \"import solcx; solcx.install_solc('0.8.24')\" &&
              coverage run -m pytest tests -q --junitxml=pytest-result.xml;
-             echo SUITE_EXIT=$$?"
+             exit $?"
 
   db:
     image: postgres:16
