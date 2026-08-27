@@ -26,6 +26,12 @@ services:
       PYTHONUTF8: 1
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u,os;u.urlopen('http://127.0.0.1:%s/api/health'%os.environ.get('WEB_PORT','8000'),timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -34,7 +40,8 @@ services:
     environment:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
-      - app
+      app:
+        condition: service_healthy
 
 volumes:
   pgdata:

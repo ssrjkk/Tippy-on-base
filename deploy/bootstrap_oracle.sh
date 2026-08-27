@@ -107,13 +107,57 @@ done
 
 # --- bring it up ------------------------------------------------------------
 log "Building and starting Tippy (db + app + cloudflared)..."
-if docker compose -f "$APP_DIR/docker-compose.yml" up -d --build; then
-    log "Stack is up. Services restart automatically (restart: unless-stopped)."
-    log "Wait ~30s, then check:"
-    log "    docker compose -f $APP_DIR/docker-compose.yml ps"
-    log "    docker compose -f $APP_DIR/docker-compose.yml logs -f app"
-else
+if ! docker compose -f "$APP_DIR/docker-compose.yml" up -d --build; then
     fatal "docker compose up failed — fix .env, then re-run: docker compose -f $APP_DIR/docker-compose.yml up -d --build"
 fi
 
-log "Done. Tippy should be reachable at \${MINI_APP_URL} (set it to your tunnel host)."
+# --- verify the app is healthy (waits for migrations + web server) ----------
+log "Waiting for the app to become healthy..."
+healthy=0
+for i in $(seq 1 60); do
+    st=$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose -f "$APP_DIR/docker-compose.yml" ps -q app)" 2>/dev/null || true)
+    if [ "$st" = "healthy" ]; then healthy=1; break; fi
+    sleep 5
+done
+if [ "$healthy" != 1 ]; then
+    log "WARNING: app container not reported healthy in time. Check logs:"
+    docker compose -f "$APP_DIR/docker-compose.yml" logs --tail=40 app || true
+else
+    log "app is healthy (web server up, migrations applied)."
+fi
+
+# --- verify the Cloudflare tunnel is connected ------------------------------
+log "Checking Cloudflare tunnel connector is up..."
+cf_ok=0
+for i in $(seq 1 12); do
+    if docker compose -f "$APP_DIR/docker-compose.yml" exec -T cloudflared cloudflared tunnel info 2>/dev/null | grep -qi 'connector'; then
+        cf_ok=1; break
+    fi
+    sleep 5
+done
+[ "$cf_ok" = 1 ] && log "Cloudflare tunnel connected." || log "WARNING: could not confirm the tunnel. Is CLOUDFLARE_TUNNEL_TOKEN set and the tunnel created?"
+
+# --- verify the public Mini App URL returns 200 ------------------------------
+mini=$(grep -E '^MINI_APP_URL=' "$APP_DIR/.env" | cut -d= -f2- || true)
+if [ -n "$mini" ]; then
+    log "Verifying Mini App reaches the internet: ${mini}/app"
+    reach=0
+    for i in $(seq 1 12); do
+        code=$(curl -fsS -o /dev/null -w '%{http_code}' "${mini}/app" 2>/dev/null || true)
+        if [ "$code" = "200" ]; then reach=1; break; fi
+        sleep 5
+    done
+    if [ "$reach" = 1 ]; then
+        log "SUCCESS: Mini App is live at ${mini}/app (HTTP 200)."
+    else
+        log "WARNING: ${mini}/app did not return 200 yet. If your domain is new on Cloudflare,"
+        log "SSL may take a minute. Re-run this check: curl -I ${mini}/app"
+    fi
+else
+    log "MINI_APP_URL is empty — the Mini App button in Telegram will NOT be usable."
+    log "Set MINI_APP_URL=https://<your-domain> in .env and rerun this script."
+fi
+
+log "Done. Services:"
+docker compose -f "$APP_DIR/docker-compose.yml" ps
+log "Everything restarts automatically (restart: unless-stopped). Logs: docker compose -f $APP_DIR/docker-compose.yml logs -f app"
