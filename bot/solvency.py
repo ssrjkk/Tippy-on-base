@@ -9,7 +9,7 @@ import asyncio
 import logging
 import time
 
-from bot import config, base
+from bot import base, config
 from bot.ledger import async_ledger as ledger
 
 log = logging.getLogger("tipbot.solvency")

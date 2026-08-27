@@ -6,10 +6,12 @@ import os
 import sys
 import time
 from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -22,6 +24,7 @@ from web.frame import router as frame_router
 from web.hook import router as tg_webhook
 from web.mini import router as mini_router
 from web.x402 import x402_paywall, x402_tip
+
 app = FastAPI(title='Tippy API', version='1.1.0', description='Public API of **Tippy** — a community economy in USDC on Base.\n\nFeatures: instant tips, Polymarket-style prediction markets (LMSR AMM), paywalled content, and **x402 HTTP payments for AI agents** (`POST /api/x402/tip`, `POST /api/x402/paywall`).\n\n* All amounts are USDC; `_usdc` fields are human-readable floats, `_micro` fields are integer micro-units (1e6 = 1 USDC).\n* `/api/solvency` is the Proof of Reserves: bot liabilities vs on-chain USDC (TipBotVault contract when deployed, else hot wallet).\n* Rate-limited per IP to protect the RPC quota.', contact={'name': 'ssrjkk', 'url': 'https://github.com/ssrjkk/Tippy-on-base'}, license_info={'name': 'MIT', 'url': 'https://github.com/ssrjkk/Tippy-on-base/blob/main/LICENSE'}, openapi_tags=[{'name': 'stats', 'description': 'Volume, users, fees, health'}, {'name': 'markets', 'description': 'Parimutuel polls and LMSR prediction markets'}, {'name': 'users', 'description': 'Leaderboards and public profiles'}, {'name': 'treasury', 'description': 'Proof of Reserves and wallet transparency'}, {'name': 'x402', 'description': 'HTTP 402 payment handshake for AI agents'}])
 app.include_router(tg_webhook)
 app.include_router(frame_router)
@@ -66,7 +69,7 @@ async def rate_limit(request: Request, call_next):
         _rl_state[client].append(now)
         if len(_rl_state) > WEB_RATE_MAX_CLIENTS:
             for ip, hits in list(_rl_state.items()):
-                if not any((t > cutoff for t in hits)):
+                if not any(t > cutoff for t in hits):
                     del _rl_state[ip]
     response = await call_next(request)
     # No X-Frame-Options here on purpose: the Mini App runs inside Telegram's
@@ -167,7 +170,9 @@ async def api_user(tg_id: int) -> dict:
 @app.get('/api/agent/status', tags=['agent'])
 async def api_agent_status() -> dict:
     """Agent PnL dashboard — public read-only view of agent performance."""
-    import json, pathlib
+    import json
+    import pathlib
+
     from agent.caps import get_status
     tg_id = int(config.AGENT_TG_ID) if hasattr(config, 'AGENT_TG_ID') else 0
     if not tg_id:
@@ -198,7 +203,8 @@ async def api_agent_status() -> dict:
 @app.get('/api/agent/audit', tags=['agent'])
 async def api_agent_audit() -> list[dict]:
     """Agent audit trail — last 50 actions from local JSONL log."""
-    import json, pathlib
+    import json
+    import pathlib
     audit_file = pathlib.Path('agent_audit.jsonl')
     if not audit_file.exists():
         return []
@@ -330,8 +336,9 @@ async def tos() -> Response:
 
 @app.get('/metrics', tags=['monitoring'])
 async def metrics(request: Request) -> Response:
-    from .metrics import collect_metrics
     from fastapi.responses import PlainTextResponse
+
+    from .metrics import collect_metrics
 
     if config.METRICS_TOKEN:
         auth = request.headers.get("Authorization", "")

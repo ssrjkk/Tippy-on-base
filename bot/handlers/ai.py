@@ -1,11 +1,13 @@
 ﻿"""/ask — AI assistant handler (OpenAI-compatible backend, see bot/ai.py)."""
 import html
+
 from aiogram import types
 from aiogram.filters import Command
 from aiogram.types import BotCommand
-from .. import ai
-from .. import i18n
+
+from .. import ai, i18n
 from . import _common as common
+
 __all__ = ['AI_BOT_COMMAND', 'cmd_ask']
 AI_BOT_COMMAND = BotCommand(command='ask', description=i18n.t('en', 'ai_bot_cmd'))
 

@@ -409,11 +409,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "❌ User @{user} not found. They need to message the bot first.",
         "zh": "❌ 用户 @{user} 未找到。他需要先给机器人发消息。",
     },
-    "tip_need_amount": {
-        "ru": "💸 Формат: /tip &lt;сумма&gt; @ник\nПример: /tip 5 @friend",
-        "en": "💸 Format: /tip &lt;amount&gt; @nick\nExample: /tip 5 @friend",
-        "zh": "💸 格式：/tip &lt;金额&gt; @昵称\n示例：/tip 5 @friend",
-    },
     "tip_reply": {
         "ru": "💸 Сколько USDC отправить автору сообщения?",
         "en": "💸 How much USDC to send to the message author?",
@@ -451,25 +446,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "📈 格式：/market create &lt;资金&gt; &lt;问题&gt; | &lt;选项1&gt; | &lt;选项2&gt; [24h]\n示例：/market create 50 谁赢？ | Biden | Trump | 24h",
     },
     # ----- bets -----
-    "bet_created": {
-        "ru": "✅ Ставка создана!\n<b>{question}</b>\nID: <code>{id}</code>",
-        "en": "✅ Bet created!\n<b>{question}</b>\nID: <code>{id}</code>",
-        "zh": "✅ 投注已创建！\n<b>{question}</b>\nID: <code>{id}</code>",
-    },
     "bet_placed": {
         "ru": "🎲 Поставлено {amount} USDC на «{label}»!\nВсего в пуле: {pot} USDC",
         "en": "🎲 Bet {amount} USDC on \"{label}\"!\nTotal pool: {pot} USDC",
         "zh": "🎲 下注 {amount} USDC 到「{label}」！\n奖池总额：{pot} USDC",
-    },
-    "bet_resolved": {
-        "ru": "🏆 Ставка закрыта! Победил вариант «{label}».\nПобедители делят {pot} USDC (минус 2% комиссия).",
-        "en": "🏆 Bet resolved! Winner: \"{label}\".\nWinners share {pot} USDC (minus 2% fee).",
-        "zh": "🏆 投注已结算！获胜选项：「{label}」。\n赢家瓜分 {pot} USDC（扣除 2% 手续费）。",
-    },
-    "bet_cancelled": {
-        "ru": "↩️ Ставка отменена. Деньги возвращены участникам.",
-        "en": "↩️ Bet cancelled. Funds returned to participants.",
-        "zh": "↩️ 投注已取消。资金已退还给参与者。",
     },
     "bet_need_args": {
         "ru": "🎲 Формат: /bet create &lt;вопрос&gt; | &lt;в1&gt; | &lt;в2&gt; [24h]\nПример: /bet create Кто первый? | Alice | Bob | 24h",
@@ -488,11 +468,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "❌ 失败：{reason}。余额：<b>{bal} USDC</b>",
     },
     # ----- withdraw -----
-    "withdraw_ok": {
-        "ru": "⬆️ Вывод <b>{amount} USDC</b> на <code>{addr}</code> отправлен!\nTX: <code>{tx}</code>",
-        "en": "⬆️ Withdrawal of <b>{amount} USDC</b> to <code>{addr}</code> sent!\nTX: <code>{tx}</code>",
-        "zh": "⬆️ 提现 <b>{amount} USDC</b> 到 <code>{addr}</code> 已发送！\nTX：<code>{tx}</code>",
-    },
     "withdraw_fail_balance": {
         "ru": "❌ Недостаточно средств. Баланс: <b>{bal} USDC</b> (мин. 1 USDC, комиссия 1%)",
         "en": "❌ Insufficient funds. Balance: <b>{bal} USDC</b> (min 1 USDC, 1% fee)",
@@ -659,21 +634,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Tap a market for odds and buttons.",
         "zh": "点击市场查看行情和按钮。",
     },
-    "market_not_found": {
-        "ru": "Рынок не найден",
-        "en": "Market not found",
-        "zh": "市场未找到",
-    },
-    "market_closed": {
-        "ru": "Рынок уже закрыт",
-        "en": "Market already closed",
-        "zh": "市场已关闭",
-    },
-    "market_only_creator": {
-        "ru": "Закрыть может только создатель рынка",
-        "en": "Only the creator can close the market",
-        "zh": "只有创建者才能关闭市场",
-    },
     "market_resolve_title": {
         "ru": "🏁 <b>Закрыть рынок #{mid}</b> — «{question}»\n\nКто победил? Победные доли платят 1 USDC за долю, остаток пула — тебе.",
         "en": "🏁 <b>Close market #{mid}</b> — \"{question}\"\n\nWho won? Winning shares pay 1 USDC each, pool remainder goes to you.",
@@ -745,30 +705,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "📈 市场 #{mid} ——「{question}」已关闭。\n获胜者：<b>{winner}</b>\n你的份额未中奖。更多市场：/markets",
     },
     # ----- bet errors -----
-    "bet_not_found": {
-        "ru": "Ставка не найдена.",
-        "en": "Bet not found.",
-        "zh": "投注未找到。",
-    },
-    "bet_closed": {
-        "ru": "Эта ставка уже закрыта.",
-        "en": "This bet is already closed.",
-        "zh": "此投注已关闭。",
-    },
-    "bet_deadline_passed": {
-        "ru": "⏰ Время приёма ставок истекло. Жди решения создателя: /bets",
-        "en": "⏰ Betting period ended. Wait for the creator to resolve: /bets",
-        "zh": "⏰ 投注时间已结束。等待创建者结算：/bets",
-    },
     "bet_invalid_option": {
         "ru": "Неверный номер варианта.",
         "en": "Invalid option number.",
         "zh": "无效选项编号。",
-    },
-    "bet_format": {
-        "ru": "Формат: /bet <id> <номер> <сумма>",
-        "en": "Format: /bet <id> <option> <amount>",
-        "zh": "格式：/bet <id> <选项> <金额>",
     },
     "bet_max": {
         "ru": "Максимум за одну ставку: <b>{n} USDC</b>.",
@@ -785,25 +725,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "🎲 No open bets.\nCreate: /bet create <question> | <o1> | <o2>",
         "zh": "🎲 暂无开放投注。\n创建：/bet create <问题> | <选项1> | <选项2>",
     },
-    "bet_list_header": {
-        "ru": "🎲 <b>Открытые ставки</b>",
-        "en": "🎲 <b>Open bets</b>",
-        "zh": "🎲 <b>开放投注</b>",
-    },
-    "bet_list_hint": {
-        "ru": "Нажми на рынок — карточка со ставками.",
-        "en": "Tap a market for bet details.",
-        "zh": "点击市场查看详情。",
-    },
     "bet_create_card": {
         "ru": "🎯 #{id} <b>{question}</b>\n✅ <b>Решён:</b> {winner}",
         "en": "🎯 #{id} <b>{question}</b>\n✅ <b>Resolved:</b> {winner}",
         "zh": "🎯 #{id} <b>{question}</b>\n✅ <b>已结算：</b> {winner}",
-    },
-    "bet_expired": {
-        "ru": "🕳️ <b>Рынок истёк</b> — деньги можно вернуть: /cancel <id>",
-        "en": "🕳️ <b>Market expired</b> — you can refund: /cancel <id>",
-        "zh": "🕳️ <b>市场已过期</b> —— 可以退款：/cancel <id>",
     },
     "bet_open": {
         "ru": "⏰ {deadline} · создатель: @{creator}",
@@ -814,21 +739,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "⌛ Закрытие: создателем /resolve · @{creator}",
         "en": "⌛ Closing: by creator /resolve · @{creator}",
         "zh": "⌛ 关闭方式：创建者 /resolve · @{creator}",
-    },
-    "bet_pot": {
-        "ru": "Пул итого: <b>{pot} USDC</b> · участников: {backers}",
-        "en": "Total pool: <b>{pot} USDC</b> · backers: {backers}",
-        "zh": "奖池总额：<b>{pot} USDC</b> · 参与者：{backers}",
-    },
-    "bet_fee_note": {
-        "ru": "Комиссия на выигрыш: 2% (создателю рынка)",
-        "en": "Win fee: 2% (to market creator)",
-        "zh": "赢利手续费：2%（归创建者）",
-    },
-    "bet_resolve_title": {
-        "ru": "🏁 <b>Закрыть рынок #{mid}</b> — «{question}»\n\nКто победил?\nПобедители делят пул ({pot} USDC), создатель получает 2% комиссии.",
-        "en": "🏁 <b>Close market #{mid}</b> — \"{question}\"\n\nWho won?\nWinners share pool ({pot} USDC), creator gets 2% fee.",
-        "zh": "🏁 <b>关闭市场 #{mid}</b> ——「{question}」\n\n谁赢了？\n赢家瓜分奖池（{pot} USDC），创建者获得 2% 手续费。",
     },
     "bet_resolve_win": {
         "ru": "🏆 <b>Ты выиграл {amount} USDC!</b>\n🎲 #{mid} — «{question}»\nПобедил: <b>{winner}</b>\nБаланс: /balance",
@@ -845,21 +755,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "↩️ Bet #{id} — \"{question}\" cancelled.\nFunds returned: /history",
         "zh": "↩️ 投注 #{id} ——「{question}」已取消。\n资金已退还：/history",
     },
-    "bet_my_empty": {
-        "ru": "🎲 У тебя нет открытых позиций. Ставят: /bets",
-        "en": "🎲 No open positions. Bets: /bets",
-        "zh": "🎲 没有持仓。投注：/bets",
-    },
-    "bet_my_header": {
-        "ru": "📌 <b>Твои открытые позиции</b>",
-        "en": "📌 <b>Your open positions</b>",
-        "zh": "📌 <b>你的持仓</b>",
-    },
-    "bet_confirmed": {
-        "ru": "✅ Ставка принята!\n🎯 #{id} — <b>{label}</b> на <b>{amount} USDC</b>\nОстаток: {bal} USDC",
-        "en": "✅ Bet accepted!\n🎯 #{id} — <b>{label}</b> for <b>{amount} USDC</b>\nBalance: {bal} USDC",
-        "zh": "✅ 投注已接受！\n🎯 #{id} —— <b>{label}</b> 下注 <b>{amount} USDC</b>\n余额：{bal} USDC",
-    },
     # ----- wallet extra -----
     "wallet_help": {
         "ru": "Формат:\n• /wallet — адрес\n• /wallet export — ключ и сид\n• /wallet export hot — ключ горячего кошелька (админ)",
@@ -875,6 +770,26 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "👛 <b>Твой кошелёк</b>\n\nАдрес: <code>{addr}</code>\n🟦 Сеть Base · монета USDC\n\nКлюч и сид: /wallet export",
         "en": "👛 <b>Your wallet</b>\n\nAddress: <code>{addr}</code>\n🟦 Base network · USDC coin\n\nKey & seed: /wallet export",
         "zh": "👛 <b>你的钱包</b>\n\n地址：<code>{addr}</code>\n🟦 Base 网络 · USDC 代币\n\n密钥与助记词：/wallet export",
+    },
+    "wallet_list": {
+        "ru": "👛 <b>Твои кошельки</b> ({count}/{max})\n\n{slots}\n\nАктивный: слот {active_slot} · <code>{active_addr}</code>\n\n➕ Создать новый: /wallet new\n📤 Экспорт активного: /wallet export",
+        "en": "👛 <b>Your wallets</b> ({count}/{max})\n\n{slots}\n\nActive: slot {active_slot} · <code>{active_addr}</code>\n\n➕ Create new: /wallet new\n📤 Export active: /wallet export",
+        "zh": "👛 <b>你的钱包</b> ({count}/{max})\n\n{slots}\n\n当前活跃：槽位 {active_slot} · <code>{active_addr}</code>\n\n➕ 创建新钱包：/wallet new\n📤 导出活跃钱包：/wallet export",
+    },
+    "wallet_new_ok": {
+        "ru": "✅ Новый кошелёк создан!\n\nАдрес: <code>{addr}</code>\nСлот: {slot}\n\nОн стал активным. Выбери другой: тапни на кнопку ниже.",
+        "en": "✅ New wallet created!\n\nAddress: <code>{addr}</code>\nSlot: {slot}\n\nIt's now active. Switch: tap a button below.",
+        "zh": "✅ 新钱包已创建！\n\n地址：<code>{addr}</code>\n槽位：{slot}\n\n已设为活跃钱包。切换请点击下方按钮。",
+    },
+    "wallet_limit_reached": {
+        "ru": "❌ Лимит кошельков ({max}) исчерпан. Удали лишние через /wallet.",
+        "en": "❌ Wallet limit ({max}) reached. Remove extras via /wallet.",
+        "zh": "❌ 钱包数量已达上限 ({max})。请通过 /wallet 删除多余钱包。",
+    },
+    "wallet_active_switched": {
+        "ru": "✅ Активный кошелёк: слот {slot} · <code>{addr}</code>",
+        "en": "✅ Active wallet: slot {slot} · <code>{addr}</code>",
+        "zh": "✅ 活跃钱包：槽位 {slot} · <code>{addr}</code>",
     },
     "link_sign_prompt": {
         "ru": "🔗 <b>Привязка кошелька</b>\n\nПодпиши сообщение в кошельке:\n<code>{text}</code>\n\nПотом: /confirm <i>&lt;0x…подпись&gt;</i>",

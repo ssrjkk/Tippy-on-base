@@ -16,11 +16,14 @@ import re
 import time
 import uuid
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
+
 from bot import base, config
-from bot.ledger import async_ledger as ledger
 from bot.base import hot_wallet
+from bot.ledger import async_ledger as ledger
+
 MICRO = 10 ** config.USDC_DECIMALS
 MAX_TIP_USDC = 1000
 PAYMENT_TTL_SECONDS = 300

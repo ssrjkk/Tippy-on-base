@@ -26,6 +26,10 @@ htmlcov/
 # Logs
 *.log
 
+# Binaries
+deploy/cloudflared.exe
+deploy/cloudflared
+
 # OS
 .DS_Store
 Thumbs.db

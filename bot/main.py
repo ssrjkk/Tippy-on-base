@@ -3,15 +3,16 @@ import asyncio
 import logging
 import os
 import time
-from .solvency import solvency_watcher
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
-from aiogram.exceptions import TelegramNetworkError
 from aiogram.enums import ParseMode
-from . import base, config
-from . import i18n
+from aiogram.exceptions import TelegramNetworkError
+
+from . import base, config, i18n
 from .handlers import router
 from .ledger import async_ledger as ledger
+from .solvency import solvency_watcher
 from .telegram_transport import make_session
 
 # Structured JSON logs for production (LOG_FORMAT=json), human-readable for dev.
@@ -126,7 +127,9 @@ async def _run_webhook(stop: asyncio.Event | None=None) -> None:
     bound port the platform health check kills the service.
     """
     import os
+
     import uvicorn
+
     from web import hook
     from web.server import app as web_app
     await hook.bot.set_webhook(url=config.WEBHOOK_URL, secret_token=hook.webhook_secret())

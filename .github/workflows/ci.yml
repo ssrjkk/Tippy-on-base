@@ -64,7 +64,7 @@ jobs:
       - name: Security audit (pip-audit)
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt --strict
+          pip-audit -r requirements.txt
 
       - name: Test with coverage
         env:

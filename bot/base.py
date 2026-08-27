@@ -1,4 +1,11 @@
-"""Base network layer: USDC balance, deposit scanning, withdrawals."""
+"""Base network layer: USDC balance, deposit scanning, withdrawals.
+
+This module is the bot's single chain facade. It keeps the battle-tested
+monolithic helpers used by handlers/web/tests (which patch `base.w3` /
+`base.usdc` directly), and re-exports the layered `bot.chain.*` toolkit
+(`base.core`, `base.prices`, basename/price/DEX readers, ...) so callers and
+tests can use the richer primitives. See bot/chain/__init__.py.
+"""
 
 import asyncio
 import logging
@@ -11,6 +18,17 @@ from eth_typing import ChecksumAddress
 from web3 import Web3
 
 from . import config
+from .chain import (  # noqa: F401  (re-exported below as facade surface)
+    basenames,
+    core,
+    deposits,
+    dex,
+    network,
+    prices,
+    tokens,
+    transactions,
+    transfers,
+)
 from .ledger import ledger
 
 log = logging.getLogger("tipbot.base")
@@ -26,7 +44,7 @@ _RPC_FALLBACKS: list[str] = [
     u.strip() for u in (getattr(config, "BASE_RPC_FALLBACK_URLS", "") or "").split(",") if u.strip()
 ]
 
-_ALL_RPC_URLS = [_PRIMARY_RPC] + _RPC_FALLBACKS
+_ALL_RPC_URLS = [_PRIMARY_RPC, *_RPC_FALLBACKS]
 
 
 def _make_w3(url: str) -> Web3:
@@ -404,3 +422,69 @@ async def kick_expired_channel_subscriptions(bot) -> int:
         except Exception:
             pass
     return kicked
+
+
+# ---------------------------------------------------------------------------
+# bot.chain facade surface
+#
+# Re-export the layered chain toolkit so callers can reach both the plain
+# module objects (`base.core`, `base.prices`, ...) for mocking/reads and the
+# ready-made sync primitives (`base.assert_base_chain_sync`, `base.namehash`,
+# `base.feed_price_sync`, ...). The monolithic helpers above are kept
+# untouched for the handlers and existing tests that patch `base.w3`/`base.usdc`.
+# ---------------------------------------------------------------------------
+
+# The sync functions read the *chain.core* provider (`base.core.w3`), so tests
+# patch `base.core.w3` / `base.core._contract_read` / `base.prices._feed_read`.
+assert_base_chain_sync = network.assert_base_chain_sync
+nonce_sync = network.nonce_sync
+is_contract_sync = network.is_contract_sync
+get_block_sync = network.get_block_sync
+eip1559_fees_sync = network.eip1559_fees_sync
+eip1559_fees = network.eip1559_fees
+clear_network_caches = network.clear_network_caches
+
+wait_for_tx_sync = transactions.wait_for_tx_sync
+tx_status = transactions.tx_status
+wait_for_tx = transactions.wait_for_tx
+
+_send_token_sync = transfers._send_token_sync
+_approve_token_sync = transfers._approve_token_sync
+_send_eth_sync = transfers._send_eth_sync
+send_usdc_sync = transfers._send_usdc_sync
+
+token_meta_sync = tokens.token_meta_sync
+_token_meta_cache = tokens._token_meta_cache
+token_balance_sync = tokens.token_balance_sync
+token_allowance_sync = tokens.token_allowance_sync
+erc20_total_supply_sync = tokens.erc20_total_supply_sync
+
+feed_price_sync = prices.feed_price_sync
+l2_sequencer_ok_sync = prices.l2_sequencer_ok_sync
+price_cache_clear = prices.price_cache_clear
+
+
+def get_eth_price_usd_sync() -> float | None:
+    """ETH/USD from the Chainlink feed on Base. None if unavailable/stale."""
+    return feed_price_sync(config.CHAINLINK_ETH_USD_FEED)
+
+
+def get_usdc_price_usd_sync() -> float | None:
+    """USDC/USD from the Chainlink feed on Base (~1.00; deviation is a red flag)."""
+    return feed_price_sync(
+        config.CHAINLINK_USDC_USD_FEED,
+        max_age_seconds=config.USDC_PRICE_FEED_MAX_AGE_SECONDS,
+    )
+
+namehash = basenames.namehash
+is_basename = basenames.is_basename
+resolve_basename_sync = basenames.resolve_basename_sync
+reverse_basename_sync = basenames.reverse_basename_sync
+basename_available_sync = basenames.basename_available_sync
+
+aerodrome_quote_sync = dex.aerodrome_quote_sync
+usdc_to_eth_quote_sync = dex.usdc_to_eth_quote_sync
+usdc_to_eth_quote = dex.usdc_to_eth_quote_sync
+
+hot_wallet_chain = core.hot_wallet
+_scan_deposits_chain = deposits._scan_deposits

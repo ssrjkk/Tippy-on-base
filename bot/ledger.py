@@ -268,11 +268,15 @@ CREATE TABLE IF NOT EXISTS users (
                     lang          TEXT NOT NULL DEFAULT 'ru'   -- UI language: ru/en/zh
                 );
                 CREATE TABLE IF NOT EXISTS user_wallets (
-                    tg_id      BIGINT PRIMARY KEY,
+                    id         BIGSERIAL PRIMARY KEY,
+                    tg_id      BIGINT NOT NULL,
                     address    TEXT NOT NULL UNIQUE,
                     key_enc    TEXT NOT NULL,
                     seed_enc   TEXT NOT NULL,
-                    created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+                    slot       INT NOT NULL DEFAULT 1,
+                    active     BOOLEAN NOT NULL DEFAULT true,
+                    created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+                    UNIQUE (tg_id, slot)
                 );
                 CREATE TABLE IF NOT EXISTS x402_payments (
                     tx_hash      TEXT PRIMARY KEY,
@@ -423,9 +427,11 @@ class Ledger:
         which applies the full DDL idempotently.
         """
         try:
-            from alembic.config import Config
-            from alembic import command
             import pathlib
+
+            from alembic.config import Config
+
+            from alembic import command
             ini = pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"
             if not ini.exists():
                 return
@@ -2096,13 +2102,100 @@ class Ledger:
     def save_wallet(self, tg_id: int, address: str, key_enc: str, seed_enc: str) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO user_wallets (tg_id, address, key_enc, seed_enc) "
-                "VALUES (%s, %s, %s, %s) "
-                "ON CONFLICT (tg_id) DO UPDATE SET address = EXCLUDED.address, "
+                "INSERT INTO user_wallets (tg_id, address, key_enc, seed_enc, slot, active) "
+                "VALUES (%s, %s, %s, %s, 1, true) "
+                "ON CONFLICT (tg_id, slot) DO UPDATE SET address = EXCLUDED.address, "
                 "key_enc = EXCLUDED.key_enc, seed_enc = EXCLUDED.seed_enc",
                 (tg_id, address, key_enc, seed_enc),
             )
             self._conn.commit()
+
+    # ---------- multi-wallet (slot-based) ----------
+
+    def get_wallets(self, tg_id: int) -> list[dict]:
+        """All wallets for a user, ordered by slot."""
+        with self._lock:
+            return list(self._conn.execute(
+                "SELECT id, tg_id, address, key_enc, seed_enc, slot, active "
+                "FROM user_wallets WHERE tg_id = %s ORDER BY slot",
+                (tg_id,),
+            ).fetchall())
+
+    def get_active_wallet(self, tg_id: int) -> dict | None:
+        """The active wallet for a user (active=true), or None."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT id, tg_id, address, key_enc, seed_enc, slot, active "
+                "FROM user_wallets WHERE tg_id = %s AND active = true",
+                (tg_id,),
+            ).fetchone()
+
+    def set_active_wallet(self, tg_id: int, wallet_id: int) -> bool:
+        """Set a specific wallet as active for the user. Returns False if not found."""
+        with self._lock:
+            # Verify wallet belongs to user
+            row = self._conn.execute(
+                "SELECT id FROM user_wallets WHERE id = %s AND tg_id = %s",
+                (wallet_id, tg_id),
+            ).fetchone()
+            if not row:
+                return False
+            # Deactivate all, activate the selected one
+            self._conn.execute(
+                "UPDATE user_wallets SET active = false WHERE tg_id = %s",
+                (tg_id,),
+            )
+            self._conn.execute(
+                "UPDATE user_wallets SET active = true WHERE id = %s",
+                (wallet_id,),
+            )
+            self._conn.commit()
+            return True
+
+    def create_wallet_slot(self, tg_id: int) -> tuple[dict | None, str | None]:
+        """Create a new wallet in the next available slot.
+
+        Returns (wallet_row_or_None, error_key_or_None).
+        Error keys: 'limit_reached', 'db_error'.
+        """
+        with self._lock:
+            count = self._conn.execute(
+                "SELECT COUNT(*) as cnt FROM user_wallets WHERE tg_id = %s",
+                (tg_id,),
+            ).fetchone()["cnt"]
+            if count >= config.MAX_WALLETS_PER_USER:
+                return None, "wallet_limit_reached"
+            # Find next available slot
+            rows = self._conn.execute(
+                "SELECT slot FROM user_wallets WHERE tg_id = %s ORDER BY slot",
+                (tg_id,),
+            ).fetchall()
+            used_slots = {r["slot"] for r in rows}
+            next_slot = 1
+            while next_slot in used_slots:
+                next_slot += 1
+            # Deactivate all existing wallets (new wallet becomes active)
+            self._conn.execute(
+                "UPDATE user_wallets SET active = false WHERE tg_id = %s",
+                (tg_id,),
+            )
+            # Create wallet
+            from . import wallets as _wallets
+            address, key, seed = _wallets.new_wallet()
+            key_enc = _wallets.encrypt(key)
+            seed_enc = _wallets.encrypt(seed)
+            self._conn.execute(
+                "INSERT INTO user_wallets (tg_id, address, key_enc, seed_enc, slot, active) "
+                "VALUES (%s, %s, %s, %s, %s, true)",
+                (tg_id, address, key_enc, seed_enc, next_slot),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT id, tg_id, address, key_enc, seed_enc, slot, active FROM user_wallets "
+                "WHERE tg_id = %s AND slot = %s",
+                (tg_id, next_slot),
+            ).fetchone()
+            return row, None
 
     # ---------- rain (group giveaway) ----------
 

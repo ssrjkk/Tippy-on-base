@@ -3,11 +3,15 @@ import json
 import time
 from datetime import datetime
 from decimal import Decimal
+
 from aiogram import F, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
 from bot import i18n
+
 from . import _common as common
+
 __all__ = ['_bet_card', '_bet_create', '_bet_place', '_bets_text', '_market_detail_text', '_notify_bet_cancelled', '_notify_bet_result', '_parse_deadline', '_rel_deadline', 'cb_bet_amount', 'cb_bet_place', 'cb_market', 'cb_res', 'cmd_bet', 'cmd_bets', 'cmd_cancel', 'cmd_mybets', 'cmd_resolve']
 
 async def _lang(tg_id: int | None) -> str:
@@ -338,10 +342,10 @@ async def _notify_bet_result(message: types.Message, bet_id: int) -> None:
         lang = await _lang(tg_id)
         won = [r for r in rows if r['win']]
         if won:
-            total = sum((r['net_micro'] for r in won))
+            total = sum(r['net_micro'] for r in won)
             line = i18n.t(lang, 'bet_notify_win', id=bet_id, question=bet['question'], winner=winner_label, amount=common._fmt(total))
         else:
-            labels = '», «'.join((r['option'] for r in rows))
+            labels = '», «'.join(r['option'] for r in rows)
             line = i18n.t(lang, 'bet_notify_lose', id=bet_id, question=bet['question'], winner=winner_label, labels=labels)
         try:
             await message.bot.send_message(tg_id, line)

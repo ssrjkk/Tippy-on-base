@@ -1,9 +1,13 @@
 ﻿"""/tip  handlers."""
 from decimal import Decimal
+
 from aiogram import types
 from aiogram.filters import Command
+
 from bot import i18n
+
 from . import _common as common
+
 __all__ = ['_notify_tip_received', '_resolve_in_chat', 'cmd_rain', 'cmd_tip']
 
 @common.router.message(Command('rain'))

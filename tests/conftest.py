@@ -74,9 +74,9 @@ def ledger(monkeypatch):
     # Wrap in AsyncLedger: the routes now `await ledger.x()`, so the injected
     # ledger must be awaitable too.
     import web.auth
-    import web.server
-    import web.mini
     import web.frame
+    import web.mini
+    import web.server
     import web.x402
 
     monkeypatch.setattr(web.server, "ledger", async_fresh)

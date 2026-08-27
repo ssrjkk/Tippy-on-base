@@ -632,7 +632,7 @@ def test_lmsr_buy_sell_roundtrip_conservation():
     q_after_buy = [shares, 0]
     sell_value = lmsr_sell_value(q_after_buy, b, 0, shares)
     # Round-trip cost = spend - sell_value (the AMM's spread)
-    assert 0 <= spend - sell_value
+    assert spend - sell_value >= 0
 
 
 def test_lmsr_three_options_monotone():

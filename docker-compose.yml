@@ -1,67 +1,40 @@
 services:
   db:
     image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: tipbot
-      POSTGRES_PASSWORD: tipbot
-      POSTGRES_DB: tipbot
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"  # 5433: a local postgres may already own 5432 on dev machines
     restart: unless-stopped
+    environment:
+      POSTGRES_USER: tippy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tippy}
+      POSTGRES_DB: tippy
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tipbot -d tipbot"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "pg_isready -U tippy"]
+      interval: 5s
+      timeout: 3s
       retries: 5
 
-  bot:
+  app:
     build: .
-    command: python -m bot.main
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://tipbot:tipbot@db:5432/tipbot
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
-
-  web:
-    build: .
-    command: python -m uvicorn web.server:app --host 0.0.0.0 --port 8000
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://tipbot:tipbot@db:5432/tipbot
+      DATABASE_URL: postgresql://tippy:${POSTGRES_PASSWORD:-tippy}@db:5432/tippy
+      PYTHONUTF8: 1
     ports:
       - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
 
-  backup:
-    image: postgres:16-alpine
-    environment:
-      PGPASSWORD: tipbot
-    command: >
-      sh -c 'while true; do
-        pg_dump -U tipbot -h db -d tipbot | gzip > /backups/tipbot-$(date +%F-%H%M).sql.gz;
-        find /backups -name "*.sql.gz" -mtime +13 -delete;
-        sleep 21600;
-      done'
-    volumes:
-      - backups_data:/backups
-    depends_on:
-      db:
-        condition: service_healthy
+  cloudflared:
+    image: cloudflare/cloudflared:latest
     restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - app
 
 volumes:
-  pg_data:
-  backups_data:
+  pgdata:

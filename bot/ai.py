@@ -168,7 +168,7 @@ async def _fetch_market_odds(market_id: int, onchain: bool = False) -> dict:
         except Exception as e:
             return {"error": f"on-chain markets unavailable: {e}"}
         try:
-            q, b, n = await om.market_state(market_id)
+            q, _, n = await om.market_state(market_id)
         except Exception as e:
             return {"error": str(e)}
         prices_pct = []

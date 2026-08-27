@@ -8,12 +8,11 @@ certificate validation still use the real hostname, so this is safe.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import socket
 
-from aiohttp.abc import AbstractResolver
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiohttp.abc import AbstractResolver
 
 log = logging.getLogger("tipbot.telegram_transport")
 

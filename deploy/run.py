@@ -16,8 +16,6 @@ import asyncio
 import logging
 import os
 import sys
-import time
-
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +38,7 @@ log = logging.getLogger("tipbot")
 async def _start_web_server() -> None:
     """Start uvicorn serving the FastAPI app."""
     import uvicorn
+
     from web.server import app as web_app
 
     port = int(os.environ.get("PORT", str(config.WEB_PORT)))
@@ -59,7 +58,6 @@ async def _start_bot_polling() -> None:
     from aiogram.enums import ParseMode
     from aiogram.exceptions import TelegramNetworkError
 
-    from bot import base, i18n
     from bot.handlers import router
     from bot.ledger import async_ledger as ledger
 

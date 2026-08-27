@@ -1,11 +1,15 @@
 ﻿from bot import i18n
+
 'Paywall (paid content) handlers + reaction tips + message indexing.'
 import re
 import time
 from decimal import Decimal
+
 from aiogram import types
 from aiogram.filters import Command, CommandObject
+
 from . import _common as common
+
 __all__ = ['PAYWALL_DRAFT_TTL', 'PAYWALL_HELP', '_index_message', '_paywall_channel_cmd', '_paywall_channels_cmd', '_paywall_draft', '_paywall_subscribe_cmd', 'cmd_paywall', 'on_reaction']
 PAYWALL_DRAFT_TTL = 300
 _paywall_draft: dict[int, tuple[int, str, float]] = {}

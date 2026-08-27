@@ -12,8 +12,9 @@ Exposes key metrics in Prometheus text format:
 """
 
 import time
-from bot.ledger import async_ledger as ledger
+
 from bot import base, config
+from bot.ledger import async_ledger as ledger
 
 _MICRO = 10 ** config.USDC_DECIMALS
 _metrics_cache: dict | None = None

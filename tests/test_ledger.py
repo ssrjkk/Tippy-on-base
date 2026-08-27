@@ -1,7 +1,6 @@
 """Ledger invariants: conservation of funds, fees, refunds, deadlines."""
 
 import os
-import threading
 import time
 from decimal import Decimal
 

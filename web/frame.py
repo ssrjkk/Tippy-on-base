@@ -11,9 +11,12 @@ Warpcast requires the frame image to be an absolute https URL, so the page
 is only meaningful once the webhook URL is configured (after deploy).
 """
 from html import escape
+
 from fastapi import APIRouter
+
 from bot import config
 from bot.ledger import async_ledger as ledger
+
 router = APIRouter()
 MICRO = 10 ** config.USDC_DECIMALS
 

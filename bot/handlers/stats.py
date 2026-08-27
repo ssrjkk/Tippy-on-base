@@ -1,8 +1,11 @@
 ﻿"""Stats / leaderboard / history handlers."""
 from aiogram import types
 from aiogram.filters import Command
+
 from bot import i18n
+
 from . import _common as common
+
 __all__ = ['_history_text', '_stats_text', '_top_text', 'cmd_history', 'cmd_stats', 'cmd_top']
 
 @common.router.message(Command('stats'))

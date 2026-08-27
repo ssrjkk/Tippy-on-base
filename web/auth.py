@@ -16,11 +16,14 @@ import base64
 import hashlib
 import hmac
 import time
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
+
 from bot import config
 from bot.ledger import async_ledger as ledger
+
 router = APIRouter()
 COOKIE_NAME = 'tippy_session'
 SESSION_TTL_SECONDS = 30 * 24 * 3600

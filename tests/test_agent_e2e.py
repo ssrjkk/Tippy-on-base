@@ -7,11 +7,10 @@ external dependencies.
 import json
 import time
 from pathlib import Path
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent.decision import MarketDecision
 from agent.tools import _agent_markets
 
 
@@ -38,7 +37,6 @@ class TestE2EAgentCycle:
     async def test_full_cycle_mock(self, monkeypatch):
         """Full cycle: news → LLM filter → LLM decide → create_market → place_bet → sell_signal."""
         from agent.main import single_cycle
-        from agent import caps
 
         # Provide a key so _call_llm reaches the mocked urlopen below.
         monkeypatch.setenv("AI_API_KEY", "test-key")
@@ -122,7 +120,7 @@ class TestE2EAgentCycle:
     @pytest.mark.asyncio
     async def test_oracle_protection_blocks_bet(self):
         """Agent cannot bet on its own markets."""
-        from agent.tools import create_market, place_bet, _agent_markets
+        from agent.tools import _agent_markets, create_market, place_bet
 
         mock_ledger = AsyncMock()
         mock_ledger.create_market.return_value = 100
@@ -141,10 +139,9 @@ class TestE2EAgentCycle:
     @pytest.mark.asyncio
     async def test_caps_prevent_over_spend(self):
         """Agent respects daily cap."""
-        from agent.tools import create_market
-
         # Set state to near daily cap
         from agent.caps import _save_state
+        from agent.tools import create_market
         _save_state({
             "daily_spent": 48.0,
             "daily_date": time.strftime("%Y-%m-%d", time.gmtime()),
@@ -161,7 +158,7 @@ class TestE2EAgentCycle:
     @pytest.mark.asyncio
     async def test_circuit_breaker_after_errors(self):
         """Agent enters cooldown after 3 consecutive errors."""
-        from agent.caps import record_error, get_status
+        from agent.caps import get_status, record_error
 
         for _ in range(3):
             record_error()

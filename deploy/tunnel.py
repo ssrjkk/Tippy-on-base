@@ -1,9 +1,8 @@
 """Start cloudflared tunnel + bot + web server. Outputs the public URL."""
-import subprocess
-import re
-import sys
-import time
 import os
+import re
+import subprocess
+import sys
 
 CF = os.path.join(os.path.dirname(__file__), "cloudflared.exe")
 

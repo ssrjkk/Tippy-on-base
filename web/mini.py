@@ -10,13 +10,15 @@ import hashlib
 import hmac
 import logging
 import time
-from typing import Any
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
 from bot import base, config
 from bot.ledger import async_ledger as ledger
 from web.auth import COOKIE_NAME, SESSION_TTL_SECONDS, make_session, parse_session
+
 router = APIRouter()
 log = logging.getLogger('web.mini')
 MICRO = 10 ** config.USDC_DECIMALS
@@ -27,11 +29,11 @@ def verify_init_data(init_data: str) -> int:
     if not init_data or '=' not in init_data:
         raise HTTPException(403, 'missing initData')
     pairs = [p.split('=', 1) for p in init_data.split('&') if '=' in p]
-    data: dict[str, str] = {k: v for k, v in pairs}
+    data: dict[str, str] = dict(pairs)
     received_hash = data.pop('hash', '')
     if not received_hash:
         raise HTTPException(403, 'missing hash')
-    check_string = '\n'.join((f'{k}={data[k]}' for k in sorted(data)))
+    check_string = '\n'.join(f'{k}={data[k]}' for k in sorted(data))
     secret = hmac.new(b'WebAppData', config.BOT_TOKEN.encode(), hashlib.sha256).digest()
     expected = hmac.new(secret, check_string.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, received_hash):
@@ -105,7 +107,7 @@ _ERR_MSG = {'closed': 'market closed', 'deadline': 'deadline passed', 'badopt': 
 @router.post('/api/mini/tip', tags=['users'])
 async def mini_tip(body: TipBody, request: Request) -> dict:
     tg_id = await _user(request)
-    micro = int(round(body.amount * MICRO))
+    micro = round(body.amount * MICRO)
     if micro <= 0:
         raise HTTPException(400, 'amount must be positive')
     to = body.to.strip().lstrip('@')
@@ -128,7 +130,7 @@ class TradeBody(BaseModel):
 @router.post('/api/mini/trade', tags=['markets'])
 async def mini_trade(body: TradeBody, request: Request) -> dict:
     tg_id = await _user(request)
-    micro = int(round(body.amount * MICRO))
+    micro = round(body.amount * MICRO)
     if micro <= 0:
         raise HTTPException(400, 'amount must be positive')
     status, info = await ledger.buy_shares(body.market_id, tg_id, body.option, micro)
@@ -146,7 +148,7 @@ class BetPlaceBody(BaseModel):
 @router.post('/api/mini/betplace', tags=['markets'])
 async def mini_betplace(body: BetPlaceBody, request: Request) -> dict:
     tg_id = await _user(request)
-    micro = int(round(body.amount * MICRO))
+    micro = round(body.amount * MICRO)
     if micro <= 0:
         raise HTTPException(400, 'amount must be positive')
     res = await ledger.place_bet(body.bet_id, tg_id, body.option, micro)
@@ -173,13 +175,13 @@ async def mini_create(body: CreateBody, request: Request) -> dict:
     options = [o.strip() for o in body.options if o.strip()]
     if len(question) < 5 or len(options) < 2:
         raise HTTPException(400, 'question too short or fewer than 2 options')
-    if len(options) > 4 or max((len(o) for o in options)) > 64:
+    if len(options) > 4 or max(len(o) for o in options) > 64:
         raise HTTPException(400, 'max 4 options, 64 chars each')
     if len(question) > 200:
         raise HTTPException(400, 'question too long (max 200 chars)')
     close_at = _parse_deadline(body.hours)
     if body.kind == 'market':
-        subsidy_micro = int(round(body.subsidy_usdc * MICRO))
+        subsidy_micro = round(body.subsidy_usdc * MICRO)
         if subsidy_micro < 1:
             raise HTTPException(400, 'subsidy too small')
         mid = await ledger.create_market(tg_id, question, options, subsidy_micro, close_at=close_at)

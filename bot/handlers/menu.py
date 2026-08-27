@@ -2,12 +2,14 @@
 from aiogram import F, types
 from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from . import _common as common
+
 from bot import i18n
+
 from . import _common as common
 from .bets import _bets_text, _market_detail_text
 from .stats import _history_text, _stats_text, _top_text
 from .wallet import _balance_text, _deposit_text, _donate_text
+
 
 async def _lang(tg_id: int) -> str:
     return i18n.norm((await common.ledger.get_settings(tg_id)).get('lang'))

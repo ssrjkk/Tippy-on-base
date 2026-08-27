@@ -2,12 +2,16 @@
 import logging
 import time
 from decimal import Decimal
-from aiogram import types
+
+from aiogram import F, types
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from eth_utils import is_address, to_checksum_address
+
 from bot import i18n
+
 from . import _common as common
+
 
 async def _notify_aml(bot, tg_id: int, warnings: list[str]) -> None:
     """Send AML flags to the configured admin chat (no-op if unset)."""
@@ -30,8 +34,8 @@ async def _balance_text(tg_id: int) -> str:
     pos = await common.ledger.user_positions(tg_id)
     bets_line = ''
     if pos:
-        stake = sum((p['stake_micro'] for p in pos))
-        potential = sum((p['potential_micro'] for p in pos))
+        stake = sum(p['stake_micro'] for p in pos)
+        potential = sum(p['potential_micro'] for p in pos)
         bets_line = i18n.t(lang, 'bal_ingame', n=len(pos), stake=common._fmt(stake), pot=common._fmt(potential))
     fees = await common.ledger.creator_fees(tg_id)
     fees_line = i18n.t(lang, 'bal_fees', fees=common._fmt(fees)) if fees else ''
@@ -150,20 +154,145 @@ async def cmd_wallet(message: types.Message) -> None:
     await common.ledger.ensure_user(message.from_user.id, message.from_user.username)
     lang = await common.user_lang(message.from_user.id)
     parts = message.text.strip().split()
+
+    # /wallet export — export active wallet
     if len(parts) > 1 and parts[1].lower() == 'export':
         if not await common.require_private(message):
             return
-        row = await common.ledger.get_wallet(message.from_user.id)
+        row = await common.ledger.get_active_wallet(message.from_user.id)
         if not row:
             row = await _ensure_wallet(message.from_user.id)
         privkey = common.wallets.decrypt(row['key_enc'])
         seed = common.wallets.decrypt(row['seed_enc'])
         await message.answer(i18n.t(lang, 'wallet_key_export', addr=row['address'], privkey=privkey, seed=seed))
         return
-    row = await common.ledger.get_wallet(message.from_user.id)
-    if not row:
+
+    # /wallet new — create new wallet slot
+    if len(parts) > 1 and parts[1].lower() == 'new':
+        row, err = await common.ledger.create_wallet_slot(message.from_user.id)
+        if err == 'wallet_limit_reached':
+            await message.answer(i18n.t(lang, 'wallet_limit_reached', max=common.config.MAX_WALLETS_PER_USER))
+            return
+        if err:
+            await message.answer(i18n.t(lang, 'wallet_help'))
+            return
+        await message.answer(i18n.t(lang, 'wallet_new_ok', addr=row['address'], slot=row['slot']))
+        return
+
+    # /wallet — show all slots
+    wallets = await common.ledger.get_wallets(message.from_user.id)
+    if not wallets:
         row = await _ensure_wallet(message.from_user.id)
-    await message.answer(i18n.t(lang, 'wallet_addr', addr=row['address']))
+        wallets = await common.ledger.get_wallets(message.from_user.id)
+
+    active = next((w for w in wallets if w['active']), wallets[0])
+    slot_lines = []
+    for w in wallets:
+        marker = '🟢' if w['active'] else '⚪'
+        addr_short = w['address'][:6] + '…' + w['address'][-4:]
+        slot_lines.append(f"{marker} Слот {w['slot']}: <code>{addr_short}</code>")
+
+    kb = []
+    row_btns = []
+    for w in wallets:
+        marker = '🟢' if w['active'] else '⚪'
+        row_btns.append(InlineKeyboardButton(
+            text=f"{marker}{w['slot']}",
+            callback_data=f"wallet_sel:{w['id']}"
+        ))
+        if len(row_btns) == 5:
+            kb.append(row_btns)
+            row_btns = []
+    if row_btns:
+        kb.append(row_btns)
+    # Add "create new" button if under limit
+    if len(wallets) < common.config.MAX_WALLETS_PER_USER:
+        kb.append([InlineKeyboardButton(
+            text=f"➕ Создать ({len(wallets)}/{common.config.MAX_WALLETS_PER_USER})",
+            callback_data="wallet_new"
+        )])
+
+    await message.answer(
+        i18n.t(lang, 'wallet_list',
+               count=len(wallets),
+               max=common.config.MAX_WALLETS_PER_USER,
+               slots='\n'.join(slot_lines),
+               active_slot=active['slot'],
+               active_addr=active['address']),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb) if kb else None
+    )
+
+@common.router.callback_query(F.data == 'wallet_new')
+async def cb_wallet_new(cb: types.CallbackQuery) -> None:
+    if not cb.from_user:
+        return
+    lang = await common.user_lang(cb.from_user.id)
+    row, err = await common.ledger.create_wallet_slot(cb.from_user.id)
+    if err == 'wallet_limit_reached':
+        await cb.answer(i18n.t(lang, 'wallet_limit_reached', max=common.config.MAX_WALLETS_PER_USER), show_alert=True)
+        return
+    if err:
+        await cb.answer()
+        return
+    await cb.answer(i18n.t(lang, 'wallet_new_ok', addr=row['address'], slot=row['slot']), show_alert=True)
+    # Refresh the wallet list
+    await _refresh_wallet_list(cb, cb.from_user.id, lang)
+
+@common.router.callback_query(F.data.startswith('wallet_sel:'))
+async def cb_wallet_sel(cb: types.CallbackQuery) -> None:
+    if not cb.from_user:
+        return
+    lang = await common.user_lang(cb.from_user.id)
+    wallet_id = int(cb.data.split(':')[1])
+    ok = await common.ledger.set_active_wallet(cb.from_user.id, wallet_id)
+    if not ok:
+        await cb.answer()
+        return
+    wallets = await common.ledger.get_wallets(cb.from_user.id)
+    active = next((w for w in wallets if w['id'] == wallet_id), None)
+    if active:
+        await cb.answer(i18n.t(lang, 'wallet_active_switched', slot=active['slot'], addr=active['address']), show_alert=True)
+    await _refresh_wallet_list(cb, cb.from_user.id, lang)
+
+async def _refresh_wallet_list(cb: types.CallbackQuery, tg_id: int, lang: str) -> None:
+    """Edit the message to show updated wallet list."""
+    wallets = await common.ledger.get_wallets(tg_id)
+    active = next((w for w in wallets if w['active']), wallets[0])
+    slot_lines = []
+    for w in wallets:
+        marker = '🟢' if w['active'] else '⚪'
+        addr_short = w['address'][:6] + '…' + w['address'][-4:]
+        slot_lines.append(f"{marker} Слот {w['slot']}: <code>{addr_short}</code>")
+    kb = []
+    row_btns = []
+    for w in wallets:
+        marker = '🟢' if w['active'] else '⚪'
+        row_btns.append(InlineKeyboardButton(
+            text=f"{marker}{w['slot']}",
+            callback_data=f"wallet_sel:{w['id']}"
+        ))
+        if len(row_btns) == 5:
+            kb.append(row_btns)
+            row_btns = []
+    if row_btns:
+        kb.append(row_btns)
+    if len(wallets) < common.config.MAX_WALLETS_PER_USER:
+        kb.append([InlineKeyboardButton(
+            text=f"➕ Создать ({len(wallets)}/{common.config.MAX_WALLETS_PER_USER})",
+            callback_data="wallet_new"
+        )])
+    try:
+        await cb.message.edit_text(
+            i18n.t(lang, 'wallet_list',
+                   count=len(wallets),
+                   max=common.config.MAX_WALLETS_PER_USER,
+                   slots='\n'.join(slot_lines),
+                   active_slot=active['slot'],
+                   active_addr=active['address']),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb) if kb else None
+        )
+    except Exception:
+        pass  # message not modified
 
 @common.router.message(Command('import'))
 async def cmd_import(message: types.Message) -> None:
@@ -205,9 +334,17 @@ async def cmd_export(message: types.Message) -> None:
     await message.answer(i18n.t(lang, 'hot_wallet_admin', addr=common.base.hot_wallet()))
 
 async def _ensure_wallet(tg_id: int) -> dict:
-    row = await common.ledger.get_wallet(tg_id)
+    """Ensure user has at least one wallet (slot 1)."""
+    row = await common.ledger.get_active_wallet(tg_id)
     if row:
         return row
+    wallets = await common.ledger.get_wallets(tg_id)
+    if wallets:
+        return wallets[0]
+    row, _err = await common.ledger.create_wallet_slot(tg_id)
+    if row:
+        return row
+    # Fallback: legacy save
     address, key, seed = common.wallets.new_wallet()
     await common.ledger.save_wallet(tg_id, address, common.wallets.encrypt(key), common.wallets.encrypt(seed))
     return await common.ledger.get_wallet(tg_id)

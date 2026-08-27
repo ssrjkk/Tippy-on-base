@@ -4,13 +4,11 @@ Runs against the test database like the other test files.
 """
 
 import json
-import os
 import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # caps.py
@@ -28,7 +26,7 @@ class TestCaps:
         assert result is None  # allowed
 
     def test_check_action_daily_cap(self):
-        from agent.caps import check_action, _save_state
+        from agent.caps import _save_state, check_action
         _save_state({
             "daily_spent": 49.0,
             "daily_date": __import__("time").strftime("%Y-%m-%d", __import__("time").gmtime()),
@@ -48,7 +46,7 @@ class TestCaps:
         assert "Per-tx cap" in result
 
     def test_check_action_rate_limit(self):
-        from agent.caps import check_action, _save_state
+        from agent.caps import _save_state, check_action
         _save_state({
             "daily_spent": 0.0,
             "daily_date": __import__("time").strftime("%Y-%m-%d", __import__("time").gmtime()),
@@ -62,7 +60,7 @@ class TestCaps:
         assert "Rate limit" in result
 
     def test_record_action_updates_state(self):
-        from agent.caps import record_action, _load_state
+        from agent.caps import _load_state, record_action
         record_action(5.0)
         state = _load_state()
         assert state["daily_spent"] == 5.0
@@ -70,7 +68,7 @@ class TestCaps:
         assert state["consecutive_errors"] == 0
 
     def test_record_error_triggers_breaker(self):
-        from agent.caps import record_error, _load_state
+        from agent.caps import _load_state, record_error
         for _ in range(3):
             record_error()
         state = _load_state()
@@ -266,7 +264,7 @@ class TestEAS:
         assert len(h) == 32
 
     def test_attest_action_local_fallback(self):
-        from agent.eas import attest_action, AttestationData
+        from agent.eas import AttestationData, attest_action
         data = AttestationData(
             action_type="create_market",
             market_id=99,

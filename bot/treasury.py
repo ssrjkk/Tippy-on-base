@@ -9,10 +9,7 @@ Each Telegram group can create a treasury that:
 This extends the "community economy" beyond p2p tipping.
 """
 
-import json
 import time
-
-from . import config
 
 
 class TreasuryManager:

@@ -83,6 +83,7 @@ MAX_BET_USDC: Decimal = Decimal(os.environ.get("MAX_BET_USDC", "500"))
 LINK_NONCE_TTL_SECONDS: int = int(os.environ.get("LINK_NONCE_TTL_SECONDS", "3600"))
 MAX_OPTION_LEN: int = int(os.environ.get("MAX_OPTION_LEN", "60"))
 MONEY_CMD_COOLDOWN_SECONDS: int = int(os.environ.get("MONEY_CMD_COOLDOWN_SECONDS", "5"))
+MAX_WALLETS_PER_USER: int = int(os.environ.get("MAX_WALLETS_PER_USER", "10"))
 
 # AML thresholds
 WITHDRAW_LARGE_USDC_THRESHOLD: int = int(os.environ.get("WITHDRAW_LARGE_USDC_THRESHOLD", "500"))
@@ -168,6 +169,59 @@ MESSAGE_INDEX_RETENTION_SECONDS: int = int(os.environ.get("MESSAGE_INDEX_RETENTI
 # USDC on Base mainnet (well-audited, no custom contracts in MVP)
 USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 USDC_DECIMALS = 6
+
+# Wrapped ETH on Base (canonical address shared with the OP stack).
+WETH_ADDRESS = "0x4200000000000000000000000000000000000006"
+
+# Expected Base chain id (8453). Set 0 to disable the chain-identity guard
+# (not recommended in production — it exists to stop a misconfigured RPC
+# from moving hot-wallet funds onto another network).
+EXPECTED_CHAIN_ID: int = int(os.environ.get("EXPECTED_CHAIN_ID", "8453"))
+
+# Chainlink oracle feeds on Base (price reads / L2 availability).
+# ETH/USD aggregator and USDC/USD aggregator, plus the Base sequencer uptime
+# feed. Adjust to the current published address set for your deployment.
+CHAINLINK_ETH_USD_FEED: str = os.environ.get(
+    "CHAINLINK_ETH_USD_FEED",
+    "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",  # ETH/USD (Base)
+)
+CHAINLINK_USDC_USD_FEED: str = os.environ.get(
+    "CHAINLINK_USDC_USD_FEED",
+    "0x7e860098F58bBFC8648a4311b374B1D669aB2f0f",  # USDC/USD (Base)
+)
+CHAINLINK_L2_SEQUENCER_FEED: str = os.environ.get(
+    "CHAINLINK_L2_SEQUENCER_FEED",
+    "0x7A94057f40E4d9c4E5a9E2A90Aeaf7A428C0BbC2",  # Base sequencer uptime
+)
+# Oracle staleness windows: ETH updates per block (short), USDC on a long
+# heartbeat (wider), sequencer uptime (generous).
+PRICE_FEED_MAX_AGE_SECONDS: int = int(os.environ.get("PRICE_FEED_MAX_AGE_SECONDS", "3600"))
+USDC_PRICE_FEED_MAX_AGE_SECONDS: int = int(os.environ.get("USDC_PRICE_FEED_MAX_AGE_SECONDS", str(24 * 3600)))
+PRICE_CACHE_SECONDS: int = int(os.environ.get("PRICE_CACHE_SECONDS", "60"))
+
+# Aerodrome DEX (largest AMM on Base) — router + factory for executable quotes.
+AERODROME_ROUTER_ADDRESS: str = os.environ.get(
+    "AERODROME_ROUTER_ADDRESS",
+    "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",  # Aerodrome V2 router (Base)
+)
+AERODROME_FACTORY_ADDRESS: str = os.environ.get(
+    "AERODROME_FACTORY_ADDRESS",
+    "0x420DD381b31aEf6683db6B902084cB0FFECe40Da",  # Aerodrome factory (Base)
+)
+
+# Basenames (Base name service) on-chain contracts.
+BASE_L2_RESOLVER_ADDRESS: str = os.environ.get(
+    "BASE_L2_RESOLVER_ADDRESS",
+    "0xC6d566A56A1aFf6508b41f6c90ff131615583BCD",  # Base L2 public resolver
+)
+BASE_REVERSE_REGISTRAR_ADDRESS: str = os.environ.get(
+    "BASE_REVERSE_REGISTRAR_ADDRESS",
+    "0x0AfD16d8D0B5a7b4C0AA13a7e7F0BB6d2b52A4AC",  # ENSIP-19 reverse registrar
+)
+BASE_REGISTRY_ADDRESS: str = os.environ.get(
+    "BASE_REGISTRY_ADDRESS",
+    "0x4cCb0BB02FCABA27e82a56646E81d3c12C45C903",  # Basenames registry
+)
 
 # On-chain treasury (TipBotVault, see contracts/). Users deposit into the
 # vault contract; the dashboard reads its USDC balance as the primary

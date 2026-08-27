@@ -6,7 +6,7 @@ be automated (custodial convenience), and the user can export the key and
 seed at any time — self-custody on demand. /import lets a user attach their
 own existing wallet by seed phrase instead.
 
-SECURITY: WALLET_ENC_KEY MUST be set in .env explicitly. 
+SECURITY: WALLET_ENC_KEY MUST be set in .env explicitly.
 It must be a 32-byte random key (generate via: python -c "import secrets; print(secrets.token_hex(32))").
 DO NOT reuse HOT_WALLET_KEY for this.
 """
