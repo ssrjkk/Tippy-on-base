@@ -5,18 +5,21 @@
 #
 #     curl -fsSL https://raw.githubusercontent.com/ssrjkk/Tippy-on-base/main/deploy/bootstrap_oracle.sh | sudo bash
 #
-# It installs Docker, clones the repo, prepares .env, and brings up the stack
-# (postgres + app + cloudflared). Everything restarts automatically on reboot
-# or crash (restart: unless-stopped). Pass env vars interactively or pre-seed
-# them by exporting before running (no local machine involved).
+# It installs Docker, clones the repo, prepares .env, brings up the stack
+# (postgres + app + cloudflared), and verifies the app/tunnel/Mini App.
+# It AUTO-GENERATES a fresh hot-wallet private key and WALLET_ENC_KEY on the
+# server (keys never leave the VM) and prints the DEPOSIT_ADDRESS to top up.
 #
-# After it finishes:
-#   1) cp deploy/prod.env.example .env   (if not pre-seeded) and fill it in
-#   2) docker compose -f docker-compose.yml up -d --build
-#   3) follow the Cloudflare named-tunnel step in .env.example (free, once)
+# Minimum one-shot call (pass your real BOT_TOKEN):
+#     sudo BOT_TOKEN=<token> bash -c "curl -fsSL \
+#       https://raw.githubusercontent.com/ssrjkk/Tippy-on-base/main/deploy/bootstrap_oracle.sh | bash"
 #
-# The Telegram Mini App button needs a STABLE https URL from a named Cloudflare
-# tunnel; quick tunnels change URL every restart and can't be pinned in BotFather.
+# Then fund the printed DEPOSIT_ADDRESS with a little ETH (gas) + USDC on Base.
+#
+# The Telegram Mini App button needs a STABLE https URL. Simplest free option:
+# a Cloudflare Tunnel to a hostname you control — set MINI_APP_URL and
+# CLOUDFLARE_TUNNEL_TOKEN in .env, or set those env vars on the command above.
+# Quick tunnels (trycloudflare) change URL on restart and can't be pinned.
 
 set -euo pipefail
 
@@ -43,7 +46,7 @@ log "Installing Docker Engine + compose plugin ($PKG)..."
 if [ "$PKG" = "apt" ]; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y ca-certificates curl git
+    apt-get install -y ca-certificates curl git openssl
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
     chmod a+r /etc/apt/keyrings/docker.asc
@@ -72,21 +75,16 @@ else
     git -C "$APP_DIR" reset --hard "origin/$BRANCH"
 fi
 
-# --- .env: respect pre-seeded env, else copy template -----------------------
+# --- .env: respect pre-seeded env, else use template -------------------------
 cd "$APP_DIR"
 if [ ! -f .env ]; then
-    if cp deploy/prod.env.example .env; then
-        log "Created .env from deploy/prod.env.example — EDIT IT, then:"
-        log "    nano $APP_DIR/.env"
-        log "    docker compose -f $APP_DIR/docker-compose.yml up -d --build"
-        fatal "aborting before start: .env requires your real secrets/token."
-    fi
+    cp deploy/prod.env.example .env
+    log "Created .env from deploy/prod.env.example."
 else
     log "Existing .env found; leaving it untouched."
 fi
 
-# If env vars were pre-seeded (exported before running), write them in.
-: > /tmp/tippy_env_seed
+# Merge env vars that were pre-seeded (exported before running).
 vars="BOT_TOKEN BOT_USERNAME ADMIN_TG_ID HOT_WALLET_KEY WALLET_ENC_KEY \
 POSTGRES_PASSWORD CLOUDFLARE_TUNNEL_TOKEN MINI_APP_URL AI_API_KEY \
 BASE_RPC_URL BASE_RPC_FALLBACK_URLS"
@@ -94,7 +92,6 @@ changed=0
 for v in $vars; do
     eval "val=\${$v:-}"
     if [ -n "${val}" ]; then
-        grep -q "^$v=" .env 2>/dev/null || true
         if grep -q "^${v}=" .env; then
             sed -i "s|^${v}=.*|${v}=${val}|" .env
         else
@@ -104,6 +101,45 @@ for v in $vars; do
     fi
 done
 [ "$changed" = 1 ] && log "Merged pre-seeded env vars into .env."
+
+# --- auto-generate missing secrets (key NEVER leaves the server) ------------
+# Hot wallet: any 32 random bytes (well below secp256k1 order, ~2^-127 chance
+# of collision) is a valid Ethereum private key. Generate ONLY if not set.
+gen_key=$(grep -E '^HOT_WALLET_KEY=' .env | tail -1 | cut -d= -f2- || true)
+case "$gen_key" in
+    0x0000000000000000000000000000000000000000000000000000000000000000|"")
+        raw=$(openssl rand -hex 32)
+        key="0x${raw}"
+        if grep -q '^HOT_WALLET_KEY=' .env; then
+            sed -i "s|^HOT_WALLET_KEY=.*|HOT_WALLET_KEY=${key}|" .env
+        else
+            printf 'HOT_WALLET_KEY=%s\n' "$key" >> .env
+        fi
+        log "Generated a fresh hot-wallet private key (stored only in $APP_DIR/.env)."
+        ;;
+esac
+
+# Wallet encryption key (32+ hex bytes). Auto-generate when absent.
+wek=$(grep -E '^WALLET_ENC_KEY=' .env | tail -1 | cut -d= -f2- || true)
+if [ -z "$wek" ] || [ "${#wek}" -lt 32 ]; then
+    enc=$(openssl rand -hex 32)
+    if grep -q '^WALLET_ENC_KEY=' .env; then
+        sed -i "s|^WALLET_ENC_KEY=.*|WALLET_ENC_KEY=${enc}|" .env
+    else
+        printf 'WALLET_ENC_KEY=%s\n' "$enc" >> .env
+    fi
+    log "Generated WALLET_ENC_KEY (stored only in $APP_DIR/.env)."
+fi
+
+# --- sanity: bot token must be real before the app can run --------------------
+btoken=$(grep -E '^BOT_TOKEN=' .env | tail -1 | cut -d= -f2- || true)
+case "$btoken" in
+    ""|123456:ABC*|*YourBotToken*)
+        fatal "BOT_TOKEN is not set or still a placeholder. Pass it when running:
+    sudo bash -c \"BOT_TOKEN=$btoken ... curl ... | bash\"
+    or edit $APP_DIR/.env. (Hot-wallet key is already generated and saved.)"
+        ;;
+esac
 
 # --- bring it up ------------------------------------------------------------
 log "Building and starting Tippy (db + app + cloudflared)..."
@@ -124,6 +160,19 @@ if [ "$healthy" != 1 ]; then
     docker compose -f "$APP_DIR/docker-compose.yml" logs --tail=40 app || true
 else
     log "app is healthy (web server up, migrations applied)."
+
+    # Print the hot-wallet DEPOSIT address (public, safe) so it can be funded.
+    dep=$(docker compose -f "$APP_DIR/docker-compose.yml" exec -T app \
+        python -c "import os;from web3 import Web3;print(Web3().eth.account.from_key(os.environ['HOT_WALLET_KEY']).address)" 2>/dev/null || true)
+    if [ -n "$dep" ]; then
+        log "============================================================"
+        log "  DEPOSIT_ADDRESS = ${dep}"
+        log "  Send ETH (for gas) + USDC on Base to this address."
+        log "  (Private key lives only in $APP_DIR/.env — never share it.)"
+        log "============================================================"
+    else
+        log "WARNING: could not derive the deposit address. Check app logs."
+    fi
 fi
 
 # --- verify the Cloudflare tunnel is connected ------------------------------
