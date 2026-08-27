@@ -44,6 +44,7 @@ from bot.handlers import (
     on_reaction,
 )
 from web import server as web_server
+from web.auth import COOKIE_NAME, make_session
 
 ALICE, BOB, CAROL = 2001, 2002, 2003
 USDC = 10**6  # micro-units per USDC
@@ -846,8 +847,10 @@ def test_e2e_dashboard_values(e2e, monkeypatch, api):
     assert pools == {0: 10.0, 1: 5.0}
     assert mv["creator"]["username"] == "carol"
 
-    # user view: positions, history, balance
+    # user view: positions, history, balance (owner-only data -> as ALICE)
+    api.cookies.set(COOKIE_NAME, make_session(ALICE))
     u = api.get(f"/api/user/{ALICE}").json()
+    assert u["is_owner"] is True
     assert u["balance_usdc"] == 85.0  # 100 - 5 tip - 10 bet
     assert u["tips_sent_usdc"] == 5.0
     assert [p["bet_id"] for p in u["positions"]] == [bid]

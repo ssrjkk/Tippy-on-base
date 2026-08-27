@@ -13,33 +13,27 @@ DO NOT reuse HOT_WALLET_KEY for this.
 
 import base64
 import hashlib
-import logging
 import os
 
 from cryptography.fernet import Fernet, InvalidToken
 from eth_account import Account
-
-from . import config
 
 # eth_account hides mnemonic support behind an explicit opt-in until its API
 # stabilizes; the feature is stable enough for BIP-39 (12/24 words).
 Account.enable_unaudited_hdwallet_features()
 
 
-# Prefer an explicit WALLET_ENC_KEY. If it is missing or too short we fall
-# back to deriving a key from HOT_WALLET_KEY (the pre-refactor behaviour) so
-# the bot still starts — but we warn loudly, because a dedicated key gives
-# stronger isolation of encrypted user wallets.
-_log = logging.getLogger("tipbot")
+# A dedicated WALLET_ENC_KEY is REQUIRED. We never fall back to deriving the
+# encryption key from HOT_WALLET_KEY: doing so would mean anyone holding the
+# hot-wallet key could decrypt every per-user wallet key/seed, defeating the
+# point of encrypting them at rest. Missing/short key = fail closed.
 _ENC_KEY_RAW = os.environ.get("WALLET_ENC_KEY")
 if not _ENC_KEY_RAW or len(_ENC_KEY_RAW) < 32:
-    _log.warning(
-        "WALLET_ENC_KEY missing or too short (<32 bytes); falling back to a key "
-        "derived from HOT_WALLET_KEY. Set WALLET_ENC_KEY to a 32-byte random "
-        "value (python -c \"import secrets; print(secrets.token_hex(32))\") for "
-        "stronger isolation of encrypted user wallets."
+    raise ValueError(
+        "WALLET_ENC_KEY must be set to a 32-byte random value. It must NOT be "
+        "derived from or equal to HOT_WALLET_KEY (generate via: "
+        "python -c \"import secrets; print(secrets.token_hex(32))\")."
     )
-    _ENC_KEY_RAW = config.HOT_WALLET_KEY
 
 # Convert to Fernet-compatible key (URL-safe base64, 32 bytes) — same
 # derivation as before so existing encrypted wallet data keeps decrypting.

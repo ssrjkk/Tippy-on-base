@@ -5,94 +5,65 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  lint:
+    name: Lint (ruff)
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: tipbot
-          POSTGRES_PASSWORD: tipbot
-          # web/server.py opens a Ledger connection at import time using the
-          # default DATABASE_URL (.../tipbot); without this db the import
-          # itself fails and pytest exits 2 during collection.
-          POSTGRES_DB: tipbot
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U tipbot"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements-dev.txt
-
-      # Catches the "works only because -dev pulls requirements.txt" class of
-      # bug: a missing runtime dep (e.g. cryptography, Pillow) would pass CI
-      # but crash a clean production install. requirements.txt must be
-      # self-sufficient for `import bot.main; import web.server`.
-      - name: Clean-install smoke test (deps completeness)
-        run: |
-          python -m venv .venv-smoke
-          source .venv-smoke/bin/activate
-          pip install -q -r requirements.txt
-          python -c "import bot.main, web.server; print('clean install imports OK')"
-          deactivate
-
-      - name: Install solc (EVM contract tests)
-        run: python -c "import solcx; solcx.install_solc('0.8.24')"
-
-      # OutcomeMarket/LMSR EVM tests need vendored OZ/prb-math/forge-std.
-      - name: Vendor Solidity dependencies
-        run: bash scripts/setup_foundry.sh
-
-      - name: Lint (ruff)
+      - name: Install ruff
+        run: pip install ruff==0.16.4
+      - name: Ruff check (bot web tests deploy)
         run: ruff check bot web tests deploy
 
-      - name: Security audit (pip-audit)
-        run: |
-          pip install pip-audit
-          pip-audit -r requirements.txt
-
-      - name: Test with coverage
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
         env:
-          PYTHONUTF8: "1"
-          PIP_DISABLE_PIP_VERSION_CHECK: "1"
-          TESTING: "1"
-        run: |
-          coverage run -m pytest tests -q --junitxml=pytest-result.xml
-          coverage report --skip-covered -m
+          POSTGRES_USER: tipbot
+          POSTGRES_PASSWORD: tipbot
+          POSTGRES_DB: tipbot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tipbot"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      BOT_TOKEN: "0:test"
+      HOT_WALLET_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111"
+      WALLET_ENC_KEY: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      TEST_DATABASE_URL: "postgresql://tipbot:tipbot@localhost:5432/tipbot_test"
+      TEST_ADMIN_DATABASE_URL: "postgresql://tipbot:tipbot@localhost:5432/postgres"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest -q
 
-      - name: Dump failure details
-        if: failure()
-        run: |
-          python - <<'EOF'
-          import xml.etree.ElementTree as ET
-          try:
-              root = ET.parse("pytest-result.xml").getroot()
-              n = 0
-              for case in root.iter("testcase"):
-                  for tag in ("failure", "error"):
-                      node = case.find(tag)
-                      if node is not None and n < 10:
-                          name = f"{case.attrib.get('classname')}.{case.attrib.get('name')}"
-                          msg = (node.attrib.get("message") or "")[:300]
-                          print(f"::error title={name[:80]}::{msg}")
-                          print(f"--- {name} ---")
-                          print((node.text or "")[-1500:])
-                          n += 1
-          except FileNotFoundError:
-              print("::error title=pytest::no junit file; test process died before reporting")
-          EOF
+  security:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

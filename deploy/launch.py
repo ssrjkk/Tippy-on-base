@@ -45,6 +45,51 @@ CLOUDFLARED_CANDIDATES = [
 
 TUNNEL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
+LOG_MAX_BYTES = int(os.environ.get("LOG_MAX_BYTES", str(50 * 1024 * 1024)))
+LOG_BACKUPS = int(os.environ.get("LOG_BACKUPS", "3"))
+
+
+class RotatingFile:
+    """A tiny file-like object that rotates once it exceeds LOG_MAX_BYTES,
+    keeping LOG_BACKUPS numbered backups, so long-running deployments do not
+    fill the disk with unbounded log output."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self._f = open(name, "a")
+
+    def _maybe_rotate(self):
+        try:
+            if self._f.tell() < LOG_MAX_BYTES:
+                return
+        except (OSError, ValueError):
+            return
+        self._f.close()
+        for i in range(LOG_BACKUPS, 0, -1):
+            src = f"{self.name}.{i - 1}"
+            dst = f"{self.name}.{i}"
+            if os.path.exists(src):
+                if os.path.exists(dst):
+                    os.remove(dst)
+                os.rename(src, dst)
+        os.rename(self.name, f"{self.name}.0")
+        self._f = open(self.name, "a")
+
+    def write(self, data):
+        self._f.write(data)
+        self._f.flush()
+        self._maybe_rotate()
+
+    def flush(self):
+        self._f.flush()
+
+    def close(self):
+        self._f.close()
+
+
+def rotating_log(name: str):
+    return RotatingFile(name)
+
 
 def find_cloudflared() -> str | None:
     for cand in CLOUDFLARED_CANDIDATES:
@@ -121,10 +166,10 @@ def main() -> int:
         log.info("tunnel ready: %s", url)
         os.environ["MINI_APP_URL"] = url
 
-    web_log = open("web.log", "a")
-    web_err = open("web.err", "a")
-    bot_log = open("bot.log", "a")
-    bot_err = open("bot.err", "a")
+    web_log = rotating_log("web.log")
+    web_err = rotating_log("web.err")
+    bot_log = rotating_log("bot.log")
+    bot_err = rotating_log("bot.err")
 
     def start_children():
         web = subprocess.Popen(

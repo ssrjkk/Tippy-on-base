@@ -5,8 +5,22 @@ __pycache__/
 .venv/
 venv/
 
-# Secrets & local config
+# Secrets & local config. Ignore ALL local env variants (they hold real
+# tokens/keys) but keep the committed PLACEHOLDER example files tracked.
 .env
+.env.*
+!.env.example
+deploy/prod.env.example
+
+# Private keys / credentials — never committed even if dumped to a file.
+*.pem
+*.p12
+*.pfx
+*.key
+*.keystore
+id_rsa*
+id_ed25519*
+*.jks
 
 # SQLite databases (dev artifacts, never commit)
 *.db

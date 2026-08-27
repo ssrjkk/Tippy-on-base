@@ -195,7 +195,12 @@ async def _channel_watcher(bot):
 async def _run_combined() -> None:
     """Run bot polling + web server concurrently in one process."""
     log.info("=== COMBINED MODE: bot + web server ===")
-    log.info("hot wallet: %s", config.HOT_WALLET_KEY[:10] + "..." if config.HOT_WALLET_KEY else "MISSING")
+    try:
+        from web3 import Web3
+        addr = Web3().eth.account.from_key(config.HOT_WALLET_KEY).address if config.HOT_WALLET_KEY else None
+    except Exception:
+        addr = None
+    log.info("hot wallet configured: %s", addr if addr else "MISSING")
 
     from web.mini import public_base_url
     log.info("mini app url: %s/app", public_base_url())

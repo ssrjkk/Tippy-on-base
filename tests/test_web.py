@@ -5,6 +5,14 @@ import types
 import pytest
 from fastapi.testclient import TestClient
 
+from web.auth import COOKIE_NAME, make_session
+
+
+def _auth(client, tg_id):
+    """Attach a valid owner session cookie for tg_id to the TestClient."""
+    client.cookies.set(COOKIE_NAME, make_session(tg_id))
+    return client
+
 
 @pytest.fixture()
 def client(ledger, monkeypatch):
@@ -73,12 +81,28 @@ def test_unknown_user_404(client):
 def test_user_endpoint_with_data(client, ledger):
     ledger.credit(777, 5_000_000, "deposit")
     ledger.transfer(777, 778, 2_000_000)
+    _auth(client, 777)
     r = client.get("/api/user/777")
     assert r.status_code == 200
     data = r.json()
+    assert data["is_owner"] is True
     assert data["balance_usdc"] == 3.0
     assert data["tips_sent_usdc"] == 2.0
     assert data["tips_received_usdc"] == 0.0
+
+
+def test_user_endpoint_public_view_for_stranger(client, ledger):
+    ledger.credit(777, 5_000_000, "deposit")
+    ledger.transfer(777, 778, 2_000_000)
+    r = client.get("/api/user/777")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["is_owner"] is False
+    # No live balance, positions, history, or full financial profile for a
+    # stranger: only public aggregates.
+    assert "balance_usdc" not in data
+    assert "history" not in data
+    assert "positions" not in data
 
 
 def test_market_and_leaderboard(client, ledger):
@@ -497,6 +521,7 @@ def test_user_page_served(client):
 
 def test_user_history_in_api(client, ledger):
     ledger.credit(777, 5_000_000, "deposit")
+    _auth(client, 777)
     r = client.get("/api/user/777")
     data = r.json()
     assert data["history"]
@@ -511,6 +536,7 @@ def test_user_creator_fees_in_api(client, ledger):
     ledger.place_bet(bid, 2, 0, 1_000_000)
     ledger.place_bet(bid, 2, 1, 1_000_000)
     ledger.resolve_bet(bid, 0, 1)
+    _auth(client, 1)
     data = client.get("/api/user/1").json()
     assert data["creator_fees_usdc"] == 0.02
 

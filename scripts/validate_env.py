@@ -52,15 +52,14 @@ require("ADMIN_TG_ID", r"\d+", msg="must be a numeric Telegram user ID")
 # --- RPC ---
 require("BASE_RPC_URL", msg="Base mainnet RPC endpoint")
 
-# --- Web ---
+# --- Web (SECRET_KEY is required: independent of BOT_TOKEN for session security) ---
+require("SECRET_KEY", min_len=32, msg="must be >= 32 chars, independent of BOT_TOKEN")
 optional("WEBHOOK_URL", r"https://.*", msg="should be an https URL")
 optional("WEBHOOK_SECRET", min_len=16, msg="should be >= 16 chars if set")
-optional("SECRET_KEY", min_len=32, msg="should be >= 32 chars if set")
 
 # --- Cross-checks ---
-secret_key = os.environ.get("SECRET_KEY", "").strip()
-if secret_key and len(secret_key) < 32:
-    WARNINGS.append(f"SECRET_KEY is {len(secret_key)} chars; recommend >= 32 for session security")
+if enc == os.environ.get("SECRET_KEY", "").strip():
+    ERRORS.append("SECURITY: WALLET_ENC_KEY must NOT equal SECRET_KEY")
 
 vault = os.environ.get("VAULT_ADDRESS", "").strip()
 if vault and not re.fullmatch(r"0x[0-9a-fA-F]{40}", vault):

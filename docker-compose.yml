@@ -24,8 +24,15 @@ services:
     environment:
       DATABASE_URL: postgresql://tippy:${POSTGRES_PASSWORD:-tippy}@db:5432/tippy
       PYTHONUTF8: 1
-    ports:
-      - "8000:8000"
+      # The only entry to this stack is the tunnel/edge (which reaches the app
+      # over the compose network), so the real client IP is the rightmost XFF
+      # appended by that trusted proxy. Secure by default: this flag stays OFF
+      # for any directly-exposed deployment.
+      TRUST_PROXY_XFF: "1"
+    # No host "ports" mapping on purpose: the app must not be directly
+    # reachable on the VM's public IP — only through the cloudflared tunnel /
+    # Koyeb edge. The healthcheck below runs inside the container against
+    # 127.0.0.1, so it still works without a published port.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u,os;u.urlopen('http://127.0.0.1:%s/api/health'%os.environ.get('WEB_PORT','8000'),timeout=5)"]
       interval: 10s

@@ -19,13 +19,23 @@ from bot import base, config
 from bot import qr as qrlib
 from bot.base import hot_balance, hot_wallet, vault_balance
 from bot.ledger import async_ledger as ledger
+from web.auth import COOKIE_NAME, parse_session
 from web.auth import router as auth_router
 from web.frame import router as frame_router
 from web.hook import router as tg_webhook
 from web.mini import router as mini_router
 from web.x402 import x402_paywall, x402_tip
 
-app = FastAPI(title='Tippy API', version='1.1.0', description='Public API of **Tippy** — a community economy in USDC on Base.\n\nFeatures: instant tips, Polymarket-style prediction markets (LMSR AMM), paywalled content, and **x402 HTTP payments for AI agents** (`POST /api/x402/tip`, `POST /api/x402/paywall`).\n\n* All amounts are USDC; `_usdc` fields are human-readable floats, `_micro` fields are integer micro-units (1e6 = 1 USDC).\n* `/api/solvency` is the Proof of Reserves: bot liabilities vs on-chain USDC (TipBotVault contract when deployed, else hot wallet).\n* Rate-limited per IP to protect the RPC quota.', contact={'name': 'ssrjkk', 'url': 'https://github.com/ssrjkk/Tippy-on-base'}, license_info={'name': 'MIT', 'url': 'https://github.com/ssrjkk/Tippy-on-base/blob/main/LICENSE'}, openapi_tags=[{'name': 'stats', 'description': 'Volume, users, fees, health'}, {'name': 'markets', 'description': 'Parimutuel polls and LMSR prediction markets'}, {'name': 'users', 'description': 'Leaderboards and public profiles'}, {'name': 'treasury', 'description': 'Proof of Reserves and wallet transparency'}, {'name': 'x402', 'description': 'HTTP 402 payment handshake for AI agents'}])
+_ENABLE_OPENAPI: bool = os.environ.get('ENABLE_OPENAPI', '0') == '1'
+app = FastAPI(title='Tippy API', version='1.1.0',
+    description='Public API of **Tippy** — a community economy in USDC on Base.\n\nFeatures: instant tips, Polymarket-style prediction markets (LMSR AMM), paywalled content, and **x402 HTTP payments for AI agents** (`POST /api/x402/tip`, `POST /api/x402/paywall`).\n\n* All amounts are USDC; `_usdc` fields are human-readable floats, `_micro` fields are integer micro-units (1e6 = 1 USDC).\n* `/api/solvency` is the Proof of Reserves: bot liabilities vs on-chain USDC (TipBotVault contract when deployed, else hot wallet).\n* Rate-limited per IP to protect the RPC quota.',
+    contact={'name': 'ssrjkk', 'url': 'https://github.com/ssrjkk/Tippy-on-base'},
+    license_info={'name': 'MIT', 'url': 'https://github.com/ssrjkk/Tippy-on-base/blob/main/LICENSE'},
+    openapi_tags=[{'name': 'stats', 'description': 'Volume, users, fees, health'}, {'name': 'markets', 'description': 'Parimutuel polls and LMSR prediction markets'}, {'name': 'users', 'description': 'Leaderboards and public profiles'}, {'name': 'treasury', 'description': 'Proof of Reserves and wallet transparency'}, {'name': 'x402', 'description': 'HTTP 402 payment handshake for AI agents'}],
+    docs_url='/docs' if _ENABLE_OPENAPI else None,
+    redoc_url='/redoc' if _ENABLE_OPENAPI else None,
+    openapi_url='/openapi.json' if _ENABLE_OPENAPI else None,
+)
 app.include_router(tg_webhook)
 app.include_router(frame_router)
 app.include_router(auth_router)
@@ -42,16 +52,20 @@ _RL_DISABLED: bool = os.environ.get('TESTING', '') != ''
 async def rate_limit(request: Request, call_next):
     path = request.url.path
     if not _RL_DISABLED and (path.startswith('/api/') or path in ('/qr', '/metrics', '/tos')):
-        # Behind a trusted reverse proxy (cloudflared/nginx) the proxy appends
-        # the real client IP as the RIGHTMOST X-Forwarded-For entry; the
-        # leftmost is client-supplied and spoofable, so never trust it. In
-        # direct mode (no proxy) ignore XFF entirely and use the TCP peer.
+        # Client IP for the rate limiter. By default we use the TCP peer IP,
+        # which the client cannot spoof. Only when a trusted reverse proxy is
+        # guaranteed in front (config.TRUST_PROXY_XFF=1) do we honour the
+        # RIGHTMOST X-Forwarded-For entry (the real client); the leftmost is
+        # client-supplied and spoofable, so it is never trusted. Trusting XFF
+        # on a directly-exposed port lets an attacker rotate fake IPs to
+        # bypass every per-IP limit.
         client = request.client.host if request.client else 'unknown'
-        xff = request.headers.get('X-Forwarded-For')
-        if xff:
-            parts = [p.strip() for p in xff.split(',') if p.strip()]
-            if parts:
-                client = parts[-1]
+        if config.TRUST_PROXY_XFF:
+            xff = request.headers.get('X-Forwarded-For')
+            if xff:
+                parts = [p.strip() for p in xff.split(',') if p.strip()]
+                if parts:
+                    client = parts[-1]
         now = time.time()
         cutoff = now - WEB_RATE_WINDOW
         window = _rl_state.setdefault(client, [])
@@ -84,6 +98,13 @@ async def rate_limit(request: Request, call_next):
 
 def _usdc(micro: int) -> float:
     return round(micro / MICRO, 2)
+
+def _require_admin(request: Request) -> None:
+    """403 unless the request carries a session cookie for the owner."""
+    admin_id = int(config.ADMIN_TG_ID) if config.ADMIN_TG_ID else 0
+    session_id = parse_session(request.cookies.get(COOKIE_NAME))
+    if not admin_id or session_id != admin_id:
+        raise HTTPException(status_code=403, detail='admin only')
 
 async def _safe_hot_balance() -> float | None:
     try:
@@ -156,20 +177,50 @@ async def api_leaderboard() -> list[dict]:
     return [{**r, 'total_usdc': _usdc(r['total_micro'])} for r in await ledger.leaderboard(10)]
 
 @app.get('/api/user/{tg_id}', tags=['users'])
-async def api_user(tg_id: int) -> dict:
+async def api_user(tg_id: int, request: Request) -> dict:
     if not await ledger.user_exists(tg_id):
         raise HTTPException(status_code=404, detail='User not found')
+    admin_id = int(config.ADMIN_TG_ID or 0)
+    session_id = parse_session(request.cookies.get(COOKIE_NAME))
+    is_owner = session_id in (tg_id, admin_id)
     v = await ledger.user_view(tg_id)
-    positions = [{**p, 'stake_usdc': _usdc(p['stake_micro']), 'potential_usdc': _usdc(p['potential_micro'])} for p in await ledger.user_positions(tg_id)]
-    # Public profile endpoint: expose only non-sensitive stats. Counterparty /
-    # note are intentionally omitted (they leak who-tipped-whom; the donate
-    # page's frontend never renders them).
-    history = [{'kind': r['kind'], 'amount_usdc': _usdc(r['amount']), 'created_at': r['created_at']} for r in await ledger.history(tg_id, 12)]
-    return {**v, 'balance_usdc': _usdc(v['balance_micro']), 'tips_sent_usdc': _usdc(v['tips_sent_micro']), 'tips_received_usdc': _usdc(v['tips_received_micro']), 'bets_won_usdc': _usdc(v['bets_won_micro']), 'bets_placed_usdc': _usdc(v['bets_placed_micro']), 'creator_fees_usdc': _usdc(v['creator_fees_micro']), 'positions': positions, 'history': history, 'deposit_address': str(hot_wallet())}
+    # Public profile endpoint: expose only non-sensitive stats. The requested
+    # user's own full data (balances, positions, tx history) is returned ONLY
+    # to that same user or the owner; a stranger enumerating tg_ids gets the
+    # public aggregate only (no per-tx amounts, no live balance, no positions).
+    if is_owner:
+        positions = [{**p, 'stake_usdc': _usdc(p['stake_micro']), 'potential_usdc': _usdc(p['potential_micro'])} for p in await ledger.user_positions(tg_id)]
+        history = [{'kind': r['kind'], 'amount_usdc': _usdc(r['amount']), 'created_at': r['created_at']} for r in await ledger.history(tg_id, 12)]
+        return {
+            **v,
+            'balance_usdc': _usdc(v['balance_micro']),
+            'tips_sent_usdc': _usdc(v['tips_sent_micro']),
+            'tips_received_usdc': _usdc(v['tips_received_micro']),
+            'bets_won_usdc': _usdc(v['bets_won_micro']),
+            'bets_placed_usdc': _usdc(v['bets_placed_micro']),
+            'creator_fees_usdc': _usdc(v['creator_fees_micro']),
+            'positions': positions,
+            'history': history,
+            'deposit_address': str(hot_wallet()),
+            'is_owner': True,
+        }
+    # Public view: totals only (no live balance, positions, or per-tx history).
+    return {
+        'tg_username': v.get('username'),
+        'tips_sent_usdc': _usdc(v['tips_sent_micro']),
+        'tips_received_usdc': _usdc(v['tips_received_micro']),
+        'bets_won_usdc': _usdc(v['bets_won_micro']),
+        'bets_placed_usdc': _usdc(v['bets_placed_micro']),
+        'creator_fees_usdc': _usdc(v['creator_fees_micro']),
+        'deposit_address': str(hot_wallet()),
+        'is_owner': False,
+    }
 
 @app.get('/api/agent/status', tags=['agent'])
-async def api_agent_status() -> dict:
-    """Agent PnL dashboard — public read-only view of agent performance."""
+async def api_agent_status(request: Request) -> dict:
+    """Agent PnL dashboard — owner-only. Exposes agent reasoning/markets, so it
+    must not be public (could be front-run via its public markets)."""
+    _require_admin(request)
     import json
     import pathlib
 
@@ -201,8 +252,9 @@ async def api_agent_status() -> dict:
     }
 
 @app.get('/api/agent/audit', tags=['agent'])
-async def api_agent_audit() -> list[dict]:
-    """Agent audit trail — last 50 actions from local JSONL log."""
+async def api_agent_audit(request: Request) -> list[dict]:
+    """Agent audit trail — last 50 actions from local JSONL log (owner-only)."""
+    _require_admin(request)
     import json
     import pathlib
     audit_file = pathlib.Path('agent_audit.jsonl')

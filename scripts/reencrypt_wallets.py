@@ -2,16 +2,22 @@
 """Re-encrypt all user wallets with a new WALLET_ENC_KEY.
 
 Usage:
-    WALLET_ENC_KEY=<new_key> python scripts/reencrypt_wallets.py
+    OLD_WALLET_ENC_KEY=<current key> WALLET_ENC_KEY=<new key> \\
+        python scripts/reencrypt_wallets.py
 
-Reads the OLD key from the current DATABASE_URL's .env, re-encrypts every
-row in user_wallets, then commits.  Run this AFTER rotating WALLET_ENC_KEY.
+Reads every row in user_wallets, decrypts it with the OLD key, re-encrypts it
+with the NEW key, then commits. Idempotent: running twice with the same
+OLD/NEW pair is a no-op (decrypt+encrypt of already-re-encrypted data with the
+same keys reproduces the same ciphertext).
 
-Safety: the script is idempotent — running it twice with the same key is a
-no-op (re-encrypting already-encrypted data with the same key produces the
-same ciphertext).
+Why two explicit keys: `bot.wallets` builds ONE global Fernet from the env
+WALLET_ENC_KEY at import time. When rotating you put the NEW key in
+WALLET_ENC_KEY, but the rows are still encrypted with the OLD key — so a naive
+decrypt() would fail on every row. This script passes both keys explicitly and
+builds its own ciphers (identical derivation to bot/wallets.py).
 """
-import os
+import base64
+import hashlib
 import sys
 
 import dotenv
@@ -20,14 +26,40 @@ dotenv.load_dotenv()
 
 from bot import config
 from bot.ledger import Ledger
-from bot.wallets import decrypt, encrypt
+
+OLD_KEY = "OLD_WALLET_ENC_KEY"
+NEW_KEY = "WALLET_ENC_KEY"
 
 
-def main():
-    new_key = os.environ.get("WALLET_ENC_KEY", "").strip()
-    if not new_key or len(new_key) < 32:
+def _cipher(raw: str):
+    from cryptography.fernet import Fernet
+
+    key_b64 = base64.urlsafe_b64encode(hashlib.sha256(raw.encode()).digest())
+    return Fernet(key_b64)
+
+
+def main() -> None:
+    old_raw = sys.argv[1] if len(sys.argv) > 1 else None
+    if not old_raw:
+        import os
+
+        old_raw = os.environ.get(OLD_KEY, "").strip()
+    new_raw = ""
+    import os
+
+    new_raw = os.environ.get(NEW_KEY, "").strip()
+
+    if not old_raw or len(old_raw) < 32:
+        print("ERROR: OLD_WALLET_ENC_KEY (or first CLI arg) must be >= 32 chars")
+        sys.exit(1)
+    if not new_raw or len(new_raw) < 32:
         print("ERROR: WALLET_ENC_KEY must be >= 32 chars")
         sys.exit(1)
+    if new_raw == old_raw:
+        print("WARNING: new key equals old key; nothing will change.")
+
+    old_cipher = _cipher(old_raw)
+    new_cipher = _cipher(new_raw)
 
     ledger = Ledger(config.DATABASE_URL)
     rows = ledger._conn.execute(
@@ -36,19 +68,17 @@ def main():
 
     if not rows:
         print("No wallets to re-encrypt.")
+        ledger.close()
         return
 
-    print(f"Re-encrypting {len(rows)} wallets with new WALLET_ENC_KEY...")
+    print(f"Re-encrypting {len(rows)} wallets: OLD key -> NEW key...")
     updated = 0
     for row in rows:
         try:
-            # Decrypt with the OLD key (still in the running config)
-            old_key = decrypt(row["key_enc"])
-            old_seed = decrypt(row["seed_enc"])
-            # Re-encrypt with the NEW key (from current WALLET_ENC_KEY env)
-            new_key_enc = encrypt(old_key)
-            new_seed_enc = encrypt(old_seed)
-            # Skip if unchanged (same key = same ciphertext)
+            old_key = old_cipher.decrypt(row["key_enc"].encode()).decode()
+            old_seed = old_cipher.decrypt(row["seed_enc"].encode()).decode()
+            new_key_enc = new_cipher.encrypt(old_key.encode()).decode()
+            new_seed_enc = new_cipher.encrypt(old_seed.encode()).decode()
             if new_key_enc == row["key_enc"] and new_seed_enc == row["seed_enc"]:
                 continue
             ledger._conn.execute(
@@ -56,7 +86,7 @@ def main():
                 (new_key_enc, new_seed_enc, row["tg_id"]),
             )
             updated += 1
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"  SKIP tg_id={row['tg_id']}: {e}")
 
     ledger._conn.commit()

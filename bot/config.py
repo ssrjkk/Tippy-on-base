@@ -1,5 +1,4 @@
 import hashlib
-import logging
 import os
 import re
 from decimal import Decimal
@@ -24,6 +23,13 @@ SECRET_KEY: str = (
     os.environ.get("SECRET_KEY", "").strip()
     or hashlib.sha256(f"tippy-session:{BOT_TOKEN}".encode()).hexdigest()
 )
+# Deny-by-default real-client-IP resolution for the rate limiter. The web
+# server binds 0.0.0.0 and, unless a trusted reverse proxy is guaranteed in
+# front, an attacker can forge X-Forwarded-For to rotate identities and bypass
+# per-IP limits. Set TRUST_PROXY_XFF=1 ONLY when every request arrives through
+# your proxy (cloudflared / Koyeb edge / nginx), never for a directly exposed
+# port. False (default) uses the TCP peer IP, which cannot be spoofed.
+TRUST_PROXY_XFF: bool = os.environ.get("TRUST_PROXY_XFF", "0") == "1"
 POLL_SECONDS: int = int(os.environ.get("POLL_SECONDS", "15"))
 # Pin api.telegram.org to a reachable Telegram DC IP when DNS is poisoned/blocked.
 TELEGRAM_API_IP: str = os.environ.get("TELEGRAM_API_IP", "").strip()
@@ -256,18 +262,32 @@ def validate() -> None:
         raise ValueError(f"BASE_RPC_URL is not a valid http(s) URL: {BASE_RPC_URL!r}")
     if WEBHOOK_URL and not re.fullmatch(r"https://[^\s/]+[^\s]*", WEBHOOK_URL):
         raise ValueError(f"WEBHOOK_URL must be a public https URL: {WEBHOOK_URL!r}")
+
+    # A dedicated, random SECRET_KEY is REQUIRED in production. Without it the
+    # session HMAC key is derived from BOT_TOKEN; anyone who ever sees BOT_TOKEN
+    # could then forge a signed session cookie for ANY Telegram user and drain
+    # funds via the authenticated /api/mini/* money endpoints.
+    if not os.environ.get("SECRET_KEY", "").strip():
+        raise ValueError(
+            "SECRET_KEY must be set explicitly (independent of BOT_TOKEN). "
+            "Generate with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    _sk = os.environ.get("SECRET_KEY", "").strip()
+    if len(_sk) < 32:
+        raise ValueError(f"SECRET_KEY must be >= 32 chars, got {len(_sk)}")
+
+    # WALLET_ENC_KEY is REQUIRED: without it bot/wallets.py silently encrypts
+    # every per-user wallet key/seed with a key derived from HOT_WALLET_KEY,
+    # collapsing the isolation between the two secrets.
     _wek = os.environ.get("WALLET_ENC_KEY")
     if not _wek or len(_wek) < 32:
-        # Not fatal: bot/wallets.py falls back to a HOT_WALLET_KEY-derived key
-        # so the bot still starts, but user wallet keys/seeds would then be
-        # encryptable from a leaked .env + DB dump. See SECURITY.md.
-        logging.getLogger("tipbot").warning(
-            "WALLET_ENC_KEY missing or shorter than 32 bytes; user wallet "
-            "keys/seeds will be encrypted with a key derived from "
-            "HOT_WALLET_KEY. Set a dedicated WALLET_ENC_KEY "
-            "(python -c \"import secrets; print(secrets.token_hex(32))\"); "
-            "never reuse HOT_WALLET_KEY."
+        raise ValueError(
+            "WALLET_ENC_KEY must be set to a 32+ byte random value; never reuse "
+            "HOT_WALLET_KEY. Generate with: "
+            "python -c \"import secrets; print(secrets.token_hex(32))\""
         )
+    if _wek == os.environ.get("HOT_WALLET_KEY", "").strip():
+        raise ValueError("WALLET_ENC_KEY must NOT equal HOT_WALLET_KEY")
 
 # Standard ERC-20 ABI subset we need
 ERC20_ABI = [

@@ -63,7 +63,7 @@ def _fmt(micro: int) -> float:
     return round(micro / MICRO, 2)
 
 @router.post('/api/mini/auth', tags=['auth'])
-async def mini_auth(body: InitAuth):
+async def mini_auth(body: InitAuth, request: Request):
     tg_id = verify_init_data(body.initData)
     username = None
     try:
@@ -75,7 +75,8 @@ async def mini_auth(body: InitAuth):
         pass
     await ledger.ensure_user(tg_id, username)
     resp = JSONResponse({'ok': True, 'tg_id': tg_id})
-    resp.set_cookie(COOKIE_NAME, make_session(tg_id), max_age=SESSION_TTL_SECONDS, httponly=True, samesite='lax')
+    resp.set_cookie(COOKIE_NAME, make_session(tg_id), max_age=SESSION_TTL_SECONDS,
+                    httponly=True, samesite='lax', secure=request.url.scheme == 'https')
     return resp
 
 @router.get('/api/mini/state', tags=['users'])

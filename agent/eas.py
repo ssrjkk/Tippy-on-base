@@ -10,14 +10,13 @@ Schema (simplified): action_type(string), market_id(uint256), amount_usdc(uint25
 Requires: web3.py (already in requirements.txt)
 """
 
-import hashlib
 import json
 import os
 import time
 from dataclasses import dataclass
 
-from web3 import Web3
 from eth_abi import encode as abi_encode
+from web3 import Web3
 
 # EAS contract on Base mainnet
 EAS_ADDRESS = "0xC2679fBD36d5E93C340e118209b9F0D949c0b167"
@@ -87,10 +86,13 @@ def _get_w3():
 def _get_attester_key() -> str | None:
     """Return the private key for attestation signing.
 
-    Uses WALLET_ENC_KEY env var (encrypted). For demo, accepts raw key.
-    In production, use CDP MPC wallet or HSM.
+    Uses a DEDICATED AGENT_EAS_KEY. It must never reuse WALLET_ENC_KEY (the
+    wallet-encryption key) as a signing key — that would push the on-chain
+    signing key derived from the same material used to encrypt every user's
+    wallet key/seed into a public blockchain transaction. If AGENT_EAS_KEY is
+    unset we log locally instead of submitting.
     """
-    return os.environ.get("AGENT_EAS_KEY") or os.environ.get("WALLET_ENC_KEY")
+    return os.environ.get("AGENT_EAS_KEY")
 
 
 def attest_action(data: AttestationData) -> str | None:

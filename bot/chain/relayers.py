@@ -94,7 +94,7 @@ class RelayerPool:
                 relayers.append(Relayer(address=addr, _key=key))
                 log.info("relayer registered: %s", addr)
             except Exception as e:
-                log.warning("bad relayer key: %s", e)
+                log.warning("bad relayer key rejected (%s)", type(e).__name__)
         if not relayers:
             log.warning("no relayers configured — withdrawals will fail")
         return cls(relayers)
