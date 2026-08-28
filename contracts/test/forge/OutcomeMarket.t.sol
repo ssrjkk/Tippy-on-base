@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
-import {OutcomeMarket} from "../../contracts/OutcomeMarket.sol";
-import {LMSR} from "../../contracts/LMSR.sol";
+import {OutcomeMarket} from "../../OutcomeMarket.sol";
+import {LMSR} from "../../LMSR.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SD59x18, convert} from "prb-math/SD59x18.sol";
 
@@ -70,8 +70,8 @@ contract OutcomeMarketTest is Test {
         return marketId;
     }
 
-    function _timeTravel(uint256 seconds) internal {
-        vm.warp(block.timestamp + seconds);
+    function _timeTravel(uint256 secs) internal {
+        vm.warp(block.timestamp + secs);
     }
 
     // ------------------------------------------------------------------
@@ -82,7 +82,7 @@ contract OutcomeMarketTest is Test {
         uint256 marketId = _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp + 1 days));
 
         assertGt(marketId, 0);
-        (uint8 numOutcomes, bool resolved, , , int256 b, address creator, uint256 escrow) =
+        (uint8 numOutcomes, bool resolved, , , int256 b, address creator, uint256 escrow, , , ) =
             market.markets(marketId);
         assertEq(numOutcomes, 2);
         assertFalse(resolved);
@@ -92,23 +92,27 @@ contract OutcomeMarketTest is Test {
     }
 
     function test_createMarket_rejects_too_few_outcomes() public {
+        vm.prank(alice);
         vm.expectRevert(OutcomeMarket.BadOutcomeCount.selector);
-        _createMarket(alice, 1, SUBSIDY, uint64(block.timestamp + 1 days));
+        market.createMarket(1, SUBSIDY, uint64(block.timestamp + 1 days));
     }
 
     function test_createMarket_rejects_too_many_outcomes() public {
+        vm.prank(alice);
         vm.expectRevert(OutcomeMarket.BadOutcomeCount.selector);
-        _createMarket(alice, 9, SUBSIDY, uint64(block.timestamp + 1 days));
+        market.createMarket(9, SUBSIDY, uint64(block.timestamp + 1 days));
     }
 
     function test_createMarket_rejects_subsidy_too_small() public {
+        vm.prank(alice);
         vm.expectRevert(OutcomeMarket.SubsidyTooSmall.selector);
-        _createMarket(alice, 2, 1e6, uint64(block.timestamp + 1 days)); // $1 < $10
+        market.createMarket(2, 1e6, uint64(block.timestamp + 1 days)); // $1 < $10
     }
 
     function test_createMarket_rejects_past_closesAt() public {
+        vm.prank(alice);
         vm.expectRevert(OutcomeMarket.ClosesInPast.selector);
-        _createMarket(alice, 2, SUBSIDY, uint64(block.timestamp - 1));
+        market.createMarket(2, SUBSIDY, uint64(block.timestamp - 1));
     }
 
     // ------------------------------------------------------------------
@@ -363,7 +367,9 @@ contract OutcomeMarketTest is Test {
         uint256 aliceBefore = usdc.balanceOf(alice);
         market.cancelExpired(marketId);
 
-        (, , , , , , , , bool cancelled, ) = market.markets(marketId);
+        // 10 fields: numOutcomes, resolved, winningOutcome, closesAt, b,
+        // creator, escrowMicro, resolvedAt, disputed, cancelled.
+        (, , , , , , , , , bool cancelled) = market.markets(marketId);
         assertTrue(cancelled);
     }
 
@@ -410,7 +416,7 @@ contract OutcomeMarketTest is Test {
         uint8 numOutcomes = uint8(2 + (numOutcomesFuzz % 7)); // 2..8
         uint256 minSubsidy = market.MIN_SUBSIDY_MICRO();
         uint256 subsidy = minSubsidy + (subsidyFuzz % (1000e6 - minSubsidy));
-        uint256 closeTime = uint64(block.timestamp + 365 days);
+        uint64 closeTime = uint64(block.timestamp + 365 days);
 
         uint256 marketId = _createMarket(alice, numOutcomes, subsidy, closeTime);
 

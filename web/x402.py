@@ -12,6 +12,7 @@ Protocol (https://github.com/coinbase/x402):
 The tx hash is the PK of x402_payments and the deposit scanner skips it,
 so a payment is never credited twice and liabilities stay exact.
 """
+import logging
 import re
 import time
 import uuid
@@ -22,6 +23,8 @@ from fastapi.responses import JSONResponse
 
 from bot import base, config
 from bot.base import hot_wallet
+
+log = logging.getLogger('web.x402')
 from bot.ledger import async_ledger as ledger
 
 MICRO = 10 ** config.USDC_DECIMALS
@@ -74,6 +77,15 @@ def _verify_payment(tx_hash: str, expected_micro: int) -> dict | None:
             if sender is None:
                 sender = args['from']
     if total != expected_micro or sender is None:
+        if total > 0:
+            # Real money hit the receive address but does not settle this
+            # invoice (wrong amount, or split across senders). Without a
+            # trace it would be stuck forever with no reconciliation hint.
+            log.warning(
+                'x402 unmatched payment: tx=%s expected=%s got=%s sender=%s '
+                '(funds are in the receive address — reconcile manually)',
+                tx_hash, expected_micro, total, sender,
+            )
         return None
     return {'sender': sender, 'amount_micro': total}
 
@@ -92,7 +104,7 @@ def _parse_amount(raw_amount: str) -> int | None:
     return int((amount * MICRO).to_integral_value(rounding=ROUND_CEILING))
 
 def _invoice_response(amount_micro: int, **extra) -> JSONResponse:
-    return JSONResponse(status_code=402, headers=_invoice_headers(amount_micro), content={'detail': 'payment required', 'amount_usdc': round(amount_micro / MICRO, 2), 'pay_to': str(hot_wallet()), 'expires_in_seconds': PAYMENT_TTL_SECONDS, **extra})
+    return JSONResponse(status_code=402, headers=_invoice_headers(amount_micro), content={'detail': 'payment required', 'amount_usdc': round(amount_micro / MICRO, 2), 'pay_to': str(_x402_receive_address() or hot_wallet()), 'expires_in_seconds': PAYMENT_TTL_SECONDS, **extra})
 
 def _payment_rejected_response(amount_micro: int) -> JSONResponse:
     return JSONResponse(status_code=402, headers=_invoice_headers(amount_micro), content={'detail': 'payment not found or too small', 'expected_amount_usdc': round(amount_micro / MICRO, 2)})

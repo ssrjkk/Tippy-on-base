@@ -56,9 +56,11 @@ def webhook_secret() -> str:
 
 async def telegram_webhook(request: Request) -> Response:
     # Telegram updates are small; refuse oversized bodies so the endpoint
-    # can't be used as a memory sink.
+    # can't be used as a memory sink. A missing (chunked) content-length is
+    # rejected too: Telegram always sends the header, so only an attacker
+    # gains from omitting it — and request.json() would buffer it unbounded.
     length = request.headers.get("content-length")
-    if length and length.isdigit() and int(length) > WEBHOOK_MAX_BODY:
+    if not length or not length.isdigit() or int(length) > WEBHOOK_MAX_BODY:
         return JSONResponse(status_code=413, content={"detail": "payload too large"})
     provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if not provided or not hmac.compare_digest(provided, webhook_secret()):

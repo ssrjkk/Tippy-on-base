@@ -46,7 +46,7 @@ async def collect_metrics() -> str:
             reserves = await base.vault_balance()
         else:
             reserves = await base.hot_balance()
-        m["reserves_usdc"] = reserves / _MICRO if reserves else -1
+        m["reserves_usdc"] = reserves / _MICRO if reserves is not None else -1
     except Exception:
         m["reserves_usdc"] = -1
 

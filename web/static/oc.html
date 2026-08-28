@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ончейн-рынок — Tippy</title>
+  <meta property="og:title" content="Ончейн-рынок — Tippy" />
+  <meta property="og:description" content="Polymarket-стиль на Base: доли ERC-1155, расчёты в USDC прямо в контракте. Смотри живые шансы и торгуй в Telegram." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%230052ff'/%3E%3Ctext x='50' y='71' font-size='58' font-weight='800' text-anchor='middle' fill='white'%3Eb%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="orb orb-a" aria-hidden="true"></div>
+  <div class="orb orb-b" aria-hidden="true"></div>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/">
+        <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
+        <b>Tippy</b>
+      </a>
+      <span class="chain-chip">🟦 Base Mainnet · on-chain</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="section reveal" id="oc-page">
+      <h2 id="oc-title">Загрузка…</h2>
+      <p class="hint" id="oc-meta"></p>
+      <div id="oc-options"></div>
+      <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap">
+        <a class="btn btn-primary" id="oc-tg" href="/" style="text-decoration:none">Открыть в Telegram</a>
+        <a class="btn" id="oc-scan" href="#" target="_blank" rel="noopener" style="text-decoration:none;display:none">🔗 Контракт на Basescan</a>
+      </div>
+      <p class="hint" style="margin-top:14px">
+        Доли — настоящие ERC-1155 токены в контракте OutcomeMarket; расчёты в USDC
+        на-цепи. Создавай и торгуй в боте: /oc_create · /oc_buy · /oc_redeem.
+      </p>
+    </section>
+  </main>
+
+  <script>
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const $ = (id) => document.getElementById(id);
+
+    async function load() {
+      const id = location.pathname.split('/').filter(Boolean).pop();
+      try {
+        const [infoR, mR] = await Promise.all([fetch('/api/info'), fetch('/api/onchain/market/' + id)]);
+        if (!mR.ok) throw new Error();
+        const m = await mR.json();
+        let botUsername = '';
+        try { botUsername = (await infoR.json()).bot_username || ''; } catch (e) { /* optional */ }
+
+        const badge = m.cancelled ? '⛔ отменён' : (m.resolved ? '🏁 завершён' : '⛓️ открыт');
+        $('oc-title').textContent = '#' + m.id + ' ' + m.question;
+        document.title = '#' + m.id + ' ' + m.question + ' — Tippy';
+        document.querySelector('meta[property="og:title"]').content = document.title;
+        $('oc-meta').innerHTML = badge + (m.close_at && !m.resolved && !m.cancelled
+          ? ' · ⏰ ' + new Date(m.close_at * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : '') + ' · пул ' + ((m.escrow_micro || 0) / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' USDC';
+
+        $('oc-options').innerHTML = (m.options || []).map((o, j) => {
+          const pct = o.price_pct || 0;
+          const isWinner = m.resolved && m.winner === o.index;
+          return `<div style="margin:10px 0">
+            <div style="display:flex;justify-content:space-between;font-size:14px">
+              <span>${isWinner ? '🏆 ' : ''}${esc(o.label)}</span>
+              <b>${pct.toFixed(1)}%</b>
+            </div>
+            <div style="height:10px;border-radius:6px;background:var(--border,#22242a);overflow:hidden;margin-top:4px">
+              <div style="width:${Math.max(pct, 2)}%;height:100%;background:var(--accent,#0052ff)"></div>
+            </div>
+          </div>`;
+        }).join('');
+
+        if (botUsername) $('oc-tg').href = 'https://t.me/' + encodeURIComponent(botUsername);
+        if (m.market_address) {
+          $('oc-scan').href = 'https://basescan.org/address/' + encodeURIComponent(m.market_address);
+          $('oc-scan').style.display = '';
+        }
+      } catch (e) {
+        $('oc-title').textContent = 'Рынок не найден';
+        $('oc-meta').textContent = 'Возможно, ончейн-рынки ещё не включены.';
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

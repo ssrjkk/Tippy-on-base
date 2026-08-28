@@ -13,6 +13,7 @@ is only meaningful once the webhook URL is configured (after deploy).
 from html import escape
 
 from fastapi import APIRouter
+from fastapi.responses import HTMLResponse
 
 from bot import config
 from bot.ledger import async_ledger as ledger
@@ -26,7 +27,7 @@ def _public_base() -> str:
         return 'https://tipbot.example.invalid'
     return base_url
 
-@router.get('/frame/{item_id}')
+@router.get('/frame/{item_id}', response_class=HTMLResponse)
 async def frame_page(item_id: int) -> str:
     item = await ledger.paywall_item(item_id)
     if item is None:

@@ -23,9 +23,14 @@ import {LMSR} from "./LMSR.sol";
 ///
 ///      Trust model:
 ///        - Oracle is trusted to resolve honestly (set by owner)
-///        - Owner can dispute oracle within 2h (emergency brake)
+///        - Owner can dispute oracle within 2h (once per market; afterwards
+///          only ownerResolve can finalize — no oracle/owner ping-pong)
 ///        - After 2h window, resolution is immutable
 ///        - Expired markets (>24h past close) can be cancelled by anyone
+///
+///      NOTE: USDC sent DIRECTLY to this contract (not via createMarket/buy/
+///      mintCompleteSet) credits no market escrow and is stranded dust — keep
+///      this address for contract interactions only.
 contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -105,6 +110,9 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     error MarketNotExpired();
     error InvalidShares();
     error NothingToClaim();
+    error MarketDisputed();
+    error ZeroAddress();
+    error EthTransferFailed();
 
     modifier onlyOracleOrOwner() {
         if (msg.sender != oracle && msg.sender != owner()) revert NotOwnerOrOracle();
@@ -123,6 +131,19 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     function setOracle(address newOracle) external onlyOwner {
         emit OracleUpdated(oracle, newOracle);
         oracle = newOracle;
+    }
+
+    event EthRescued(address indexed to, uint256 amount);
+
+    /// @notice Recover ETH stranded in this contract (selfdestruct-forced or
+    ///         accidental). User funds are ALWAYS in USDC escrow — this never
+    ///         touches them. There is no receive() fallback, so ETH cannot
+    ///         arrive through normal transfers.
+    function rescueETH(address payable to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
+        (bool ok,) = to.call{value: amount}("");
+        if (!ok) revert EthTransferFailed();
+        emit EthRescued(to, amount);
     }
 
     // ---------------------------------------------------------------------
@@ -163,6 +184,7 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     function mintCompleteSet(uint256 marketId, uint256 amountMicro) external nonReentrant {
         Market storage m = _existingMarket(marketId);
         if (m.cancelled) revert AlreadyCancelled();
+        if (block.timestamp >= m.closesAt) revert MarketNotClosed();
         if (amountMicro == 0) revert InvalidShares();
         // Complete sets raise every outcome's supply equally; still enforce
         // the global per-outcome ceiling so q[] stays inside safe math range.
@@ -199,6 +221,11 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
     {
         Market storage m = _tradeableMarket(marketId, outcomeIdx);
         if (shares == 0 || shares > MAX_SUPPLY_PER_OUTCOME) revert InvalidShares();
+        // Cumulative per-outcome ceiling (mintCompleteSet enforces the same):
+        // repeated buys must not push q[] past the documented supply cap.
+        if (totalSupply(_tokenId(marketId, outcomeIdx)) + shares > MAX_SUPPLY_PER_OUTCOME) {
+            revert InvalidShares();
+        }
 
         int256[] memory q = _currentQ(marketId, m.numOutcomes);
 
@@ -263,6 +290,10 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
         if (m.cancelled) revert AlreadyCancelled();
         if (block.timestamp < m.closesAt) revert MarketNotClosed();
         if (winningOutcome >= m.numOutcomes) revert BadOutcomeIndex();
+        // Anti ping-pong: once the owner disputed an oracle answer, the
+        // oracle may not simply re-post it — only the owner (via
+        // ownerResolve) can finalize a disputed market.
+        if (m.disputed) revert MarketDisputed();
 
         m.resolved = true;
         m.winningOutcome = winningOutcome;
@@ -277,15 +308,21 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
         if (m.resolvedAt == 0) revert NotResolved();
         if (block.timestamp > m.resolvedAt + DISPUTE_WINDOW) revert DisputeWindowExpired();
         if (m.cancelled) revert AlreadyCancelled();
+        if (m.disputed) revert MarketDisputed(); // one dispute per market
 
         m.resolved = false;
         m.winningOutcome = 0;
-        m.resolvedAt = 0;
+        // Keep resolvedAt as the timestamp of the LAST resolution activity:
+        // cancelExpired() measures its 24h expiry window from here, so a
+        // disputed market cannot be cancelled out from under the owner the
+        // moment the dispute window lapses.
+        m.resolvedAt = uint64(block.timestamp);
         m.disputed = true;
         emit ResolutionDisputed(marketId, msg.sender);
     }
 
-    /// @notice Owner resolves directly (fallback if oracle doesn't act within 24h).
+    /// @notice Owner resolves directly (fallback if oracle doesn't act, or the
+    /// final say after a dispute).
     function ownerResolve(uint256 marketId, uint8 winningOutcome) external onlyOwner {
         Market storage m = _existingMarket(marketId);
         if (m.resolved) revert AlreadyResolved();
@@ -312,7 +349,12 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
         Market storage m = _existingMarket(marketId);
         if (m.resolved) revert AlreadyResolved();
         if (m.cancelled) revert AlreadyCancelled();
-        if (block.timestamp < m.closesAt + EXPIRY_WINDOW) revert MarketNotExpired();
+        // Expiry counts from the LAST resolution activity (a dispute resets
+        // the clock), not just from close, so an owner who disputed is not
+        // raced by a permissionless cancel one second after the dispute
+        // window ends.
+        uint64 lastActivity = m.resolvedAt > m.closesAt ? m.resolvedAt : m.closesAt;
+        if (block.timestamp < lastActivity + EXPIRY_WINDOW) revert MarketNotExpired();
 
         uint256 escrow = m.escrowMicro;
         uint256 totalShares = 0;
@@ -332,8 +374,15 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
             }
         } else {
             // Reserve every micro-USDC for shareholders at one uniform
-            // per-share rate; they claim (burn -> refund) individually.
-            claimRatePerShare[marketId] = (escrow * RATE_SCALE) / totalShares;
+            // per-share rate, CAPPED AT PAR ($1 per micro-share): a share is
+            // never worth more than its resolution payout. Without the cap a
+            // tiny supply relative to the (unspent) escrow would let the
+            // smallest holder drain the whole creator subsidy. Holders claim
+            // (burn -> refund) individually; when supply reaches zero the
+            // dust sweep below returns the unused subsidy to the creator.
+            uint256 rate = (escrow * RATE_SCALE) / totalShares;
+            if (rate > RATE_SCALE) rate = RATE_SCALE;
+            claimRatePerShare[marketId] = rate;
             unclaimedEscrowMicro[marketId] = escrow;
         }
     }

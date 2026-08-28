@@ -121,6 +121,21 @@ def main() -> int:
     owner = Web3.to_checksum_address(args.owner) if args.owner else acct.address
     usdc = Web3.to_checksum_address(args.usdc)
 
+    # --- Deploy guards ---------------------------------------------------
+    # A misconfigured RPC would otherwise deploy a market bound to a
+    # nonexistent "USDC" on the wrong network with no way to fix it (usdc
+    # and owner are immutable after the constructor).
+    expected = int(cfg("EXPECTED_CHAIN_ID", "8453") or 8453)
+    if expected and chain_id != expected:
+        print(f"ERROR: RPC is on chain {chain_id}, expected {expected} (EXPECTED_CHAIN_ID). Refusing to deploy.")
+        return 1
+    if not w3.eth.get_code(usdc) or w3.eth.get_code(usdc) == b"":
+        print(f"ERROR: no contract code at the USDC address {usdc} on chain {chain_id}. Wrong network or wrong address?")
+        return 1
+    if owner.lower() == acct.address.lower():
+        print("WARNING: owner == deployer hot key. The owner can ownerResolve any market:")
+        print("         deploy with --owner <multisig/Safe> for production!")
+
     art = compile_market()
     contract = w3.eth.contract(abi=art["abi"], bytecode=art["bin"])
     ctor = contract.constructor(usdc, owner)

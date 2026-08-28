@@ -4,6 +4,9 @@ out = "out"
 libs = ["contracts/lib"]
 script = "contracts/script"
 test = "contracts/test"
+# Vendored dependency repos ship their own test/script files that need
+# remappings we don't provide (halmos, PRBTest) — never build or scan them.
+skip = ["*/lib/*/test/*", "*/lib/*/src/test/*", "*/lib/*/script/*", "*/lib/*/contracts/*", "*/lib/*/certora/*"]
 solc = "0.8.24"
 optimizer = true
 optimizer_runs = 200

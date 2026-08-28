@@ -126,9 +126,10 @@
       try {
         const u = await (await fetch("/api/user/" + tgId)).json();
         $("user-avatar").textContent = (u.username || "?")[0].toUpperCase();
-        $("user-name").textContent = "@" + u.username;
-        $("user-meta").textContent = "Пользователь Tippy · " + u.balance_usdc + " USDC на балансе";
-        $("u-balance").textContent = fmtUSDC(u.balance_usdc) + " USDC";
+        $("user-name").textContent = "@" + (u.username || "id" + tgId);
+        const hasBalance = u.balance_usdc !== undefined && u.balance_usdc !== null;
+        $("user-meta").textContent = "Пользователь Tippy" + (hasBalance ? " · " + u.balance_usdc + " USDC на балансе" : "");
+        $("u-balance").textContent = hasBalance ? fmtUSDC(u.balance_usdc) + " USDC" : "—";
         $("u-received").textContent = fmtUSDC(u.tips_received_usdc) + " USDC";
         $("u-sent").textContent = fmtUSDC(u.tips_sent_usdc) + " USDC";
         $("u-won").textContent = fmtUSDC(u.bets_won_usdc) + " USDC";

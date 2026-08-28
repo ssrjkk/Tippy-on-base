@@ -9,12 +9,59 @@ already in requirements.txt.
 """
 import asyncio
 import json
+import time
 from decimal import Decimal
 from pathlib import Path
 
 from web3 import Web3
 
 from . import config
+
+# Shared hot-wallet send lock (gas drips go through chain.transfers).
+from .chain.transfers import _send_lock  # noqa: F401
+
+# Gas-drip anti-griefing: one drip per user wallet per cooldown window no
+# matter how many buy/create attempts they trigger, PLUS a global per-UTC-day
+# budget — an attacker with 100 wallets must not be able to farm the hot
+# wallet's ETH even at one drip each.
+_DRIP_COOLDOWN_SECONDS = 3600
+_last_drip: dict[str, float] = {}
+_drip_day: int = -1
+_drip_count: int = 0
+
+
+def _check_chain() -> None:
+    """Refuse to build/sign anything if the RPC is not the expected chain."""
+    from .chain.network import assert_base_chain_sync
+
+    assert_base_chain_sync()
+
+
+async def _ensure_gas(w3: Web3, user_addr: str, needed_wei: int) -> None:
+    """Drip gas from the hot wallet if `user_addr` cannot pay for a tx.
+
+    Rate-limited per user wallet AND capped globally per UTC day.
+    """
+    global _drip_day, _drip_count
+    if w3.eth.get_balance(Web3.to_checksum_address(user_addr)) >= needed_wei:
+        return
+    day = int(time.time()) // 86400
+    if _drip_day != day:
+        _drip_day, _drip_count = day, 0
+    if _drip_count >= int(getattr(config, "GAS_DRIP_DAILY_MAX", 50)):
+        raise RuntimeError("daily gas top-up budget exhausted — try tomorrow")
+    now = time.monotonic()
+    last = _last_drip.get(user_addr.lower(), 0.0)
+    if now - last < _DRIP_COOLDOWN_SECONDS:
+        raise RuntimeError("gas top-up cooldown — try again in an hour")
+    drip_wei = int(config.GAS_DRIP_ETH * Decimal(10**18))
+    if drip_wei <= 0:
+        raise RuntimeError("on-chain gas top-up disabled (GAS_DRIP_ETH=0)")
+    from .chain.transfers import send_eth
+
+    await send_eth(user_addr, drip_wei)
+    _last_drip[user_addr.lower()] = now
+    _drip_count += 1
 
 # Minimal ERC20 ABI — only the functions we need (approve/allowance/balanceOf).
 _ERC20_EXTRAS_ABI = json.loads("""[
@@ -62,23 +109,20 @@ def _usdc_contract(w3: Web3):
 async def market_state(market_id: int) -> tuple[int, int, int]:
     """Return (q_total, b, n) for the on-chain market.
 
-    q_total = sum of all shares outstanding across outcomes (we compute
-    this from ERC1155 balances since the contract doesn't expose q_i directly).
+    q_total = sum of outstanding shares across outcomes, read from
+    ERC1155Supply.totalSupply per token id.
     """
     w3 = _w3()
     contract = _market_contract(w3)
     m = contract.functions.markets(market_id).call()
     num_outcomes = m[0]  # uint8 numOutcomes
     b = m[4]             # int256 b
-    # Sum ERC1155 balances across all outcomes for the zero address (total supply)
+    # ERC1155Supply tracks total supply in a dedicated mapping — minting
+    # credits traders, never the zero address, so balanceOf(0x0) is NOT the
+    # supply (that mistake silently made this return q=[0,...] forever).
     total_q = 0
     for i in range(num_outcomes):
-        token_id = market_id * 256 + i
-        bal = contract.functions.balanceOf(
-            Web3.to_checksum_address("0x0000000000000000000000000000000000000000"),
-            token_id,
-        ).call()
-        total_q += bal
+        total_q += contract.functions.totalSupply(market_id * 256 + i).call()
     return total_q, b, num_outcomes
 
 
@@ -88,6 +132,18 @@ async def price_of(market_id: int, outcome: int) -> Decimal:
     contract = _market_contract(w3)
     price18 = contract.functions.priceOf(market_id, outcome).call()
     return Decimal(price18) / Decimal(10**18)
+
+
+async def market_prices(market_id: int, num_outcomes: int) -> list[Decimal]:
+    """Live LMSR prices for every outcome (0..1 scale), one RPC batch."""
+    w3 = _w3()
+
+    def _call():
+        c = _market_contract(w3)
+        return [c.functions.priceOf(market_id, i).call() for i in range(num_outcomes)]
+
+    raw = await asyncio.to_thread(_call)
+    return [Decimal(p) / Decimal(10**18) for p in raw]
 
 
 async def quote_buy(market_id: int, outcome: int, shares: int) -> int:
@@ -107,19 +163,21 @@ async def quote_sell(market_id: int, outcome: int, shares: int) -> int:
 async def estimate_buy_shares(market_id: int, outcome: int, spend_micro: int) -> int:
     """Estimate how many shares you get for `spend_micro` USDC.
 
-    Binary search using on-chain quoteBuy (free view calls, no RPC per step
-    in terms of gas — just one eth_call each).
+    Binary search over the on-chain quoteBuy view (free eth_calls). The upper
+    bound grows geometrically: an LMSR price can sit arbitrarily close to
+    zero, so a fixed `spend * 10` ceiling would under-quote cheap outcomes.
     """
-    lo, hi = 0, spend_micro * 10  # upper bound: 10 shares per micro (generous)
-    best = 0
-    for _ in range(60):
-        mid = (lo + hi) // 2
-        if mid == 0:
+    lo, hi = 0, max(spend_micro, 1_000_000)
+    for _ in range(24):
+        if await quote_buy(market_id, outcome, hi) > spend_micro:
             break
-        cost = await quote_buy(market_id, outcome, mid)
-        if cost <= spend_micro:
+        lo, hi = hi, hi * 4
+    best = lo
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if await quote_buy(market_id, outcome, mid) <= spend_micro:
             best = mid
-            lo = mid + 1
+            lo = mid
         else:
             hi = mid - 1
     return best
@@ -132,22 +190,14 @@ async def buy(market_id: int, outcome: int, shares: int, max_cost_micro: int,
     `shares`: exact number of shares to buy.
     `max_cost_micro`: slippage cap — tx reverts if cost exceeds this.
     """
-    from .chain.transfers import send_eth
+    _check_chain()
     w3 = _w3()
     account = w3.eth.account.from_key(user_private_key)
     user_addr = account.address
 
-    # 1) Ensure user has gas for approve + buy
-    balance = w3.eth.get_balance(user_addr)
+    # 1) Ensure user has gas for approve + buy (rate-limited drip)
     needed_wei = int(Decimal("0.0003") * Decimal(10**18))
-    if balance < needed_wei:
-        drip_wei = int(config.GAS_DRIP_ETH * Decimal(10**18))
-        await send_eth(user_addr, drip_wei)
-        # Wait for balance to appear
-        for _ in range(20):
-            await asyncio.sleep(0.5)
-            if w3.eth.get_balance(user_addr) >= needed_wei:
-                break
+    await _ensure_gas(w3, user_addr, needed_wei)
 
     # 2) Ensure USDC approval
     usdc = _usdc_contract(w3)
@@ -156,10 +206,10 @@ async def buy(market_id: int, outcome: int, shares: int, max_cost_micro: int,
     ).call()
     if current_allowance < max_cost_micro:
         approve_tx = usdc.functions.approve(
-            Web3.to_checksum_address(config.OUTCOME_MARKET_ADDRESS), 2**256 - 1
+            Web3.to_checksum_address(config.OUTCOME_MARKET_ADDRESS), max_cost_micro
         ).build_transaction({
             "from": user_addr,
-            "nonce": w3.eth.get_transaction_count(user_addr),
+            "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
             "gas": 60000,
             "gasPrice": w3.eth.gas_price,
         })
@@ -173,13 +223,15 @@ async def buy(market_id: int, outcome: int, shares: int, max_cost_micro: int,
         market_id, outcome, shares, max_cost_micro
     ).build_transaction({
         "from": user_addr,
-        "nonce": w3.eth.get_transaction_count(user_addr),
+        "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 300000,
         "gasPrice": w3.eth.gas_price,
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=user_private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+    with _send_lock:
+        raw_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    tx_hash = raw_hash.hex() if isinstance(raw_hash, bytes) else raw_hash
+    receipt = w3.eth.wait_for_transaction_receipt(raw_hash, timeout=60)
     if receipt.status != 1:
         raise RuntimeError(f"buy reverted: {tx_hash.hex()}")
     return tx_hash.hex()
@@ -192,6 +244,7 @@ async def sell(market_id: int, outcome: int, shares: int,
     `shares`: number of shares to sell.
     `min_proceeds_micro`: slippage floor — tx reverts if proceeds are below.
     """
+    _check_chain()
     w3 = _w3()
     account = w3.eth.account.from_key(user_private_key)
     user_addr = account.address
@@ -201,13 +254,15 @@ async def sell(market_id: int, outcome: int, shares: int,
         market_id, outcome, shares, min_proceeds_micro
     ).build_transaction({
         "from": user_addr,
-        "nonce": w3.eth.get_transaction_count(user_addr),
+        "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 300000,
         "gasPrice": w3.eth.gas_price,
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=user_private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+    with _send_lock:
+        raw_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    tx_hash = raw_hash.hex() if isinstance(raw_hash, bytes) else raw_hash
+    receipt = w3.eth.wait_for_transaction_receipt(raw_hash, timeout=60)
     if receipt.status != 1:
         raise RuntimeError(f"sell reverted: {tx_hash.hex()}")
     return tx_hash.hex()
@@ -215,6 +270,7 @@ async def sell(market_id: int, outcome: int, shares: int,
 
 async def redeem(market_id: int, user_private_key: str) -> int:
     """Redeem winning shares after resolution. Returns payout in micro-USDC."""
+    _check_chain()
     w3 = _w3()
     account = w3.eth.account.from_key(user_private_key)
     user_addr = account.address
@@ -222,37 +278,41 @@ async def redeem(market_id: int, user_private_key: str) -> int:
 
     tx = contract.functions.redeem(market_id).build_transaction({
         "from": user_addr,
-        "nonce": w3.eth.get_transaction_count(user_addr),
+        "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 200000,
         "gasPrice": w3.eth.gas_price,
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=user_private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+    with _send_lock:
+        raw_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    tx_hash = raw_hash.hex() if isinstance(raw_hash, bytes) else raw_hash
+    receipt = w3.eth.wait_for_transaction_receipt(raw_hash, timeout=60)
     if receipt.status != 1:
-        raise RuntimeError(f"redeem reverted: {tx_hash.hex()}")
-    # Parse payout from return data or logs
-    return receipt.get("cumulativeGasUsed", 0)  # placeholder — real impl decodes logs
+        raise RuntimeError(f"redeem reverted: {tx_hash}")
+    payout = 0
+    from . import base
+    for log in receipt.get("logs", []):
+        if log.get("address", "").lower() == config.USDC_ADDRESS.lower():
+            try:
+                ev = base.usdc.events.Transfer().process_log(log)
+                if ev["args"]["to"].lower() == user_addr.lower():
+                    payout += int(ev["args"]["value"])
+            except Exception:
+                pass
+    return payout
 
 
 async def create_market(num_outcomes: int, subsidy_micro: int, closes_at: int,
                          creator_private_key: str) -> int:
     """Create a new on-chain market. Returns market_id."""
+    _check_chain()
     w3 = _w3()
     account = w3.eth.account.from_key(creator_private_key)
     user_addr = account.address
 
-    # Ensure creator has gas
-    balance = w3.eth.get_balance(user_addr)
+    # Ensure creator has gas (rate-limited drip)
     needed_wei = int(Decimal("0.0005") * Decimal(10**18))
-    if balance < needed_wei:
-        drip_wei = int(config.GAS_DRIP_ETH * Decimal(10**18))
-        from .chain.transfers import send_eth
-        await send_eth(user_addr, drip_wei)
-        for _ in range(20):
-            await asyncio.sleep(0.5)
-            if w3.eth.get_balance(user_addr) >= needed_wei:
-                break
+    await _ensure_gas(w3, user_addr, needed_wei)
 
     # Approve USDC transfer for subsidy
     usdc = _usdc_contract(w3)
@@ -261,10 +321,10 @@ async def create_market(num_outcomes: int, subsidy_micro: int, closes_at: int,
     ).call()
     if current_allowance < subsidy_micro:
         approve_tx = usdc.functions.approve(
-            Web3.to_checksum_address(config.OUTCOME_MARKET_ADDRESS), 2**256 - 1
+            Web3.to_checksum_address(config.OUTCOME_MARKET_ADDRESS), subsidy_micro
         ).build_transaction({
             "from": user_addr,
-            "nonce": w3.eth.get_transaction_count(user_addr),
+            "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
             "gas": 60000,
             "gasPrice": w3.eth.gas_price,
         })
@@ -277,7 +337,7 @@ async def create_market(num_outcomes: int, subsidy_micro: int, closes_at: int,
         num_outcomes, subsidy_micro, closes_at
     ).build_transaction({
         "from": user_addr,
-        "nonce": w3.eth.get_transaction_count(user_addr),
+        "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 500000,
         "gasPrice": w3.eth.gas_price,
     })
@@ -294,6 +354,7 @@ async def create_market(num_outcomes: int, subsidy_micro: int, closes_at: int,
 async def oracle_resolve(market_id: int, winning_outcome: int,
                           oracle_private_key: str) -> str:
     """Oracle resolves the market. Returns tx hash."""
+    _check_chain()
     w3 = _w3()
     account = w3.eth.account.from_key(oracle_private_key)
     user_addr = account.address
@@ -303,33 +364,114 @@ async def oracle_resolve(market_id: int, winning_outcome: int,
         market_id, winning_outcome
     ).build_transaction({
         "from": user_addr,
-        "nonce": w3.eth.get_transaction_count(user_addr),
+        "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 100000,
         "gasPrice": w3.eth.gas_price,
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=oracle_private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    with _send_lock:
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
     if receipt.status != 1:
         raise RuntimeError(f"oracleResolve reverted: {tx_hash.hex()}")
     return tx_hash.hex()
 
 
-async def get_market_info(market_id: int) -> dict:
-    """Read full market info from chain."""
+def _resolve_like(contract, w3: Web3, fn_name: str, args: tuple,
+                  private_key: str, gas: int) -> str:
+    """Shared sign-and-broadcast for ownerResolve/cancelExpired (hot wallet)."""
+    account = w3.eth.account.from_key(private_key)
+    tx = getattr(contract.functions, fn_name)(*args).build_transaction({
+        "from": account.address,
+        "nonce": w3.eth.get_transaction_count(account.address, "pending"),
+        "gas": gas,
+        "gasPrice": w3.eth.gas_price,
+    })
+    signed = account.sign_transaction(tx)
+    with _send_lock:
+        raw_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    receipt = w3.eth.wait_for_transaction_receipt(raw_hash, timeout=60)
+    if receipt.status != 1:
+        raise RuntimeError(f"{fn_name} reverted: {raw_hash.hex()}")
+    return raw_hash.hex()
+
+
+async def owner_resolve(market_id: int, winning_outcome: int,
+                        private_key: str) -> str:
+    """Owner resolves directly (fallback when no oracle key is configured)."""
+    _check_chain()
     w3 = _w3()
     contract = _market_contract(w3)
-    m = contract.functions.markets(market_id).call()
-    return {
-        "market_id": market_id,
-        "num_outcomes": m[0],
-        "resolved": m[1],
-        "winning_outcome": m[2],
-        "closes_at": m[3],
-        "b": m[4],
-        "creator": m[5],
-        "escrow_micro": m[6],
-        "resolved_at": m[7],
-        "disputed": m[8],
-        "cancelled": m[9],
-    }
+    return _resolve_like(contract, w3, "ownerResolve",
+                         (market_id, winning_outcome), private_key, 100000)
+
+
+async def cancel_expired(market_id: int, private_key: str) -> str:
+    """Cancel an expired market (>24h past close, no resolution) — anyone may
+    call it; refunds unlock at par via claimCancelled."""
+    _check_chain()
+    w3 = _w3()
+    contract = _market_contract(w3)
+    return _resolve_like(contract, w3, "cancelExpired",
+                         (market_id,), private_key, 200000)
+
+
+async def market_views(limit: int = 12) -> list[dict]:
+    """Dashboard/Mini-App friendly snapshots of registered on-chain markets:
+    registry labels + live on-chain prices and resolution state. Markets that
+    fail to read (RPC hiccup) are skipped, never break the whole list."""
+    from .ledger import async_ledger as ledger
+
+    if not config.OUTCOME_MARKET_ADDRESS:
+        return []
+    rows = await ledger.list_onchain_markets(limit)
+
+    async def _view(m) -> dict | None:
+        options = json.loads(m['options'])
+        try:
+            prices, info = await asyncio.gather(
+                market_prices(int(m['id']), len(options)),
+                get_market_info(int(m['id'])),
+            )
+        except Exception:
+            return None  # one stale RPC must not break the whole list
+        return {
+            'id': int(m['id']),
+            'question': m['question'],
+            'close_at': m['close_at'],
+            'resolved': info.get('resolved'),
+            'cancelled': info.get('cancelled'),
+            'winner': info.get('winning_outcome'),
+            'market_address': config.OUTCOME_MARKET_ADDRESS,
+            'options': [
+                {'index': i, 'label': o, 'price_pct': float(round(prices[i] * 100, 2))}
+                for i, o in enumerate(options)
+            ],
+        }
+
+    views = await asyncio.gather(*(_view(m) for m in rows))
+    return [v for v in views if v is not None]
+
+
+async def get_market_info(market_id: int) -> dict:
+    """Read full market info from chain (off the event loop)."""
+    w3 = _w3()
+    contract = _market_contract(w3)
+
+    def _call():
+        m = contract.functions.markets(market_id).call()
+        return {
+            "market_id": market_id,
+            "num_outcomes": m[0],
+            "resolved": m[1],
+            "winning_outcome": m[2],
+            "closes_at": m[3],
+            "b": m[4],
+            "creator": m[5],
+            "escrow_micro": m[6],
+            "resolved_at": m[7],
+            "disputed": m[8],
+            "cancelled": m[9],
+        }
+
+    return await asyncio.to_thread(_call)

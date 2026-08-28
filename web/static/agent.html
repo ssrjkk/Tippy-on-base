@@ -56,6 +56,8 @@
     </div>
 
     <script>
+    function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
     async function loadDashboard() {
         try {
             const statusRes = await fetch('/api/agent/status');
@@ -111,7 +113,7 @@
             container.innerHTML = entries.slice(-20).reverse().map(e => `
                 <div class="audit-entry">
                     <span class="ts">${new Date(e.ts * 1000).toLocaleTimeString()}</span>
-                    <span class="action">${e.action || e.market_id ? `Market #${e.market_id}` : 'unknown'}</span>
+                    <span class="action">${escapeHtml(e.action || (e.market_id ? `Market #${e.market_id}` : 'unknown'))}</span>
                     ${e.bet_amount_usdc ? ` · Bet $${e.bet_amount_usdc.toFixed(2)}` : ''}
                     ${e.confidence ? ` · ${Math.round(e.confidence * 100)}%` : ''}
                 </div>

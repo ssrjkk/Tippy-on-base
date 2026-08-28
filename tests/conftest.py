@@ -34,7 +34,7 @@ TABLES = [
     "user_settings", "user_wallets", "x402_payments", "paywall_items", "paywall_purchases",
     "paywall_channels", "paywall_subscriptions", "markets", "market_shares",
     "suspicious_activity", "community_treasuries", "treasury_transactions",
-    "treasury_proposals", "treasury_votes",
+    "treasury_proposals", "treasury_votes", "onchain_markets", "onchain_trades",
 ]
 
 
@@ -45,14 +45,26 @@ def _reset_db(ledger) -> None:
 
 @pytest.fixture(scope="session", autouse=True)
 def _pg_test_db():
+    import time
+
     import psycopg
 
-    try:
-        with psycopg.connect(TEST_ADMIN_URL, connect_timeout=3, autocommit=True) as admin:
-            admin.execute("DROP DATABASE IF EXISTS tipbot_test WITH (FORCE)")
-            admin.execute("CREATE DATABASE tipbot_test")
-    except Exception as e:
-        pytest.exit(f"PostgreSQL not available: {e}", returncode=1)
+    # DROP ... WITH (FORCE) kills backends left over from a previous run;
+    # right after a heavy suite those backends can outlive the client for a
+    # moment (and a different-role owner cannot be terminated), so retry.
+    last = None
+    for attempt in range(5):
+        try:
+            with psycopg.connect(TEST_ADMIN_URL, connect_timeout=3, autocommit=True) as admin:
+                admin.execute("DROP DATABASE IF EXISTS tipbot_test WITH (FORCE)")
+                admin.execute("CREATE DATABASE tipbot_test")
+            last = None
+            break
+        except Exception as e:
+            last = e
+            time.sleep(2 * (attempt + 1))
+    if last is not None:
+        pytest.exit(f"PostgreSQL not available: {last}", returncode=1)
     yield
 
 

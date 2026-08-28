@@ -37,6 +37,7 @@ class Relayer:
     _day_start: int = 0  # unix day (UTC)
 
     def __post_init__(self):
+        self._lock = threading.Lock()
         if self._daily_limit_micro == 0:
             self._daily_limit_micro = int(
                 Decimal(str(getattr(config, "RELAYER_DAILY_LIMIT", 10_000)))
@@ -45,18 +46,21 @@ class Relayer:
 
     def can_send(self, amount_micro: int) -> bool:
         """True if this relayer has enough remaining daily capacity."""
-        self._maybe_reset()
-        return self._spent_today + amount_micro <= self._daily_limit_micro
+        with self._lock:
+            self._maybe_reset()
+            return self._spent_today + amount_micro <= self._daily_limit_micro
 
     def record_send(self, amount_micro: int) -> None:
         """Record a successful send against the daily cap."""
-        self._maybe_reset()
-        self._spent_today += amount_micro
+        with self._lock:
+            self._maybe_reset()
+            self._spent_today += amount_micro
 
     def remaining(self) -> int:
         """Remaining daily capacity in micro-USDC."""
-        self._maybe_reset()
-        return max(0, self._daily_limit_micro - self._spent_today)
+        with self._lock:
+            self._maybe_reset()
+            return max(0, self._daily_limit_micro - self._spent_today)
 
     def _maybe_reset(self) -> None:
         """Reset the daily counter at midnight UTC."""

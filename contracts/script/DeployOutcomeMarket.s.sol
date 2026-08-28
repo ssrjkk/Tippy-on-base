@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
-import {OutcomeMarket} from "../contracts/OutcomeMarket.sol";
+import {OutcomeMarket} from "../OutcomeMarket.sol";
 
 /// @title DeployOutcomeMarket
 /// @notice Deploys the OutcomeMarket contract for on-chain LMSR prediction.
@@ -25,7 +25,7 @@ contract DeployOutcomeMarket is Script {
     function run() external {
         string memory usdcAddr = vm.envOr("OUTCOME_USDC_ADDRESS", string(""));
         if (bytes(usdcAddr).length == 0) {
-            console.log("OUTCOME_USDC_ADDRESS not set — deploy MiniUSDC first or set it.");
+            console.log("OUTCOME_USDC_ADDRESS not set - deploy MiniUSDC first or set it.");
             return;
         }
 

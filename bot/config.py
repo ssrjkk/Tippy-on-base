@@ -248,6 +248,9 @@ OUTCOME_MARKET_ADDRESS: str | None = os.environ.get("OUTCOME_MARKET_ADDRESS", ""
 # the threshold. Both in whole ETH (Base gas is cheap; this is a few cents).
 GAS_DRIP_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_ETH", "0.0002"))
 GAS_DRIP_THRESHOLD_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_THRESHOLD_ETH", "0.00005"))
+# Global safety cap: max gas drips the hot wallet performs per UTC day across
+# ALL user wallets (blocks drip-farming with many fresh wallets).
+GAS_DRIP_DAILY_MAX: int = int(os.environ.get("GAS_DRIP_DAILY_MAX", "50"))
 
 
 def validate() -> None:

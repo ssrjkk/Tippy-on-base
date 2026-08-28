@@ -1906,6 +1906,167 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "🔒 This command works only in a private chat with the bot. Message the bot in DM.",
         "zh": "🔒 该命令仅在私聊中可用，请通过私信使用机器人。",
     },
+    # ----- on-chain markets (/oc*) -----
+    "oc_disabled": {
+        "ru": "⛓️ Ончейн-рынки выключены: контракт OutcomeMarket не задеплоен (OUTCOME_MARKET_ADDRESS не настроен).",
+        "en": "⛓️ On-chain markets are off: the OutcomeMarket contract is not deployed (OUTCOME_MARKET_ADDRESS not set).",
+        "zh": "⛓️ 链上市场未启用：OutcomeMarket 合约未部署（未配置 OUTCOME_MARKET_ADDRESS）。",
+    },
+    "oc_list_header": {
+        "ru": "⛓️ <b>Ончейн-рынки (Base)</b> — доли ERC-1155, расчёты в USDC на-цепи:",
+        "en": "⛓️ <b>On-chain markets (Base)</b> — ERC-1155 shares, USDC settled on-chain:",
+        "zh": "⛓️ <b>链上市场（Base）</b>— ERC-1155 份额，USDC 链上结算：",
+    },
+    "oc_list_empty": {
+        "ru": "Пока пусто. Создай первый: /oc_create 50 Вопрос | Вариант 1 | Вариант 2 7d",
+        "en": "Nothing here yet. Create the first one: /oc_create 50 Question | Option 1 | Option 2 7d",
+        "zh": "暂无市场。创建第一个：/oc_create 50 问题 | 选项1 | 选项2 7d",
+    },
+    "oc_help": {
+        "ru": "<b>Команды:</b> /oc &lt;id&gt; — карточка • /oc_create 50 Вопрос | Да | Нет [24h] • /oc_buy &lt;id&gt; &lt;вариант&gt; &lt;сумма&gt; • /oc_sell &lt;id&gt; &lt;вариант&gt; [50%] • /oc_redeem &lt;id&gt; — забрать выигрыш • /oc_pos — мои доли.\n\n💸 Средства берутся с твоего личного кошелька (/wallet). Пополнить его: /withdraw &lt;адрес_кошелька&gt; &lt;сумма&gt;.",
+        "en": "<b>Commands:</b> /oc &lt;id&gt; — card • /oc_create 50 Question | Yes | No [24h] • /oc_buy &lt;id&gt; &lt;option&gt; &lt;amount&gt; • /oc_sell &lt;id&gt; &lt;option&gt; [50%] • /oc_redeem &lt;id&gt; — claim winnings • /oc_pos — my shares.\n\n💸 Funds come from your personal wallet (/wallet). Top it up: /withdraw &lt;wallet_address&gt; &lt;amount&gt;.",
+        "zh": "<b>命令：</b>/oc &lt;id&gt;—卡片 • /oc_create 50 问题 | 选项1 | 选项2 [24h] • /oc_buy &lt;id&gt; &lt;选项&gt; &lt;金额&gt; • /oc_sell &lt;id&gt; &lt;选项&gt; [50%] • /oc_redeem &lt;id&gt;—领取收益 • /oc_pos—我的份额。\n\n💸 资金来自你的个人钱包（/wallet）。充值：/withdraw &lt;钱包地址&gt; &lt;金额&gt;。",
+    },
+    "oc_unknown": {
+        "ru": "Ончейн-рынок не найден. Список: /oc",
+        "en": "On-chain market not found. List: /oc",
+        "zh": "未找到链上市场。列表：/oc",
+    },
+    "oc_deadline": {
+        "ru": "⏰ Закрытие: {dt}",
+        "en": "⏰ Closes: {dt}",
+        "zh": "⏰ 截止：{dt}",
+    },
+    "oc_hint": {
+        "ru": "Купить: /oc_buy {id} &lt;вариант&gt; &lt;сумма&gt; • Продать: /oc_sell {id} &lt;вариант&gt; [50%]",
+        "en": "Buy: /oc_buy {id} &lt;option&gt; &lt;amount&gt; • Sell: /oc_sell {id} &lt;option&gt; [50%]",
+        "zh": "买入：/oc_buy {id} &lt;选项&gt; &lt;金额&gt; • 卖出：/oc_sell {id} &lt;选项&gt; [50%]",
+    },
+    "oc_format_create": {
+        "ru": "Формат: /oc_create 50 Вопрос | Вариант 1 | Вариант 2 [24h]\nСубсидия $10–1000, вариантов 2–8, метка до 60 символов.",
+        "en": "Format: /oc_create 50 Question | Option 1 | Option 2 [24h]\nSubsidy $10–1000, 2–8 options, label up to 60 chars.",
+        "zh": "格式：/oc_create 50 问题 | 选项1 | 选项2 [24h]\n补贴 $10–1000，选项 2–8 个，标签 ≤60 字符。",
+    },
+    "oc_format_buy": {
+        "ru": "Формат: /oc_buy &lt;id&gt; &lt;вариант&gt; &lt;сумма&gt; — например /oc_buy 3 1 5",
+        "en": "Format: /oc_buy &lt;id&gt; &lt;option&gt; &lt;amount&gt; — e.g. /oc_buy 3 1 5",
+        "zh": "格式：/oc_buy &lt;id&gt; &lt;选项&gt; &lt;金额&gt; — 例如 /oc_buy 3 1 5",
+    },
+    "oc_format_sell": {
+        "ru": "Формат: /oc_sell &lt;id&gt; &lt;вариант&gt; [процент] — например /oc_sell 3 1 50",
+        "en": "Format: /oc_sell &lt;id&gt; &lt;option&gt; [percent] — e.g. /oc_sell 3 1 50",
+        "zh": "格式：/oc_sell &lt;id&gt; &lt;选项&gt; [百分比] — 例如 /oc_sell 3 1 50",
+    },
+    "oc_format_redeem": {
+        "ru": "Формат: /oc_redeem &lt;id&gt;",
+        "en": "Format: /oc_redeem &lt;id&gt;",
+        "zh": "格式：/oc_redeem &lt;id&gt;",
+    },
+    "oc_pending": {
+        "ru": "⏳ Отправляю транзакцию в Base… (это живая ончейн-операция)",
+        "en": "⏳ Sending the transaction to Base… (real on-chain operation)",
+        "zh": "⏳ 正在向 Base 发送交易…（真实链上操作）",
+    },
+    "oc_wallet_error": {
+        "ru": "Не удалось получить кошелёк. Открой /wallet и создай его.",
+        "en": "Could not load your wallet. Open /wallet and create one.",
+        "zh": "无法加载钱包。请打开 /wallet 创建。",
+    },
+    "oc_need_funds": {
+        "ru": "На личном кошельке <code>{addr}</code> только {have} USDC. Пополни его с внутреннего баланса: /withdraw <code>{addr}</code> &lt;сумма&gt;",
+        "en": "Your personal wallet <code>{addr}</code> holds only {have} USDC. Fund it from your internal balance: /withdraw <code>{addr}</code> &lt;amount&gt;",
+        "zh": "你的个人钱包 <code>{addr}</code> 仅有 {have} USDC。请从内部余额充值：/withdraw <code>{addr}</code> &lt;金额&gt;",
+    },
+    "oc_created": {
+        "ru": "⛓️ Рынок <b>#{id}</b> создан НА-ЦЕПИ: <b>{q}</b>\nСубсидия заблокирована в контракте, кошелёк: <code>{addr}</code>\nТорговля: /oc_buy {id} &lt;вариант&gt; &lt;сумма&gt;",
+        "en": "⛓️ Market <b>#{id}</b> created ON-CHAIN: <b>{q}</b>\nSubsidy locked in the contract, wallet: <code>{addr}</code>\nTrade: /oc_buy {id} &lt;option&gt; &lt;amount&gt;",
+        "zh": "⛓️ 市场 <b>#{id}</b> 已在链上创建：<b>{q}</b>\n补贴已锁定在合约中，钱包：<code>{addr}</code>\n交易：/oc_buy {id} &lt;选项&gt; &lt;金额&gt;",
+    },
+    "oc_bought": {
+        "ru": "⛓️ Куплено: <b>{shares}</b> долей «{label}» за {cost} USDC\n🔗 {url}",
+        "en": "⛓️ Bought: <b>{shares}</b> shares of “{label}” for {cost} USDC\n🔗 {url}",
+        "zh": "⛓️ 已买入：<b>{shares}</b> 份「{label}」，花费 {cost} USDC\n🔗 {url}",
+    },
+    "oc_sold": {
+        "ru": "⛓️ Продано: <b>{shares}</b> долей «{label}» за {value} USDC\n🔗 {url}",
+        "en": "⛓️ Sold: <b>{shares}</b> shares of “{label}” for {value} USDC\n🔗 {url}",
+        "zh": "⛓️ 已卖出：<b>{shares}</b> 份「{label}」，获得 {value} USDC\n🔗 {url}",
+    },
+    "oc_redeemed": {
+        "ru": "🏆 Выигрыш забран с контракта: <b>{amount} USDC</b> → <code>{addr}</code>",
+        "en": "🏆 Winnings claimed from the contract: <b>{amount} USDC</b> → <code>{addr}</code>",
+        "zh": "🏆 已从合约领取收益：<b>{amount} USDC</b> → <code>{addr}</code>",
+    },
+    "oc_no_shares": {
+        "ru": "У твоего кошелька нет долей этого варианта. Позиции: /oc_pos",
+        "en": "Your wallet holds no shares of this option. Positions: /oc_pos",
+        "zh": "你的钱包没有该选项的份额。持仓：/oc_pos",
+    },
+    "oc_pos_header": {
+        "ru": "⛓️ Доли личного кошелька <code>{addr}</code>:",
+        "en": "⛓️ Shares of personal wallet <code>{addr}</code>:",
+        "zh": "⛓️ 个人钱包 <code>{addr}</code> 的份额：",
+    },
+    "oc_pos_empty": {
+        "ru": "Долей пока нет. Купи: /oc_buy &lt;id&gt; &lt;вариант&gt; &lt;сумма&gt;",
+        "en": "No shares yet. Buy: /oc_buy &lt;id&gt; &lt;option&gt; &lt;amount&gt;",
+        "zh": "暂无份额。购买：/oc_buy &lt;id&gt; &lt;选项&gt; &lt;金额&gt;",
+    },
+    "oc_tx_failed": {
+        "ru": "❌ Транзакция не прошла: {err}",
+        "en": "❌ Transaction failed: {err}",
+        "zh": "❌ 交易失败：{err}",
+    },
+    "oc_resolve_format": {
+        "ru": "Формат: /oc_resolve &lt;id&gt; &lt;номер_варианта&gt; — например /oc_resolve 3 1",
+        "en": "Format: /oc_resolve &lt;id&gt; &lt;option&gt; — e.g. /oc_resolve 3 1",
+        "zh": "格式：/oc_resolve &lt;id&gt; &lt;选项序号&gt; — 例如 /oc_resolve 3 1",
+    },
+    "oc_resolve_denied": {
+        "ru": "Резолвить исход может только создатель рынка.",
+        "en": "Only the market creator can resolve the outcome.",
+        "zh": "只有市场创建者可以决定结果。",
+    },
+    "oc_resolve_state": {
+        "ru": "Рынок уже закрыт ({state}) — резолвить не нужно.",
+        "en": "The market is already {state} — no resolution needed.",
+        "zh": "市场已{state}——无需再判定。",
+    },
+    "oc_resolved": {
+        "ru": "Исход <b>{idx}</b> зафиксирован НА-ЦЕПИ. Победители забирают по $1 за долю: /oc_redeem\n🔗 {url}",
+        "en": "Outcome <b>{idx}</b> finalized ON-CHAIN. Winners redeem $1 per share: /oc_redeem\n🔗 {url}",
+        "zh": "结果 <b>{idx}</b> 已在链上敲定。赢家可按 $1/份额 领取：/oc_redeem\n🔗 {url}",
+    },
+    "oc_pick": {
+        "ru": "⛓️ Рынок <b>#{id}</b> закрылся: <b>{q}</b>\n\nВыбери победивший исход — я зафиксирую его в контракте на Base.",
+        "en": "⛓️ Market <b>#{id}</b> closed: <b>{q}</b>\n\nPick the winning outcome — I will finalize it in the contract on Base.",
+        "zh": "⛓️ 市场 <b>#{id}</b> 已截止：<b>{q}</b>\n\n请选择获胜结果——我将在 Base 合约中敲定。",
+    },
+    "oc_won_dm": {
+        "ru": "🏆 Рынок <b>#{id}</b> завершён — победил «{label}». У тебя {shares} долей: забери выигрыш командой /oc_redeem {id}",
+        "en": "🏆 Market <b>#{id}</b> finished — “{label}” won. You hold {shares} shares: claim with /oc_redeem {id}",
+        "zh": "🏆 市场 <b>#{id}</b> 已结束——「{label}」获胜。你持有 {shares} 份额：用 /oc_redeem {id} 领取",
+    },
+    "oc_resolve_disputed": {
+        "ru": "Этот исход оспорен владельцем контракта — финальное слово за ним (ownerResolve).",
+        "en": "This outcome was disputed by the contract owner — the final say is theirs (ownerResolve).",
+        "zh": "该结果已被合约所有者异议——最终决定权在其手中（ownerResolve）。",
+    },
+    "oc_registry_warn": {
+        "ru": "Рынок создан В КОНТРАКТЕ, но не сохранён в реестре бота ({err}) — напиши /oc {id2}, он добавится повторно.",
+        "en": "Market created IN THE CONTRACT but not saved to the bot registry ({err}) — send /oc {id2}, it will be re-added.",
+        "zh": "市场已在合约中创建，但未保存到机器人注册表（{err}）——发送 /oc {id2} 即可重新添加。",
+    },
+    "oc_pick_amount": {
+        "ru": "Сколько USDC поставить на <b>{label}</b> (рынок #{mid})? Тапни сумму:",
+        "en": "How much USDC on <b>{label}</b> (market #{mid})? Tap an amount:",
+        "zh": "给 <b>{label}</b>（市场 #{mid}）投入多少 USDC？点按金额：",
+    },
+    "oc_pick_pct": {
+        "ru": "Какую часть долей «{label}» (рынок #{mid}) продать?",
+        "en": "What share of “{label}” (market #{mid}) to sell?",
+        "zh": "卖出「{label}」（市场 #{mid}）的多大比例？",
+    },
 }
 
 

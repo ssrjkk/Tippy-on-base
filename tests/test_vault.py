@@ -133,7 +133,13 @@ def test_relayer_batches_payouts_within_limit(deploy):
     assert usdc.functions.balanceOf(alice).call() == 250 * USDC
     assert vault.functions.totalReserves().call() == 150 * USDC
     assert vault.functions.spentTodayView().call() == 350 * USDC
-    events = vault.events.Distributed().process_receipt(rec)
+    # Filter to the Distributed topic (and vault address): otherwise
+    # eth-utils warns on every non-matching log (FakeUSDC Transfer etc.).
+    topic = vault.events.Distributed.build_filter().event_topic
+    vault_logs = {**rec, "logs": [lg for lg in rec["logs"]
+                                  if str(lg["address"]).lower() == vault.address.lower()
+                                  and lg["topics"] and lg["topics"][0] == topic]}
+    events = vault.events.Distributed().process_receipt(vault_logs)
     assert {(e["args"]["recipient"], e["args"]["amount"]) for e in events} == {
         (bob, 100 * USDC),
         (alice, 250 * USDC),
@@ -231,3 +237,37 @@ def test_reserve_withdrawal(deploy):
     mine(w3, vault.functions.withdrawReserve(owner, 40 * USDC).transact({"from": owner}))
     assert vault.functions.totalReserves().call() == 60 * USDC
     assert usdc.functions.balanceOf(owner).call() == 40 * USDC
+
+
+def test_batch_distribute_skips_blacklisted_recipient(deploy):
+    """USDC-style blacklist reverts on transfer — the batch must SKIP that
+    recipient, pay the rest, and count only successful payouts against the
+    relayer window (pre-fix: one bad address reverted the whole batch and
+    bricked the daily window)."""
+    w3, usdc, vault, owner, relayer, alice, bob = deploy()
+    mint(w3, usdc, alice, 500 * USDC)
+    deposit(w3, usdc, vault, alice, 500 * USDC)
+
+    bad = w3.eth.accounts[6]
+    usdc.functions.setBlacklisted(bad).transact({"from": w3.eth.accounts[0]})
+
+    rec = mine(
+        w3,
+        vault.functions.batchDistribute(
+            [bad, bob, alice], [70 * USDC, 100 * USDC, 250 * USDC]
+        ).transact({"from": relayer}),
+    )
+
+    assert usdc.functions.balanceOf(bob).call() == 100 * USDC
+    assert usdc.functions.balanceOf(alice).call() == 250 * USDC
+    assert usdc.functions.balanceOf(bad).call() == 0
+    # Only successful payouts consume the relayer's daily window.
+    assert vault.functions.spentTodayView().call() == 350 * USDC
+
+    skipped = vault.events.DistributeSkipped().process_receipt(
+        {**rec, "logs": [lg for lg in rec["logs"]
+                         if str(lg["address"]).lower() == vault.address.lower()
+                         and lg["topics"] and lg["topics"][0] == vault.events.DistributeSkipped.build_filter().event_topic]}
+    )
+    assert skipped[0]["args"]["recipient"] == bad
+    assert skipped[0]["args"]["amount"] == 70 * USDC

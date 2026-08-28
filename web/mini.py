@@ -6,14 +6,17 @@ algorithm from https://core.telegram.org/bots/webapps#validating-data-received-v
 then issues the same signed session cookie the dashboard uses. All further
 ``/api/mini/*`` calls are authorized by that cookie only.
 """
+import asyncio
 import hashlib
 import hmac
+import json as _json
 import logging
 import time
+import urllib.parse
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from bot import base, config
 from bot.ledger import async_ledger as ledger
@@ -45,8 +48,12 @@ def verify_init_data(init_data: str) -> int:
     if time.time() - auth_date > INIT_DATA_TTL:
         raise HTTPException(403, 'stale initData')
     try:
-        return int(data['user'].split('"id":')[1].split(',')[0].strip('"'))
-    except (KeyError, IndexError, ValueError):
+        # initData is form-urlencoded: the `user` value is a percent-encoded
+        # JSON object ({"id":123,...} never appears literally). The HMAC above
+        # stays over the raw encoded string, exactly as Telegram signs it.
+        user = _json.loads(urllib.parse.unquote(data['user']))
+        return int(user['id'])
+    except (KeyError, IndexError, ValueError, TypeError):
         raise HTTPException(403, 'missing user') from None
 
 class InitAuth(BaseModel):
@@ -68,8 +75,7 @@ async def mini_auth(body: InitAuth, request: Request):
     username = None
     try:
         raw_user = next((v for k, v in (p.split('=', 1) for p in body.initData.split('&')) if k == 'user'))
-        import json as _json
-        u = _json.loads(raw_user)
+        u = _json.loads(urllib.parse.unquote(raw_user))
         username = u.get('username')
     except Exception:
         pass
@@ -100,11 +106,13 @@ async def mini_state(request: Request) -> dict:
     history = [{'kind': r['kind'], 'amount': _fmt(r['amount']), 'note': r['note'] or '', 'counterparty': r['counterparty'] or '', 'created_at': r['created_at']} for r in await ledger.history(tg_id, 10)]
     top = [{'username': r.get('username') or f"id{r['tg_id']}", 'total_usdc': _fmt(r['total_micro'])} for r in await ledger.leaderboard(5)]
     lang = (await ledger.get_settings(tg_id)).get('lang', 'ru')
-    return {'tg_id': tg_id, 'username': await ledger.username_of(tg_id), 'balance_usdc': float(await ledger.balance(tg_id)), 'deposit_address': str(base.hot_wallet()), 'linked_address': await ledger.linked_address(tg_id), 'lang': lang, 'markets': markets, 'bets': bets, 'history': history, 'top': top}
+    from bot import onchain_market as om
+    onchain = await om.market_views(8)
+    return {'tg_id': tg_id, 'username': await ledger.username_of(tg_id), 'balance_usdc': float(await ledger.balance(tg_id)), 'deposit_address': str(base.hot_wallet()), 'linked_address': await ledger.linked_address(tg_id), 'lang': lang, 'markets': markets, 'bets': bets, 'onchain_markets': onchain, 'history': history, 'top': top}
 
 class TipBody(BaseModel):
     to: str
-    amount: float
+    amount: float = Field(allow_inf_nan=False)
 _ERR_MSG = {'closed': 'market closed', 'deadline': 'deadline passed', 'badopt': 'no such option', 'balance': 'insufficient balance'}
 
 @router.post('/api/mini/tip', tags=['users'])
@@ -117,7 +125,10 @@ async def mini_tip(body: TipBody, request: Request) -> dict:
     target = await ledger.find_by_username(to)
     if target is None and to.isdigit():
         target = int(to)
-    if target is None:
+    if target is None or not await ledger.user_exists(target):
+        # Never mint a phantom user for a mistyped id: transfer() would create
+        # one and the funds would be locked there forever (and inflate the
+        # public Proof-of-Reserves liabilities).
         raise HTTPException(404, f'user @{to} not found — they must open the bot first')
     if target == tg_id:
         raise HTTPException(400, 'cannot tip yourself')
@@ -128,7 +139,7 @@ async def mini_tip(body: TipBody, request: Request) -> dict:
 class TradeBody(BaseModel):
     market_id: int
     option: int
-    amount: float
+    amount: float = Field(allow_inf_nan=False)
 
 @router.post('/api/mini/trade', tags=['markets'])
 async def mini_trade(body: TradeBody, request: Request) -> dict:
@@ -146,7 +157,7 @@ async def mini_trade(body: TradeBody, request: Request) -> dict:
 class BetPlaceBody(BaseModel):
     bet_id: int
     option: int
-    amount: float
+    amount: float = Field(allow_inf_nan=False)
 
 @router.post('/api/mini/betplace', tags=['markets'])
 async def mini_betplace(body: BetPlaceBody, request: Request) -> dict:
@@ -158,6 +169,50 @@ async def mini_betplace(body: BetPlaceBody, request: Request) -> dict:
     if res != 'ok':
         raise HTTPException(400, _ERR_MSG.get(res, res))
     return {'ok': True, 'new_balance': float(await ledger.balance(tg_id))}
+
+@router.get('/api/mini/onchain/{market_id}', tags=['markets'])
+async def mini_onchain_market(market_id: int, request: Request) -> dict:
+    """On-chain market detail for the Mini App: registry labels, live prices,
+    contract state AND the viewer's own ERC-1155 balances (read from their
+    active wallet, auth required) so the UI can show personal positions."""
+    tg_id = await _user(request)
+    from bot import onchain_market as om
+    m = await ledger.get_onchain_market(market_id)
+    if not m:
+        raise HTTPException(404, 'on-chain market not found')
+    options = _json.loads(m['options'])
+    prices = await om.market_prices(market_id, len(options))
+    info = await om.get_market_info(market_id)
+    w = await ledger.get_active_wallet(tg_id)
+    balances: list[int] = []
+    if w:
+        def _bals():
+            c = om._market_contract(om._w3())
+            cs = om.Web3.to_checksum_address(w['address'])
+            return [c.functions.balanceOf(cs, market_id * 256 + i).call() for i in range(len(options))]
+
+        balances = await asyncio.to_thread(_bals)
+    return {
+        'id': market_id,
+        'question': m['question'],
+        'close_at': m['close_at'],
+        'wallet_address': w['address'] if w else None,
+        'resolved': bool(info['resolved']),
+        'cancelled': bool(info['cancelled']),
+        'disputed': bool(info['disputed']),
+        'winner': info['winning_outcome'],
+        'escrow_micro': int(info['escrow_micro']),
+        'options': [
+            {
+                'index': i,
+                'label': o,
+                'price_pct': float(round(prices[i] * 100, 2)),
+                'shares': balances[i] if i < len(balances) else 0,
+            }
+            for i, o in enumerate(options)
+        ],
+    }
+
 
 class CreateBody(BaseModel):
     kind: str

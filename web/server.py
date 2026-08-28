@@ -2,6 +2,7 @@
 
 Run:  python -m web.server
 """
+import json
 import os
 import sys
 import time
@@ -54,26 +55,31 @@ WEB_RATE_LIMIT: int = int(os.environ.get('WEB_RATE_LIMIT', '60'))
 WEB_RATE_WINDOW: int = int(os.environ.get('WEB_RATE_WINDOW', '60'))
 WEB_RATE_MAX_CLIENTS: int = int(os.environ.get('WEB_RATE_MAX_CLIENTS', '10000'))
 _rl_state: dict[str, list[float]] = {}
-_RL_DISABLED: bool = os.environ.get('TESTING', '') != ''
+_RL_DISABLED: bool = os.environ.get('TESTING', '') == '1'
+_ask_cooldown: dict[str, float] = {}
+
+
+def _client_ip(request: Request) -> str:
+    """Rate-limiter identity for a request. By default the TCP peer IP, which
+    the client cannot spoof. Only when a trusted reverse proxy is guaranteed
+    in front (config.TRUST_PROXY_XFF=1) do we honour the RIGHTMOST
+    X-Forwarded-For entry (the real client); the leftmost is client-supplied
+    and spoofable, so it is never trusted."""
+    client = request.client.host if request.client else 'unknown'
+    if config.TRUST_PROXY_XFF:
+        xff = request.headers.get('X-Forwarded-For')
+        if xff:
+            parts = [p.strip() for p in xff.split(',') if p.strip()]
+            if parts:
+                client = parts[-1]
+    return client
+
 
 @app.middleware('http')
 async def rate_limit(request: Request, call_next):
     path = request.url.path
-    if not _RL_DISABLED and (path.startswith('/api/') or path in ('/qr', '/metrics', '/tos')):
-        # Client IP for the rate limiter. By default we use the TCP peer IP,
-        # which the client cannot spoof. Only when a trusted reverse proxy is
-        # guaranteed in front (config.TRUST_PROXY_XFF=1) do we honour the
-        # RIGHTMOST X-Forwarded-For entry (the real client); the leftmost is
-        # client-supplied and spoofable, so it is never trusted. Trusting XFF
-        # on a directly-exposed port lets an attacker rotate fake IPs to
-        # bypass every per-IP limit.
-        client = request.client.host if request.client else 'unknown'
-        if config.TRUST_PROXY_XFF:
-            xff = request.headers.get('X-Forwarded-For')
-            if xff:
-                parts = [p.strip() for p in xff.split(',') if p.strip()]
-                if parts:
-                    client = parts[-1]
+    if not _RL_DISABLED and (path.startswith('/api/') or path in ('/qr', '/metrics', '/tos', config.WEBHOOK_PATH)):
+        client = _client_ip(request)
         now = time.time()
         cutoff = now - WEB_RATE_WINDOW
         window = _rl_state.setdefault(client, [])
@@ -98,6 +104,8 @@ async def rate_limit(request: Request, call_next):
     # iframe and must stay framable. These two are safe everywhere.
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
     response.headers.setdefault('Referrer-Policy', 'no-referrer')
+    response.headers.setdefault('Content-Security-Policy',
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'self' https://web.telegram.org")
     try:
         await ledger.rollback()
     except Exception:
@@ -214,6 +222,7 @@ async def api_user(tg_id: int, request: Request) -> dict:
         }
     # Public view: totals only (no live balance, positions, or per-tx history).
     return {
+        'username': v.get('username'),
         'tg_username': v.get('username'),
         'tips_sent_usdc': _usdc(v['tips_sent_micro']),
         'tips_received_usdc': _usdc(v['tips_received_micro']),
@@ -247,7 +256,10 @@ async def api_agent_status(request: Request) -> dict:
         for line in audit_file.read_text().splitlines():
             if not line.strip():
                 continue
-            entry = json.loads(line)
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # torn last line (concurrent append) — skip it
             if entry.get('action_type') == 'create_market' or 'market_id' in entry:
                 market_count += 1
             if entry.get('bet_amount_usdc', 0) > 0:
@@ -272,8 +284,47 @@ async def api_agent_audit(request: Request) -> list[dict]:
     for line in audit_file.read_text().splitlines():
         if not line.strip():
             continue
-        entries.append(json.loads(line))
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue  # torn last line (concurrent append) — skip it
     return entries[-50:]
+
+@app.get('/api/onchain/markets', tags=['markets'])
+async def api_onchain_markets() -> list[dict]:
+    """On-chain OutcomeMarket markets (Polymarket-style) with live LMSR prices.
+
+    Returns [] when the contract is not configured. Prices are read straight
+    from the contract on Base; labels/questions come from the bot registry.
+    """
+    from bot import onchain_market as om
+    return await om.market_views(12)
+
+@app.get('/api/onchain/market/{market_id}', tags=['markets'])
+async def api_onchain_market(market_id: int) -> dict:
+    """One on-chain market: registry labels + live on-chain state/prices."""
+    from bot import onchain_market as om
+    m = await ledger.get_onchain_market(market_id)
+    if not m:
+        raise HTTPException(status_code=404, detail='On-chain market not found')
+    options = json.loads(m['options'])
+    prices = await om.market_prices(market_id, len(options))
+    info = await om.get_market_info(market_id)
+    return {
+        'id': market_id,
+        'question': m['question'],
+        'close_at': m['close_at'],
+        'b': info.get('b'),
+        'escrow_micro': info.get('escrow_micro'),
+        'resolved': info.get('resolved'),
+        'disputed': info.get('disputed'),
+        'cancelled': info.get('cancelled'),
+        'winner': info.get('winning_outcome'),
+        'options': [
+            {'index': i, 'label': o, 'price_pct': float(round(prices[i] * 100, 2))}
+            for i, o in enumerate(options)
+        ],
+    }
 
 @app.get('/api/info', tags=['stats'])
 def api_info() -> dict:
@@ -347,7 +398,7 @@ class AskRequest(BaseModel):
 
 
 @app.post('/api/ask', tags=['markets'])
-async def api_ask(body: AskRequest) -> dict:
+async def api_ask(body: AskRequest, request: Request) -> dict:
     """Same assistant as Telegram's /ask — tool-calling, so answers about
     specific markets are grounded in real current odds, not guessed. Shares
     the global per-IP rate limiter above; no separate throttle here."""
@@ -359,6 +410,19 @@ async def api_ask(body: AskRequest) -> dict:
         raise HTTPException(status_code=400, detail='question must not be empty')
     if len(question) > config.AI_MAX_QUESTION_LEN:
         raise HTTPException(status_code=400, detail=f'question must be under {config.AI_MAX_QUESTION_LEN} chars')
+    now = time.time()
+    # Cooldown keyed per client IP (same identity the rate limiter uses): a
+    # single 'global' key would let one user 429 everyone else. Bounded by
+    # WEB_RATE_MAX_CLIENTS so the dict cannot grow forever.
+    _ip = _client_ip(request)
+    last = _ask_cooldown.get(_ip, 0.0)
+    if now - last < config.AI_COOLDOWN_SECONDS:
+        raise HTTPException(status_code=429, detail='please wait before asking again')
+    if len(_ask_cooldown) > WEB_RATE_MAX_CLIENTS:
+        for ip, ts in list(_ask_cooldown.items()):
+            if now - ts >= config.AI_COOLDOWN_SECONDS:
+                del _ask_cooldown[ip]
+    _ask_cooldown[_ip] = now
     try:
         answer = await ai.ask_about_markets(question)
     except RuntimeError as exc:
@@ -378,6 +442,11 @@ async def user_page(tg_id: int) -> FileResponse:
 @app.get('/m/{bet_id}')
 async def market_page(bet_id: int) -> FileResponse:
     return FileResponse(STATIC / 'market.html')
+
+@app.get('/m/oc/{market_id}')
+async def onchain_market_page(market_id: int) -> FileResponse:
+    """Shareable page for an ON-CHAIN market (OutcomeMarket ERC-1155)."""
+    return FileResponse(STATIC / 'oc.html')
 
 @app.get('/me')
 async def me_page() -> FileResponse:
@@ -403,8 +472,9 @@ async def metrics(request: Request) -> Response:
     from .metrics import collect_metrics
 
     if config.METRICS_TOKEN:
+        import hmac as _hmac
         auth = request.headers.get("Authorization", "")
-        if auth != f"Bearer {config.METRICS_TOKEN}":
+        if not _hmac.compare_digest(auth.encode(), f"Bearer {config.METRICS_TOKEN}".encode()):
             return PlainTextResponse("unauthorized", status_code=401)
     return PlainTextResponse(await collect_metrics())
 

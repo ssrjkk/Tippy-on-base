@@ -147,7 +147,7 @@ function marketCard(m, i) {
   const deadline = m.expired
     ? "🕳️ истёк — можно вернуть деньги"
     : m.close_at
-      ? "⏰ <span data-close-at=\"" + m.close_at + "\">" + relDeadline(m.close_at) + "</span>"
+      ? "⏰ <span data-close-at=\"" + parseInt(m.close_at) + "\">" + relDeadline(m.close_at) + "</span>"
       : "";
   const winnerIdx = m.status === "resolved" && m.winner !== null && m.winner !== undefined ? m.winner : null;
   const options = m.options.map((o, j) => {
@@ -156,7 +156,7 @@ function marketCard(m, i) {
     <div class="option${isWinner ? " option-winner" : ""}">
       <div class="option-top">
         <span class="option-label">${isWinner ? "🏆 " : ""}${escapeHtml(o.label)}</span>
-        <span class="option-val">${fmtUSDC(o.pool_usdc)} USDC · ${o.probability}% · ${o.backers}👤</span>
+        <span class="option-val">${fmtUSDC(o.pool_usdc)} USDC · ${escapeHtml(String(o.probability))}% · ${escapeHtml(String(o.backers))}👤</span>
       </div>
       <div class="bar"><div class="bar-fill${isWinner ? " bar-fill-win" : ""}" style="width:${Math.max(o.probability, 2)}%;animation-delay:${Math.min(i * 70 + j * 130, 900)}ms"></div></div>
     </div>`;
@@ -170,7 +170,7 @@ function marketCard(m, i) {
       </div>
       ${options}
       <div class="market-footer">
-        <span class="pot">Пул: <b>${fmtUSDC(m.pot_usdc)} USDC</b> · ${m.total_backers}👤</span>
+        <span class="pot">Пул: <b>${fmtUSDC(m.pot_usdc)} USDC</b> · ${escapeHtml(String(m.total_backers))}👤</span>
         <span class="pot">
           <a class="m-link" href="/m/${m.id}">Подробнее →</a>
           <span style="margin-left: 10px">@${escapeHtml(m.creator.username || ("id" + m.creator.id))}</span>
@@ -236,15 +236,73 @@ function escapeHtml(s) {
   })[c]);
 }
 
+async function loadOnchainMarkets() {
+  try {
+    const r = await fetch("/api/onchain/markets");
+    if (!r.ok) throw new Error();
+    const markets = await r.json();
+    const section = $("onchain-markets");
+    const el = $("onchain-markets-list");
+    if (!section || !el) return;
+    if (!markets.length) {
+      // Contract not deployed or nothing created yet — hide the section.
+      section.style.display = "none";
+      return;
+    }
+    section.style.display = "";
+    el.innerHTML = markets.map((m, i) => {
+      const winnerIdx = m.resolved ? m.winner : null;
+      const badge = m.cancelled
+        ? '<span class="chip chip-cancelled">отменён</span>'
+        : m.resolved
+          ? '<span class="chip chip-resolved">завершён</span>'
+          : "";
+      const deadline = m.resolved || m.cancelled
+        ? ""
+        : m.close_at
+          ? "⏰ <span data-close-at=\"" + parseInt(m.close_at) + "\">" + relDeadline(m.close_at) + "</span>"
+          : "";
+      const options = m.options.map((o, j) => {
+        const isWinner = winnerIdx !== null && o.index === winnerIdx;
+        return `
+        <div class="option${isWinner ? " option-winner" : ""}">
+          <div class="option-top">
+            <span class="option-label">${isWinner ? "🏆 " : ""}${escapeHtml(o.label)}</span>
+            <span class="option-val">${escapeHtml(String(o.price_pct))}%</span>
+          </div>
+          <div class="bar"><div class="bar-fill${isWinner ? " bar-fill-win" : ""}" style="width:${Math.max(o.price_pct, 2)}%;animation-delay:${Math.min(i * 70 + j * 130, 900)}ms"></div></div>
+        </div>`;
+      }).join("");
+      return `
+        <div class="market-card" style="animation-delay:${Math.min(i * 70, 420)}ms">
+          <div class="market-head">
+            <span class="market-question">⛓️ #${m.id} ${escapeHtml(m.question)}</span>
+            <span class="market-meta">${deadline} · ${badge}</span>
+          </div>
+          ${options}
+          <div class="market-footer">
+            <span class="pot">On-chain · ERC-1155 · USDC на Base</span>
+            <span class="pot">${m.market_address ? `<a class="m-link" href="https://basescan.org/address/${encodeURIComponent(m.market_address)}" target="_blank" rel="noopener">🔗 Basescan</a>` : ""}</span>
+          </div>
+        </div>`;
+    }).join("");
+  } catch (e) {
+    const section = $("onchain-markets");
+    if (section) section.style.display = "none";
+  }
+}
+
 loadInfo();
 loadStats();
 loadWallet();
 loadMarkets();
 loadClosedMarkets();
+loadOnchainMarkets();
 loadLeaderboard();
 loadVolumeChart();
 setInterval(loadStats, 15000);
 setInterval(loadWallet, 30000);
+setInterval(loadOnchainMarkets, 60000);
 setInterval(tickCountdowns, 10000);
 
 function tickCountdowns() {

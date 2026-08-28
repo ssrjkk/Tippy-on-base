@@ -1,4 +1,6 @@
 ﻿"""Menu / onboarding / settings handlers."""
+import html
+
 from aiogram import F, types
 from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -129,7 +131,7 @@ async def _send_paywall_deep_link(message: types.Message, item_id: int) -> None:
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔓 Купить за {common._fmt(int(item['price_micro']))} USDC", callback_data=f'paywall_buy:{item_id}')], [InlineKeyboardButton(text='🔐 Все посты', callback_data='paywall_list')]])
     lang = await _lang(message.from_user.id)
-    await message.answer(i18n.t(lang, 'deep_link_paywall') + f"\n\n<b>{item['title']}</b>\nЦена: <b>{common._fmt(int(item['price_micro']))} USDC</b>", reply_markup=kb)
+    await message.answer(i18n.t(lang, 'deep_link_paywall') + f"\n\n<b>{html.escape(item['title'])}</b>\nЦена: <b>{common._fmt(int(item['price_micro']))} USDC</b>", reply_markup=kb)
 
 @common.router.callback_query(F.data.startswith('paywall_buy:'))
 async def cb_paywall_buy(cb: types.CallbackQuery) -> None:
@@ -193,7 +195,7 @@ async def on_menu(cb: types.CallbackQuery) -> None:
             text = i18n.t(lang, 'paywall_empty')
             await common._edit_menu(cb, text)
         else:
-            lines = [f"#{r['id']} — {r['title']} — <b>{common._fmt(int(r['price_micro']))} USDC</b>{(' ✅' if await common.ledger.paywall_purchased(int(r['id']), cb.from_user.id) else '')}" for r in rows]
+            lines = [f"#{r['id']} — {html.escape(r['title'])} — <b>{common._fmt(int(r['price_micro']))} USDC</b>{(' ✅' if await common.ledger.paywall_purchased(int(r['id']), cb.from_user.id) else '')}" for r in rows]
             await common._edit_menu(cb, i18n.t(lang, 'paywall_list_header', lines='\n'.join(lines)))
     await cb.answer()
 

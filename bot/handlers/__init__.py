@@ -92,6 +92,16 @@ from .menu import (
     cmd_start,
     on_menu,
 )
+from .onchain import (
+    cb_oc_resolve,
+    cmd_oc,
+    cmd_oc_buy,
+    cmd_oc_create,
+    cmd_oc_pos,
+    cmd_oc_redeem,
+    cmd_oc_resolve,
+    cmd_oc_sell,
+)
 from .paywall import (
     PAYWALL_DRAFT_TTL,
     PAYWALL_HELP,
@@ -210,6 +220,7 @@ __all__ = [
     "cb_mk_resolve",
     "cb_mk_sell",
     "cb_mk_selldo",
+    "cb_oc_resolve",
     "cb_paywall_buy",
     "cb_res",
     "cb_settings",
@@ -233,6 +244,13 @@ __all__ = [
     "cmd_markets",
     "cmd_menu",
     "cmd_mybets",
+    "cmd_oc",
+    "cmd_oc_buy",
+    "cmd_oc_create",
+    "cmd_oc_pos",
+    "cmd_oc_redeem",
+    "cmd_oc_resolve",
+    "cmd_oc_sell",
     "cmd_paywall",
     "cmd_positions",
     "cmd_rain",

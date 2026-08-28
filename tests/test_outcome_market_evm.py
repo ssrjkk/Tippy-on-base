@@ -6,6 +6,7 @@ contracts/test/forge/SecurityFixes.t.sol, but executable in CI without foundry.
 """
 import ast
 import os
+import random
 
 import pytest
 import solcx
@@ -129,8 +130,7 @@ def env(compiled, w3):
     def create(n_outcomes=2, subsidy=50 * USDC):
         usdc.functions.approve(mkt.address, subsidy).transact({"from": owner})
         tx = mkt.functions.createMarket(n_outcomes, subsidy, e.closes_at).transact({"from": owner})
-        rcpt = w3.eth.wait_for_transaction_receipt(tx)
-        return mkt.events.MarketCreated().process_receipt(rcpt)[0]["args"]["marketId"]
+        return _events(mkt.events.MarketCreated, tx)[0]["args"]["marketId"]
 
     def buy(who, mid, outcome, shares):
         usdc.functions.approve(mkt.address, 10_000_000 * USDC).transact({"from": who})
@@ -138,7 +138,18 @@ def env(compiled, w3):
         mkt.functions.buy(mid, outcome, shares, cost).transact({"from": who})
         return cost
 
-    e.create, e.buy = create, buy
+    def _events(event, tx_hash):
+        """Decode ONE event type from a tx receipt without MismatchedABI
+        noise: filter logs to the market contract AND the event's own
+        topic0 before process_receipt."""
+        rcpt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        topic = event.build_filter().event_topic
+        logs = [lg for lg in rcpt["logs"]
+                if str(lg["address"]).lower() == mkt.address.lower()
+                and lg["topics"] and lg["topics"][0] == topic]
+        return event.process_receipt({**rcpt, "logs": logs})
+
+    e.create, e.buy, e.events = create, buy, _events
 
     def warp(ts):
         w3.provider.ethereum_tester.time_travel(ts)
@@ -171,9 +182,7 @@ def test_full_market_lifecycle(env):
 
     bal_before = e.usdc.functions.balanceOf(e.t1).call()
     payout = e.mkt.functions.redeem(mid).transact({"from": e.t1})
-    payout = e.mkt.events.Redeemed().process_receipt(
-        e.w3.eth.wait_for_transaction_receipt(payout)
-    )[0]["args"]["usdcMicro"]
+    payout = e.events(e.mkt.events.Redeemed, payout)[0]["args"]["usdcMicro"]
     assert payout == 2_000_000  # 1 micro-share == 1 micro-USDC
     assert e.usdc.functions.balanceOf(e.t1).call() == bal_before + 2_000_000
 
@@ -242,15 +251,18 @@ def test_cancel_expired_pays_trader_not_creator(env):
     # THE PoC: creator received nothing at cancel time.
     assert e.usdc.functions.balanceOf(e.owner).call() == creator_bal, "creator stole the refund"
 
-    claimed = e.mkt.events.CancelClaimed().process_receipt(
-        e.w3.eth.wait_for_transaction_receipt(
-            e.mkt.functions.claimCancelled(mid).transact({"from": e.t1})
-        )
+    claimed = e.events(
+        e.mkt.events.CancelClaimed,
+        e.mkt.functions.claimCancelled(mid).transact({"from": e.t1}),
     )[0]["args"]["usdcMicro"]
-    assert claimed > 0
-    assert claimed <= escrow
+    # Par cap (security fix #3): a share never redeems above $1, so t1's
+    # 5M micro-shares pay exactly 5M micro-USDC — NOT the whole escrow.
+    assert claimed == 5_000_000
     assert e.usdc.functions.balanceOf(e.t1).call() == t1_bal + claimed
-    assert e.mkt.functions.unclaimedEscrowMicro(mid).call() == escrow - claimed
+    # t1 held every share: the final claim burns totalSupply to zero, which
+    # sweeps the unused subsidy to the creator (reserve drops to zero).
+    assert e.mkt.functions.unclaimedEscrowMicro(mid).call() == 0
+    assert e.usdc.functions.balanceOf(e.owner).call() == creator_bal + (escrow - claimed)
 
 
 def test_cancel_expired_no_holders_subsidy_to_creator(env):
@@ -282,11 +294,9 @@ def test_two_traders_conservation_dust_to_creator(env):
     assert e.usdc.functions.balanceOf(e.owner).call() == creator_bal
 
     r1 = e.mkt.functions.claimCancelled(mid).transact({"from": e.t1})
-    c1 = e.mkt.events.CancelClaimed().process_receipt(
-        e.w3.eth.wait_for_transaction_receipt(r1))[0]["args"]["usdcMicro"]
+    c1 = e.events(e.mkt.events.CancelClaimed, r1)[0]["args"]["usdcMicro"]
     r2 = e.mkt.functions.claimCancelled(mid).transact({"from": e.t2})
-    c2 = e.mkt.events.CancelClaimed().process_receipt(
-        e.w3.eth.wait_for_transaction_receipt(r2))[0]["args"]["usdcMicro"]
+    c2 = e.events(e.mkt.events.CancelClaimed, r2)[0]["args"]["usdcMicro"]
 
     assert c1 > 0 and c2 > 0
     # Conservation: payouts + dust swept to creator == whole escrow; drained.
@@ -315,3 +325,92 @@ def test_trading_blocked_after_cancel(env):
     e.warp(e.closes_at + int(e.mkt.functions.EXPIRY_WINDOW().call()) + 5)
     e.mkt.functions.cancelExpired(mid).transact({"from": e.nobody})
     expect_revert(lambda: e.buy(e.t1, mid, 0, 100), "AlreadyCancelled()")
+
+
+# ---------------------------------------------------------------------------
+# Money parity: the bot prices /oc_* trades with the pure-Python LMSR in
+# bot/ledger.py, while settlement runs on the PRB-math SD59x18 contract.
+# The /oc_buy and /oc_sell flows are only safe if BOTH hold across market
+# shapes and trade sizes (verified here on a real EVM, no mocks):
+#   1. BUY:  the locally-estimated share count never costs more on-chain
+#            than the budget (quoteBuy(shares) <= spend) — the hard
+#            slippage cap the tx carries is never hit by our own estimate;
+#   2. SELL: the contract proceeds stay within the 1% band around the
+#            local quote that /oc_sell uses as its minProceeds floor.
+# ---------------------------------------------------------------------------
+
+def _q_of(e, mid, n):
+    """Real per-outcome supply: ERC1155Supply.totalSupply — NOT
+    balanceOf(zero), which stays zero because minting credits traders."""
+    return [e.mkt.functions.totalSupply(mid * 256 + i).call() for i in range(n)]
+
+
+def test_local_lmsr_matches_contract(env):
+    from bot.ledger import lmsr_buy_shares, lmsr_sell_value
+
+    e = env
+    mid = e.create(n_outcomes=3)
+    n = e.mkt.functions.markets(mid).call()[0]
+    b = int(e.mkt.functions.markets(mid).call()[4])
+    assert b > 0
+
+    # Shape the book: uneven buys so prices move away from uniform.
+    for who, outcome, shares in ((e.t1, 0, 12 * USDC), (e.t2, 1, 30 * USDC), (e.t1, 2, 3 * USDC)):
+        e.buy(who, mid, outcome, shares)
+
+    q = _q_of(e, mid, n)
+    rng = random.Random(20260828)
+    checked = 0
+    for outcome in range(n):
+        for spend in (100_000, 1 * USDC, 7 * USDC, 60 * USDC, 250 * USDC):
+            shares = lmsr_buy_shares(list(q), b, outcome, spend)
+            if shares <= 0:
+                continue
+            onchain_cost = e.mkt.functions.quoteBuy(mid, outcome, shares).call()
+            # Property 1: our estimate never overpays on-chain.
+            assert 0 < onchain_cost <= spend, (
+                f"BUY parity broken: outcome={outcome} spend={spend} "
+                f"shares={shares} onchain_cost={onchain_cost}"
+            )
+            # Parity is tight too: within 0.5% of the budget (floor effects
+            # only ever shave micro-units off).
+            assert onchain_cost >= spend * 995 // 1000, (
+                f"BUY estimate diverged: cost={onchain_cost} spend={spend}"
+            )
+            checked += 1
+
+            # Property 2: selling those shares back — the contract pays
+            # within the 1% band around the local quote (minProceeds floor).
+            local_value = lmsr_sell_value(list(q), b, outcome, shares)
+            onchain_proceeds = e.mkt.functions.quoteSell(mid, outcome, shares).call()
+            assert local_value * 99 // 100 <= onchain_proceeds <= local_value * 101 // 100 or onchain_proceeds == 0, (
+                f"SELL parity broken: local={local_value} onchain={onchain_proceeds}"
+            )
+    assert checked >= 10, f"property test covered too little: {checked}"
+
+
+def test_oc_buy_slippage_cap_end_to_end(env):
+    """Exactly what /oc_buy does: estimate shares locally, then buy on-chain
+    with maxCost = spend. The tx must succeed at or under the budget."""
+    from bot.ledger import lmsr_buy_shares
+
+    e = env
+    mid = e.create(n_outcomes=2)
+    n = 2
+    b = int(e.mkt.functions.markets(mid).call()[4])
+
+    for who in (e.t1, e.t2):  # shape the book a little first
+        e.buy(who, mid, 0, 8 * USDC)
+
+    for outcome in (0, 1):
+        for spend in (2 * USDC, 25 * USDC, 120 * USDC):
+            q = _q_of(e, mid, n)
+            shares = lmsr_buy_shares(list(q), b, outcome, spend)
+            assert shares > 0
+            before = e.usdc.functions.balanceOf(e.t2).call()
+            e.usdc.functions.approve(e.mkt.address, 10_000_000 * USDC).transact({"from": e.t2})
+            tx = e.mkt.functions.buy(mid, outcome, shares, spend).transact({"from": e.t2})
+            rcpt = e.w3.eth.wait_for_transaction_receipt(tx)
+            assert rcpt["status"] == 1, f"buy reverted under its own slippage cap (spend={spend})"
+            paid = before - e.usdc.functions.balanceOf(e.t2).call()
+            assert 0 < paid <= spend

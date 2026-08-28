@@ -18,6 +18,7 @@ from pathlib import Path
 from web3 import Web3
 
 from . import config
+from .chain.transfers import _send_lock  # shared hot-wallet send lock
 
 _CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
 _OUTCOME_ABI: list | None = None
@@ -98,14 +99,15 @@ def oracle_resolve(w3: Web3, market_id: int, winning_outcome: int) -> str:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
     tx = c.functions.oracleResolve(market_id, winning_outcome).build_transaction({
         "from": config.ORACLE_ADDRESS,
-        "nonce": w3.eth.get_transaction_count(config.ORACLE_ADDRESS),
+        "nonce": w3.eth.get_transaction_count(config.ORACLE_ADDRESS, "pending"),
         "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
         "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
         "chainId": w3.eth.chain_id,
     })
     acct = w3.eth.account.from_key(config.ORACLE_PRIVATE_KEY)
     signed = acct.sign_transaction(tx)
-    return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+    with _send_lock:
+        return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
 
 
 def owner_resolve(w3: Web3, market_id: int, winning_outcome: int) -> str:
@@ -115,14 +117,15 @@ def owner_resolve(w3: Web3, market_id: int, winning_outcome: int) -> str:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
     tx = c.functions.ownerResolve(market_id, winning_outcome).build_transaction({
         "from": _HOT_WALLET,
-        "nonce": w3.eth.get_transaction_count(_HOT_WALLET),
+        "nonce": w3.eth.get_transaction_count(_HOT_WALLET, "pending"),
         "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
         "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
         "chainId": w3.eth.chain_id,
     })
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
     signed = acct.sign_transaction(tx)
-    return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+    with _send_lock:
+        return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
 
 
 def dispute_resolution(w3: Web3, market_id: int) -> str:
@@ -132,14 +135,15 @@ def dispute_resolution(w3: Web3, market_id: int) -> str:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
     tx = c.functions.disputeResolution(market_id).build_transaction({
         "from": _HOT_WALLET,
-        "nonce": w3.eth.get_transaction_count(_HOT_WALLET),
+        "nonce": w3.eth.get_transaction_count(_HOT_WALLET, "pending"),
         "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
         "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
         "chainId": w3.eth.chain_id,
     })
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
     signed = acct.sign_transaction(tx)
-    return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+    with _send_lock:
+        return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
 
 
 def cancel_expired(w3: Web3, market_id: int) -> str:
@@ -149,11 +153,12 @@ def cancel_expired(w3: Web3, market_id: int) -> str:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
     tx = c.functions.cancelExpired(market_id).build_transaction({
         "from": _HOT_WALLET,
-        "nonce": w3.eth.get_transaction_count(_HOT_WALLET),
+        "nonce": w3.eth.get_transaction_count(_HOT_WALLET, "pending"),
         "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
         "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
         "chainId": w3.eth.chain_id,
     })
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
     signed = acct.sign_transaction(tx)
-    return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+    with _send_lock:
+        return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()

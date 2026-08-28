@@ -16,7 +16,7 @@ would call the HTTP API with an agent-specific auth token.
 
 import time
 
-from bot.ledger import ledger
+from bot.ledger import async_ledger as ledger
 
 from . import caps, config
 
@@ -47,9 +47,9 @@ async def create_market(
             tg_id, question, options,
             round(subsidy_usdc * 1_000_000), close_at=close_at
         )
-        if market_id is None:
+        if market_id is None or market_id == "balance":
             caps.record_error()
-            return {"error": "create_market returned None (schema issue?)"}
+            return {"error": f"create_market failed: {market_id}"}
         _agent_markets.add(market_id)
         caps.record_action(subsidy_usdc)
         return {
@@ -108,9 +108,10 @@ async def resolve_market(market_id: int, winning_outcome: int) -> dict:
 
     try:
         tg_id = config.AGENT_TG_ID
-        status = await ledger.resolve_market(market_id, tg_id, winning_outcome)
-        if status != "ok":
-            return {"error": f"resolve failed: {status}"}
+        # resolve_market(market_id, winning_idx, resolver_id) -> (ok, message)
+        ok, msg = await ledger.resolve_market(market_id, winning_outcome, tg_id)
+        if not ok:
+            return {"error": f"resolve failed: {msg}"}
         return {"status": "ok"}
     except Exception as e:
         return {"error": str(e)}

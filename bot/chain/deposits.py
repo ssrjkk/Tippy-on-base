@@ -127,7 +127,18 @@ def _check_pending_withdrawn_sync() -> None:
     for row in ledger.pending_withdraws():
         wd_id = int(row["id"])
         amount_micro = int(row["amount"])
-        total_micro = amount_micro + transfers.withdraw_fee(amount_micro)
+        # Keep in sync with bot/base.py: the fee is stored in the row note
+        # (written by reserve_withdraw) so refunds restore the exact debited
+        # total for rows created under a different fee scheme.
+        fee_micro = 0
+        if row.get("note") and row["note"].startswith("fee="):
+            try:
+                fee_micro = int(row["note"].split("=", 1)[1])
+            except (ValueError, IndexError):
+                pass
+        if fee_micro == 0:
+            fee_micro = transfers.withdraw_fee(amount_micro)
+        total_micro = amount_micro + fee_micro
         status = row["status"]
         tx_hash = row["tx_hash"]
         if status is None:

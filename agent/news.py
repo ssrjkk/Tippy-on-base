@@ -69,7 +69,10 @@ def _load_seen() -> set:
 def _save_seen(seen: set) -> None:
     import json
     from pathlib import Path
-    Path(SEEN_FILE).write_text(json.dumps(list(seen)))
+    # Cap the file: without pruning it grows (and is re-read) forever.
+    if len(seen) > 5000:
+        seen = set(sorted(seen)[-5000:])
+    Path(SEEN_FILE).write_text(json.dumps(sorted(seen)))
 
 
 def fetch_news(max_items: int = 5) -> list[NewsItem]:

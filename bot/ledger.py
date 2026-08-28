@@ -399,6 +399,28 @@ CREATE TABLE IF NOT EXISTS treasury_votes (
     created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
     UNIQUE (proposal_id, tg_id)
 );
+CREATE TABLE IF NOT EXISTS onchain_markets (
+    id         BIGINT PRIMARY KEY,               -- on-chain OutcomeMarket marketId
+    creator    BIGINT NOT NULL,
+    question   TEXT NOT NULL,
+    options    TEXT NOT NULL,                    -- JSON array (labels live off-chain)
+    close_at   BIGINT NOT NULL,
+    created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+);
+CREATE INDEX IF NOT EXISTS idx_onchain_markets_close ON onchain_markets (close_at);
+ALTER TABLE onchain_markets ADD COLUMN IF NOT EXISTS deadline_notified BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE onchain_markets ADD COLUMN IF NOT EXISTS resolved_outcome BIGINT;
+ALTER TABLE onchain_markets ADD COLUMN IF NOT EXISTS cancelled_flag BIGINT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS onchain_trades (
+    id         BIGSERIAL PRIMARY KEY,
+    market_id  BIGINT NOT NULL,
+    tg_id      BIGINT NOT NULL,
+    outcome    BIGINT NOT NULL,
+    shares     BIGINT NOT NULL,              -- micro-shares bought (at buy time)
+    tx_hash    TEXT,
+    created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+);
+CREATE INDEX IF NOT EXISTS idx_onchain_trades_market ON onchain_trades (market_id, outcome);
 """
 
 class Ledger:
@@ -715,11 +737,19 @@ class Ledger:
             )
             if cur.rowcount == 0:
                 return "insufficient"
-            self._conn.execute(
+            # The insert must SUCCEED for the owner credit below to happen: on
+            # a concurrent duplicate (two processes racing past the pre-check)
+            # DO NOTHING would silently skip the row while the rest of the
+            # transaction still commits — debiting the buyer twice and
+            # crediting the owner twice (money creation). Abort instead.
+            cur = self._conn.execute(
                 "INSERT INTO paywall_purchases (item_id, buyer_tg, tx_hash, amount_micro) "
-                "VALUES (%s, %s, NULL, %s)",
+                "VALUES (%s, %s, NULL, %s) ON CONFLICT DO NOTHING RETURNING id",
                 (item_id, buyer_tg, price),
             )
+            if cur.fetchone() is None:
+                self._conn.rollback()
+                return "dup"
             self._conn.execute(
                 "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                 (price, int(item["owner_tg"])),
@@ -899,6 +929,10 @@ class Ledger:
 
     def transfer(self, from_id: int, to_id: int, amount_micro: int) -> bool:
         """Move funds between users. Returns False if sender lacks balance."""
+        if amount_micro <= 0:
+            # A negative amount would invert the direction (the "sender"
+            # would GAIN money) and mint it from thin air.
+            return False
         with self._lock:
             self.ensure_user(to_id, None)
             cur = self._conn.execute(
@@ -1058,7 +1092,7 @@ class Ledger:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT tx_hash, amount_micro FROM pending_deposits "
-                "WHERE LOWER(sender) = LOWER(%s) AND claimed = 0",
+                "WHERE LOWER(sender) = LOWER(%s) AND claimed = 0 FOR UPDATE",
                 (sender,),
             ).fetchall()
             self.ensure_user(tg_id, None)
@@ -1167,10 +1201,15 @@ class Ledger:
             ).fetchall()
 
     def pending_withdraws(self) -> list[dict]:
-        """Withdraw rows not yet confirmed: status IS NULL (legacy), 'pending'."""
+        """Withdraw rows not yet confirmed: status IS NULL (legacy), 'pending'.
+
+        `note` carries `fee=<micro>` (written by reserve_withdraw) so the
+        refund sweep can restore the exact debited total for rows created
+        under a different fee scheme instead of recomputing it.
+        """
         with self._lock:
             return self._conn.execute(
-                "SELECT id, tg_id, counterparty, amount, tx_hash, status, created_at "
+                "SELECT id, tg_id, counterparty, amount, tx_hash, status, note, created_at "
                 "FROM tx_log WHERE kind = 'withdraw' "
                 "AND COALESCE(status, '') NOT IN ('done', 'refunded') ORDER BY id"
             ).fetchall()
@@ -1335,6 +1374,12 @@ class Ledger:
 
     def place_bet(self, bet_id: int, tg_id: int, option_idx: int, amount_micro: int) -> str:
         """Returns 'ok' | 'closed' | 'deadline' | 'badopt' | 'balance'."""
+        if amount_micro <= 0:
+            # debit(-X) would INCREASE the balance and record a negative stake
+            # that vanishes from the pot at resolution (money creation). Raise
+            # instead of returning a status: callers treat unknown statuses as
+            # success in some handlers.
+            raise ValueError("bet amount must be positive")
         with self._lock:
             bet = self.get_bet_for_update(bet_id)
             if not bet or bet["status"] != "open":
@@ -1990,6 +2035,107 @@ class Ledger:
             )
             self._conn.commit()
             return True, "Рынок отменён — ставки возвращены по цене входа."
+
+    # ---------- on-chain markets (OutcomeMarket.sol registry) ----------
+    #
+    # The contract stores numbers only (labels on-chain would cost gas), so
+    # the bot keeps the human-readable metadata here and the money/shares on
+    # Base. ERC1155 balances are read from the chain, never from this table.
+
+    def save_onchain_market(
+        self, market_id: int, creator: int, question: str, options: list[str], close_at: int
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO onchain_markets (id, creator, question, options, close_at) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                (market_id, creator, question, json.dumps(options), close_at),
+            )
+            self._conn.commit()
+
+    def get_onchain_market(self, market_id: int) -> dict | None:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM onchain_markets WHERE id = %s", (market_id,)
+            ).fetchone()
+
+    def list_onchain_markets(self, limit: int = 20) -> list[dict]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM onchain_markets ORDER BY id DESC LIMIT %s", (limit,)
+            ).fetchall()
+
+    def onchain_markets_past_deadline(self) -> list[dict]:
+        """Registered on-chain markets past close the creator wasn't asked to
+        resolve yet (the watcher DMs them outcome-pick buttons)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT id, creator, question, options FROM onchain_markets "
+                "WHERE resolved_outcome IS NULL AND cancelled_flag = 0 "
+                "AND deadline_notified = 0 AND close_at <= %s",
+                (int(time.time()),),
+            ).fetchall()
+
+    def mark_onchain_deadline_notified(self, market_id: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE onchain_markets SET deadline_notified = 1 WHERE id = %s",
+                (market_id,),
+            )
+            self._conn.commit()
+
+    def set_onchain_resolved(self, market_id: int, winner_idx: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE onchain_markets SET resolved_outcome = %s WHERE id = %s",
+                (winner_idx, market_id),
+            )
+            self._conn.commit()
+
+    def mark_onchain_cancelled(self, market_id: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE onchain_markets SET cancelled_flag = 1 WHERE id = %s",
+                (market_id,),
+            )
+            self._conn.commit()
+
+    def onchain_markets_overdue(self, grace_seconds: int) -> list[dict]:
+        """Unresolved on-chain markets whose cancel window (24h on-chain) plus
+        `grace_seconds` has passed — the watcher cancels them so holders can
+        pull refunds and the creator subsidy is not stuck forever."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT id, question FROM onchain_markets "
+                "WHERE resolved_outcome IS NULL AND cancelled_flag = 0 "
+                "AND close_at + %s <= %s",
+                (grace_seconds, int(time.time())),
+            ).fetchall()
+
+    def record_onchain_trade(
+        self, market_id: int, tg_id: int, outcome: int, shares: int, tx_hash: str = ""
+    ) -> None:
+        """Log a successful on-chain buy (shares > 0). Registry-only: real
+        holdings always live in ERC-1155, this just powers winner DMs."""
+        with self._lock:
+            self.ensure_user(tg_id, None)
+            self._conn.execute(
+                "INSERT INTO onchain_trades (market_id, tg_id, outcome, shares, tx_hash) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (market_id, tg_id, outcome, shares, tx_hash),
+            )
+            self._conn.commit()
+
+    def onchain_trades_for_outcome(self, market_id: int, outcome: int) -> list[dict]:
+        """Per-user shares bought of one outcome (at buy time; holders may
+        have sold since — redemption always reads the real ERC-1155 balance)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT tg_id, SUM(shares) AS shares FROM onchain_trades "
+                "WHERE market_id = %s AND outcome = %s "
+                "GROUP BY tg_id HAVING SUM(shares) > 0",
+                (market_id, outcome),
+            ).fetchall()
 
     # ---------- reaction tips ----------
 

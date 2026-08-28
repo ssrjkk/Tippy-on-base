@@ -13,7 +13,7 @@ from the SURGE-AGENT-PROMPT.
 import time
 
 from bot import config
-from bot.ledger import ledger
+from bot.ledger import async_ledger as ledger
 
 from . import caps
 
@@ -37,7 +37,11 @@ async def sell_signal(
 
     title = title[: config.PAYWALL_MAX_TITLE_LEN]
     price_micro = round(price_usdc * 10**config.USDC_DECIMALS)
-    tg_id = 0  # agent's tg_id (0 = system)
+    tg_id = config.AGENT_TG_ID
+    if not tg_id:
+        # Crediting purchases to tg_id 0 would create a phantom "system" user
+        # that can never spend the revenue (and skews liabilities).
+        return {"error": "AGENT_TG_ID not configured — signal revenue would be lost"}
 
     content = (
         f"🤖 Tippy Agent Signal\n"
@@ -51,7 +55,7 @@ async def sell_signal(
     )
 
     try:
-        item_id = ledger.create_paywall(tg_id, title, price_micro, content)
+        item_id = await ledger.create_paywall(tg_id, title, price_micro, content)
         if item_id is None:
             caps.record_error()
             return {"error": "paywall cap reached"}

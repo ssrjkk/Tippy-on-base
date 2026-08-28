@@ -1,4 +1,6 @@
 ﻿"""Stats / leaderboard / history handlers."""
+import html
+
 from aiogram import types
 from aiogram.filters import Command
 
@@ -53,7 +55,7 @@ async def _history_text(tg_id: int, limit: int=15) -> str:
         elif r['kind'] == 'withdraw':
             lines.append(f"{emoji} −{amt} → <code>{common._esc(r['counterparty'])}</code>")
         elif r['kind'] == 'bet':
-            lines.append(f"{emoji} −{amt} #{r['counterparty']} ({r['note']})")
+            lines.append(f"{emoji} −{amt} #{r['counterparty']} ({html.escape(r['note'] or '')})")
         elif r['kind'] == 'bet_win':
             lines.append(f"{emoji} +{amt} #{r['counterparty']}")
         elif r['kind'] == 'bet_cancel':

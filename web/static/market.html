@@ -104,7 +104,7 @@
         $("m-question").textContent = "#" + m.id + " " + m.question;
         const winnerIdx = m.status === "resolved" && m.winner !== null && m.winner !== undefined ? m.winner : null;
         const meta = [];
-        if (m.close_at) meta.push("⏰ <span id='m-countdown' data-close-at=\"" + m.close_at + "\">" + relDeadline(m.close_at) + "</span>");
+        if (m.close_at) meta.push("⏰ <span id='m-countdown' data-close-at=\"" + parseInt(m.close_at) + "\">" + relDeadline(m.close_at) + "</span>");
         meta.push(m.status === "open"
           ? '<span class="chip chip-open">● открыт</span>'
           : m.status === "resolved"
@@ -117,12 +117,12 @@
           <div class="option${isWinner ? " option-winner" : ""}">
             <div class="option-top">
               <span class="option-label">${isWinner ? "🏆 " : ""}${escapeHtml(o.label)}</span>
-              <span class="option-val">${fmtUSDC(o.pool_usdc)} USDC · ${o.probability}% · ${o.backers}👤</span>
+              <span class="option-val">${fmtUSDC(o.pool_usdc)} USDC · ${escapeHtml(String(o.probability))}% · ${escapeHtml(String(o.backers))}👤</span>
             </div>
             <div class="bar"><div class="bar-fill${isWinner ? " bar-fill-win" : ""}" style="width:${Math.max(o.probability, 2)}%;animation-delay:${Math.min(i * 130, 600)}ms"></div></div>
           </div>`;
         }).join("");
-        $("m-pot").innerHTML = "Пул: <b>" + fmtUSDC(m.pot_usdc) + " USDC</b> · " + m.total_backers + "👤";
+        $("m-pot").innerHTML = "Пул: <b>" + fmtUSDC(m.pot_usdc) + " USDC</b> · " + escapeHtml(String(m.total_backers)) + "👤";
         $("m-creator").textContent = "@" + (m.creator.username || ("id" + m.creator.id));
         document.title = "#" + m.id + " " + m.question + " — Tippy";
         document.querySelector('meta[property="og:title"]').content = "#" + m.id + " " + m.question;

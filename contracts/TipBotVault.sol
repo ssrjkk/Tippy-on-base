@@ -22,6 +22,7 @@ contract TipBotVault {
     error Reentrant();
     error TransferFailed();
     error NotPendingOwner();
+    error InsufficientReserves(uint256 requested, uint256 available);
 
     IERC20 public immutable usdc;
 
@@ -36,6 +37,7 @@ contract TipBotVault {
     uint256 private _locked = 1;
 
     event Distributed(address indexed recipient, uint256 amount);
+    event DistributeSkipped(address indexed recipient, uint256 amount);
     event RelayerChanged(address indexed relayer);
     event LimitChanged(uint256 limit);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
@@ -73,7 +75,12 @@ contract TipBotVault {
     }
 
     /// @notice Distribute payouts. The relayer is capped by a daily limit;
-    ///         the owner is not. Reverts if the sum is not fully covered.
+    ///         the owner is not. Recipients whose transfer fails (e.g. USDC
+    ///         blacklisted) are SKIPPED and reported via DistributeSkipped —
+    ///         one bad address can no longer revert the whole batch and brick
+    ///         the daily window. Only successful amounts count against the
+    ///         relayer limit; the cap itself is still checked against the
+    ///         requested sum.
     function batchDistribute(
         address[] calldata recipients,
         uint256[] calldata amounts
@@ -81,24 +88,44 @@ contract TipBotVault {
         if (recipients.length == 0) revert EmptyDistribution();
         if (recipients.length != amounts.length) revert MismatchedArrays();
 
+        uint256 requested = 0;
         for (uint256 i = 0; i < recipients.length; i++) {
-            total += amounts[i];
+            requested += amounts[i];
+        }
+        // A batch that obviously cannot be covered by the reserves is an
+        // operator error — revert loudly up front. Per-recipient runtime
+        // failures (blacklists etc.) are still skipped below.
+        if (requested > usdc.balanceOf(address(this))) {
+            revert InsufficientReserves(requested, usdc.balanceOf(address(this)));
         }
 
         if (msg.sender == relayer) {
             _rollWindow();
-            uint256 next = spentInWindow + total;
+            uint256 next = spentInWindow + requested;
             if (next > dailyLimit) {
-                revert DailyLimitExceeded(spentInWindow, dailyLimit, total);
+                revert DailyLimitExceeded(spentInWindow, dailyLimit, requested);
             }
-            spentInWindow = next;
         }
 
         for (uint256 i = 0; i < recipients.length; i++) {
             if (amounts[i] == 0) continue;
-            bool ok = usdc.transfer(recipients[i], amounts[i]);
-            if (!ok) revert TransferFailed();
+            // Low-level call: real USDC reverts on blacklisted recipients and
+            // a plain bool-check would revert the whole batch with them.
+            (bool ok, bytes memory ret) = address(usdc).call(
+                abi.encodeCall(IERC20.transfer, (recipients[i], amounts[i]))
+            );
+            if (!ok || (ret.length != 0 && !abi.decode(ret, (bool)))) {
+                emit DistributeSkipped(recipients[i], amounts[i]);
+                continue;
+            }
+            total += amounts[i];
             emit Distributed(recipients[i], amounts[i]);
+        }
+
+        if (msg.sender == relayer && total > 0) {
+            // Same tx as the cap check above, so the window cannot have
+            // rolled in between — only successful payouts consume budget.
+            spentInWindow += total;
         }
     }
 

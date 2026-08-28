@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -47,6 +50,10 @@ jobs:
       SECRET_KEY: "test-secret-key-for-ci-only-32ch!"
       TEST_DATABASE_URL: "postgresql://tipbot:tipbot@localhost:5432/tipbot_test"
       TEST_ADMIN_DATABASE_URL: "postgresql://tipbot:tipbot@localhost:5432/postgres"
+      # bot/ledger.py opens its module-level singleton at import time, so the
+      # pytest job must point DATABASE_URL at the service database (5432) too —
+      # the 5433 default would fail the import before any test runs.
+      DATABASE_URL: "postgresql://tipbot:tipbot@localhost:5432/tipbot"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -68,3 +75,17 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  contract:
+    name: Contracts (forge test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Vendor contract dependencies
+        run: bash scripts/setup_foundry.sh
+      - name: Forge build
+        run: forge build
+      - name: Forge test
+        run: forge test -vvv

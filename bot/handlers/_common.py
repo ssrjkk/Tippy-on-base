@@ -150,7 +150,10 @@ async def _throttle(tg_id: int, action: str) -> str | None:
         remaining = max(1, int(cooldown - (now - last)) + 1)
         return i18n.t(lang, "throttle", sec=remaining)
     if len(_money_cmd_last) > 100_000:
-        _money_cmd_last.clear()
+        cutoff = now - 3600
+        expired = [k for k, v in _money_cmd_last.items() if v < cutoff]
+        for k in expired:
+            del _money_cmd_last[k]
     _money_cmd_last[key] = now
     return None
 

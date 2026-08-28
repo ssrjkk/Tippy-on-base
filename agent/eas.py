@@ -11,6 +11,7 @@ Requires: web3.py (already in requirements.txt)
 """
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -48,7 +49,13 @@ EAS_ABI = [
 # Schema for Tippy agent actions (32 bytes = keccak256 hash)
 # Schema: "string action_type,uint256 market_id,uint256 amount_micro,uint8 confidence,bytes32 reasoning_hash,uint256 ts"
 SCHEMA_STR = "string action_type,uint256 market_id,uint256 amount_micro,uint8 confidence,bytes32 reasoning_hash,uint256 ts"
-SCHEMA_UUID = Web3.keccak(text=SCHEMA_STR)
+# On-chain attest requires the UID of a schema REGISTERED on Base (EAS).
+# A fabricated UID used to be computed here — every attest would revert and
+# the code silently degraded to the local log. Set EAS_SCHEMA_UID only after
+# registering the schema; without it the agent logs attestations locally.
+import os
+
+SCHEMA_UID = os.environ.get("EAS_SCHEMA_UID", "").strip()
 
 
 @dataclass
@@ -104,8 +111,14 @@ def attest_action(data: AttestationData) -> str | None:
     w3 = _get_w3()
     key = _get_attester_key()
 
-    if not key:
-        # No key available — log locally
+    if not key or not SCHEMA_UID:
+        # No attester key, or no REGISTERED schema UID: an on-chain attest
+        # would revert (a keccak of the schema text is not a UID EAS knows),
+        # so log honestly to the local JSONL instead of burning gas.
+        if not SCHEMA_UID:
+            logging.getLogger("agent.eas").warning(
+                "EAS_SCHEMA_UID is not set — attestation logged locally only"
+            )
         _log_local(data)
         return None
 
@@ -121,7 +134,7 @@ def attest_action(data: AttestationData) -> str | None:
             0,  # expirationTime (0 = no expiry)
             True,  # revocable
             b"\x00" * 32,  # refUUID
-            SCHEMA_UUID,
+            Web3.to_bytes(hexstr=SCHEMA_UID),
             data.encode_data(),
         )
 
@@ -157,7 +170,7 @@ def _log_local(data: AttestationData) -> None:
         "amount_micro": data.amount_micro,
         "confidence": data.confidence,
         "reasoning_hash": data.reasoning_hash.hex(),
-        "schema_uuid": SCHEMA_UUID.hex(),
+        "schema_uuid": SCHEMA_UID or "local-only",
     }
     with open(log_file, "a") as f:
         f.write(json.dumps(entry) + "\n")

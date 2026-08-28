@@ -9,7 +9,6 @@ tests can use the richer primitives. See bot/chain/__init__.py.
 
 import asyncio
 import logging
-import threading
 import time
 from decimal import ROUND_CEILING, Decimal
 
@@ -29,6 +28,7 @@ from .chain import (  # noqa: F401  (re-exported below as facade surface)
     transactions,
     transfers,
 )
+from .chain.transfers import _send_lock  # shared hot-wallet send lock
 from .ledger import ledger
 
 log = logging.getLogger("tipbot.base")
@@ -79,7 +79,10 @@ def _rpc_call(fn, *args, **kwargs):
     raise RuntimeError(f"all RPC providers failed: {last_err}")
 
 
-_send_lock = threading.Lock()
+# NOTE: hot-wallet sends (withdrawals here, gas drips in chain.transfers,
+# owner ops in outcome.py) all share transfers._send_lock so two paths can
+# never read the same pending nonce concurrently — one lock per module was
+# not enough: different locks protected the SAME EOA nonce sequence.
 
 
 class BroadcastUncertainError(Exception):
@@ -312,7 +315,15 @@ def _check_pending_withdrawn_sync() -> None:
     for row in ledger.pending_withdraws():
         wd_id = int(row["id"])
         amount_micro = int(row["amount"])
-        total_micro = amount_micro + withdraw_fee(amount_micro)
+        fee_micro = 0
+        if row.get("note") and row["note"].startswith("fee="):
+            try:
+                fee_micro = int(row["note"].split("=", 1)[1])
+            except (ValueError, IndexError):
+                pass
+        if fee_micro == 0:
+            fee_micro = withdraw_fee(amount_micro)
+        total_micro = amount_micro + fee_micro
         status = row["status"]
         tx_hash = row["tx_hash"]
         if status is None:

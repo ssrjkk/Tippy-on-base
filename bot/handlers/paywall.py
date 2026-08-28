@@ -1,6 +1,7 @@
 ﻿from bot import i18n
 
 'Paywall (paid content) handlers + reaction tips + message indexing.'
+import html
 import re
 import time
 from decimal import Decimal
@@ -54,7 +55,7 @@ async def cmd_paywall(message: types.Message, command: CommandObject) -> None:
             await message.answer(i18n.t(lang, 'paywall_empty'))
             return
         lines = [
-            f"#{r['id']} — {r['title']} — <b>{common._fmt(int(r['price_micro']))} USDC</b>"
+            f"#{r['id']} — {html.escape(r['title'])} — <b>{common._fmt(int(r['price_micro']))} USDC</b>"
             f"{' ✅' if await common.ledger.paywall_purchased(int(r['id']), uid) else ''}"
             for r in rows
         ]
@@ -66,7 +67,7 @@ async def cmd_paywall(message: types.Message, command: CommandObject) -> None:
             + i18n.t(lang, 'paywall_list_buy_hint')
         )
         await message.answer(text)
-        lines = [f"#{r['id']} — {r['title']} — <b>{common._fmt(int(r['price_micro']))} USDC</b>{(' ✅' if await common.ledger.paywall_purchased(int(r['id']), uid) else '')}" for r in rows]
+        lines = [f"#{r['id']} — {html.escape(r['title'])} — <b>{common._fmt(int(r['price_micro']))} USDC</b>{(' ✅' if await common.ledger.paywall_purchased(int(r['id']), uid) else '')}" for r in rows]
         await message.answer(i18n.t(lang, 'paywall_list_header', lines='\n'.join(lines)) + '\n\n' + i18n.t(lang, 'paywall_list_buy_hint'))
         return
     if sub == 'buy':

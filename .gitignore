@@ -69,6 +69,8 @@ scripts/*
 !scripts/deploy_outcome_market.py
 !scripts/reencrypt_wallets.py
 !scripts/validate_env.py
+!scripts/smoke_onchain.py
+!scripts/check_i18n.py
 
 # Agent runtime artifacts
 .agent_seen_news.json
@@ -76,3 +78,7 @@ scripts/*
 # Foundry dependencies (restored via scripts/setup_foundry.sh)
 contracts/lib/*
 !contracts/lib/.gitkeep
+
+# Foundry build artifacts
+out/
+cache/

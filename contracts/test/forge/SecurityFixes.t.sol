@@ -118,10 +118,14 @@ contract SecurityFixesTest is Test {
 
     function test_SupplyCapReverts() public {
         uint256 id = _create(2, 50e6);
+        // Read the cap BEFORE expectRevert: the getter staticcall would
+        // otherwise consume the expectation (arguments are evaluated
+        // after expectRevert is armed).
+        uint256 cap = market.MAX_SUPPLY_PER_OUTCOME();
         vm.startPrank(trader1);
         usdc.approve(address(market), type(uint256).max);
         vm.expectRevert(OutcomeMarket.InvalidShares.selector);
-        market.buy(id, 0, market.MAX_SUPPLY_PER_OUTCOME() + 1, type(uint256).max);
+        market.buy(id, 0, cap + 1, type(uint256).max);
         vm.stopPrank();
     }
 
@@ -157,12 +161,15 @@ contract SecurityFixesTest is Test {
         // Creator got NOTHING from the cancellation itself.
         assertEq(usdc.balanceOf(creator), creatorBefore, "creator must not be paid");
 
-        // Trader claims their pro-rata slice.
+        // Trader claims their pro-rata slice (par-capped: 5M shares pay
+        // exactly 5M micro-USDC; t1 held every share, so the final claim
+        // also sweeps the unused subsidy to the creator).
+        vm.prank(trader1);
         uint256 claimed = market.claimCancelled(id);
-        assertGt(claimed, 0, "trader must receive a refund");
-        assertLe(claimed, escrow);
+        assertEq(claimed, 5_000_000, "refund must be par-capped");
         assertEq(usdc.balanceOf(trader1), traderBefore + claimed);
-        assertEq(market.unclaimedEscrowMicro(id), escrow - claimed);
+        assertEq(market.unclaimedEscrowMicro(id), 0, "dust swept on final claim");
+        assertEq(usdc.balanceOf(creator), creatorBefore + (escrow - claimed), "creator keeps unused subsidy");
     }
 
     function test_CancelExpiredWithNoHoldersReturnsSubsidyToCreator() public {
@@ -193,7 +200,9 @@ contract SecurityFixesTest is Test {
         market.cancelExpired(id);
         assertEq(usdc.balanceOf(creator), creatorBefore, "cancel pays nobody");
 
+        vm.prank(trader1);
         uint256 c1 = market.claimCancelled(id);
+        vm.prank(trader2);
         uint256 c2 = market.claimCancelled(id);
 
         // Conservation: every micro-USDC accounted for; contract drained;
@@ -228,5 +237,135 @@ contract SecurityFixesTest is Test {
         vm.expectRevert(OutcomeMarket.AlreadyCancelled.selector);
         market.buy(id, 0, 1_000_000, type(uint256).max);
         vm.stopPrank();
+    }
+
+    // ------------------------------------------------------------------
+    // Vulnerability #3: cancel refund rate unbounded above par
+    // ------------------------------------------------------------------
+    // Pre-fix the per-share cancel rate was escrow/totalShares with NO par
+    // cap: a market with a large unspent subsidy and a tiny outstanding
+    // supply let the smallest holder drain the WHOLE escrow (subsidy
+    // included). Post-fix a share never redeems above $1 and the unused
+    // subsidy goes back to the creator via the dust sweep.
+
+    function test_CancelRefundCappedAtPar_SubsidyNotDrainable() public {
+        uint256 id = _create(2, 50e6);
+
+        // trader1 buys ONE micro-share (~$0.50 at open): with the old
+        // unbounded rate this position alone was worth the entire escrow.
+        uint256 cost = _buy(trader1, id, 0, 1);
+        assertLt(cost, 1_000_000);
+
+        vm.warp(closesAt + market.EXPIRY_WINDOW() + 1);
+        market.cancelExpired(id);
+
+        vm.prank(trader1);
+        uint256 claimed = market.claimCancelled(id);
+        // Par cap: 1 micro-share pays at most 1 micro-USDC.
+        assertLe(claimed, 1, "refund must be capped at par");
+
+        // Every remaining share is gone; the unused subsidy must be swept
+        // back to the creator, NOT to the last claimant.
+        uint256 creatorBefore = usdc.balanceOf(creator);
+        assertEq(usdc.balanceOf(address(market)), 0, "market must be drained");
+        assertGt(usdc.balanceOf(creator), creatorBefore - 1, "creator keeps the unused subsidy");
+    }
+
+    // ------------------------------------------------------------------
+    // Vulnerability #4: mintCompleteSet after close amplified the drain
+    // ------------------------------------------------------------------
+
+    function test_MintCompleteSetBlockedAfterClose() public {
+        uint256 id = _create(2, 50e6);
+        vm.warp(1 days + 1); // past close, before expiry window
+
+        vm.startPrank(trader1);
+        usdc.approve(address(market), type(uint256).max);
+        vm.expectRevert(OutcomeMarket.MarketNotClosed.selector);
+        market.mintCompleteSet(id, 1);
+        vm.stopPrank();
+    }
+
+    // ------------------------------------------------------------------
+    // Vulnerability #5: dispute did not pause the cancel-expiry clock
+    // ------------------------------------------------------------------
+
+    function test_DisputeDelaysCancelExpiry() public {
+        uint256 id = _create(2, 50e6);
+        vm.warp(1 days + 1);
+
+        address oracleAddr = address(0xA0C1E);
+        vm.prank(creator); // owner == oracle by default in this suite
+        market.setOracle(oracleAddr);
+        vm.prank(oracleAddr);
+        market.oracleResolve(id, 0);
+
+        // Owner disputes 1 second before the 2h window lapses.
+        vm.warp(block.timestamp + 2 hours - 1);
+        vm.prank(creator);
+        market.disputeResolution(id);
+
+        // 24h after CLOSE (but only ~2h after the dispute) a permissionless
+        // cancel must NOT be possible — the clock restarted at the dispute.
+        vm.warp(closesAt + market.EXPIRY_WINDOW() + 1);
+        vm.expectRevert(OutcomeMarket.MarketNotExpired.selector);
+        market.cancelExpired(id);
+
+        // Only 24h after the DISPUTE itself may anyone cancel.
+        vm.warp(block.timestamp + market.EXPIRY_WINDOW() + 1);
+        market.cancelExpired(id);
+    }
+
+    // ------------------------------------------------------------------
+    // Vulnerability #6: oracle/owner resolve-dispute ping-pong
+    // ------------------------------------------------------------------
+    // Pre-fix the oracle could re-post its answer right after every dispute
+    // (each dispute re-armed a fresh 2h window), freezing the market in a
+    // loop where holders never knew which outcome stood.
+
+    function test_DisputeBlocksOracleReResolve() public {
+        uint256 id = _create(2, 50e6);
+        vm.warp(1 days + 1);
+
+        address oracleAddr = address(0xA0C1E);
+        vm.prank(creator);
+        market.setOracle(oracleAddr);
+
+        vm.prank(oracleAddr);
+        market.oracleResolve(id, 0);
+        vm.prank(creator);
+        market.disputeResolution(id);
+
+        // The SAME oracle must not be able to just repost its answer.
+        vm.prank(oracleAddr);
+        vm.expectRevert(OutcomeMarket.MarketDisputed.selector);
+        market.oracleResolve(id, 1);
+
+        // Only the owner has the final say after a dispute.
+        vm.prank(creator);
+        market.ownerResolve(id, 1);
+        (, bool resolved, uint8 winner, , , , , , , ) = market.markets(id);
+        assertTrue(resolved);
+        assertEq(winner, 1);
+    }
+
+    function test_SecondDisputeRejected() public {
+        uint256 id = _create(2, 50e6);
+        vm.warp(1 days + 1);
+
+        address oracleAddr = address(0xA0C1E);
+        vm.prank(creator);
+        market.setOracle(oracleAddr);
+
+        vm.prank(oracleAddr);
+        market.oracleResolve(id, 0);
+        vm.prank(creator);
+        market.disputeResolution(id);
+
+        // Disputed state is not resolved — a second dispute is meaningless
+        // and must not re-arm yet another window.
+        vm.prank(creator);
+        vm.expectRevert(OutcomeMarket.NotResolved.selector);
+        market.disputeResolution(id);
     }
 }

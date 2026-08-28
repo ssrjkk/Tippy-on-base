@@ -4,6 +4,7 @@
 ![Tests](https://img.shields.io/badge/tests-422%20passed-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.12+-blue)
 ![Network](https://img.shields.io/badge/network-Base-0052FF)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A Telegram bot that turns any chat or community into a financial ecosystem:
 **instant USDC tips, Polymarket-style prediction markets with live AMM odds,
@@ -40,9 +41,28 @@ accounting backed by public proof-of-reserves.
 - Deadline pings + grace-period auto-refund protection for forgotten markets
 
 ### 🎲 Parimutuel polls (quick group games)
-- `/bet create Question | Option 1 | Option 2 [24h|7d]`, `/bet <id> <opt> <amount>`
+- `/bet create Question | Option 1 | Option 2 [24h]`, `/bet <id> <opt> <amount>`
 - Winners split the whole pot proportionally (2% fee on net profit to the creator)
 - Inline cards, quick-amount buttons, two-tap resolution, cancel/refund paths
+
+### ⛓️ On-chain markets — Polymarket on Base (`/oc*`)
+- `/oc_create 50 Who wins? | Alice | Bob 7d` — creates a market in the
+  **OutcomeMarket.sol** contract: the subsidy is locked on-chain, shares are
+  real **ERC-1155 tokens**, every trade is a USDC transfer anyone can verify
+  on Basescan
+- `/oc_buy <id> <opt> <amount>` / `/oc_sell <id> <opt> [50%]` — trade at the
+  live LMSR price with hard on-chain slippage caps (`maxCost`/`minProceeds`)
+- `/oc_redeem <id>` — pull resolution payouts straight from the contract
+- `/oc <id>` / `/oc_pos` — live odds and your ERC-1155 positions
+- Oracle proposes the winner, the owner can dispute within 2h (once —
+  after a dispute only the owner finalizes), and anyone can
+  refund an abandoned market 24h after close — refunds are hard-capped at
+  $1/share so the creator subsidy can never be drained
+- Labels live in a bot-side registry (the contract stores numbers only); gas
+  for first trades is auto-topped-up from the hot wallet with a per-wallet
+  anti-drain cooldown
+- Deploy: `python scripts/deploy_outcome_market.py` (owner should be a
+  multisig, not the hot wallet)
 
 ### 🧠 AI assistant
 - `/ask <question>` — ask about crypto, Base, market strategy, bot usage
@@ -106,7 +126,7 @@ Services: `db` (PostgreSQL 16), `bot`, `web` (healthcheck on `/api/health`),
 `backup` (pg_dump every 6h, 14-day rotation). Local port 5433 to avoid clashing
 with a system Postgres.
 
-Full production walkthrough: **[DEPLOY.md](DEPLOY.md)**.
+Full production walkthrough: **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 
 ## Commands
 
@@ -116,6 +136,7 @@ Full production walkthrough: **[DEPLOY.md](DEPLOY.md)**.
 | `/tip 5 @nick` | Instant USDC tip (or reply to a message) |
 | `/market create 50 Q \| A \| B [24h]` | Create an AMM prediction market |
 | `/markets` · `/trade` · `/sell` · `/positions` | Trade shares at live odds |
+| `/oc_create` · `/oc_buy` · `/oc_sell` · `/oc_redeem` · `/oc_pos` | **On-chain** markets (OutcomeMarket.sol, ERC-1155) |
 | `/bet create Q \| A \| B [24h]` · `/bets` · `/resolve` · `/cancel` | Parimutuel polls |
 | `/ask <question>` | AI assistant |
 | `/deposit` / `/claim <tx>` / `/link` / `/confirm` | Fund your account |
@@ -182,16 +203,16 @@ worst-case payout.
 
 ## Contributing
 
-PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, style rules,
+PRs welcome — see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for setup, style rules,
 and the money-conservation requirement for any fund-touching change.
-Security issues: [SECURITY.md](SECURITY.md) (no public issues).
-Community rules: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Security issues: [docs/SECURITY.md](docs/SECURITY.md) (no public issues).
+Community rules: [docs/CODE_OF_CONDUCT.md](docs/CODE_OF_CONDUCT.md).
 Licensed under [MIT](LICENSE).
 
 ## Grant
 
 Prepared for the [Base Builder Grants](https://www.base.io/ecosystem/grants)
-program — pitch and application package in **[GRANT.md](GRANT.md)**.
+program — pitch and application package in **[docs/GRANT.md](docs/GRANT.md)**.
 
 ---
 

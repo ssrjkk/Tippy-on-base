@@ -79,11 +79,21 @@ def main() -> int:
         print(f"cannot reach RPC: {args.rpc}")
         return 1
 
+    # --- Deploy guards (a wrong RPC/USDC here is irreversible: the vault's
+    # usdc, owner and relayer are fixed by the constructor) ---
+    expected_chain = int(os.environ.get("EXPECTED_CHAIN_ID", "8453") or 8453)
+    if w3.eth.chain_id != expected_chain:
+        print(f"ERROR: RPC is on chain {w3.eth.chain_id}, expected {expected_chain} (EXPECTED_CHAIN_ID)")
+        return 1
+    usdc_addr = Web3.to_checksum_address(config.USDC_ADDRESS)
+    if not w3.eth.get_code(usdc_addr):
+        print(f"ERROR: no contract code at the USDC address {usdc_addr} — wrong network?")
+        return 1
+
     art = _compile()
     owner_acct = w3.eth.account.from_key(owner_key)
     owner = owner_acct.address
     relayer = base.hot_wallet()
-    usdc_addr = Web3.to_checksum_address(config.USDC_ADDRESS)
 
     print(f"owner   : {owner}")
     print(f"relayer : {relayer} (bot hot wallet)")
@@ -91,7 +101,13 @@ def main() -> int:
     print(f"daily   : {args.daily_usdc} USDC")
     print("deploying...")
     nonce = w3.eth.get_transaction_count(owner, "pending")
-    daily_micro = int(args.daily_usdc * 10**config.USDC_DECIMALS)
+    from decimal import ROUND_CEILING, Decimal
+
+    daily_micro = int(
+        (Decimal(str(args.daily_usdc)) * Decimal(10**config.USDC_DECIMALS)).to_integral_value(
+            rounding=ROUND_CEILING
+        )
+    )
     contract = w3.eth.contract(abi=VAULT_ABI, bytecode=art["bin"])
     tx = contract.constructor(usdc_addr, owner, relayer, daily_micro).build_transaction(
         {"from": owner, "nonce": nonce, "chainId": w3.eth.chain_id, **_fee_params(w3)}
@@ -106,15 +122,9 @@ def main() -> int:
     vault = rec.contractAddress
     print(f"vault deployed: {vault}")
 
-    # relayer cap: owner may also raise/lower it later via setDailyLimit
-    v = w3.eth.contract(address=vault, abi=VAULT_ABI)
-    nonce = w3.eth.get_transaction_count(owner, "pending")
-    tx = v.functions.setDailyLimit(daily_micro).build_transaction(
-        {"from": owner, "nonce": nonce, "chainId": w3.eth.chain_id, **_fee_params(w3)}
-    )
-    signed = owner_acct.sign_transaction(tx)
-    w3.eth.wait_for_transaction_receipt(w3.eth.send_raw_transaction(signed.raw_transaction))
-
+    # NOTE: the daily limit is already set by the constructor — no follow-up
+    # setDailyLimit tx needed. The owner can raise/lower it later via
+    # setDailyLimit at any time.
     env = ROOT / ".env"
     lines = env.read_text(encoding="utf-8") if env.exists() else ""
     if "VAULT_ADDRESS=" in lines:
