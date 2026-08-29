@@ -1,6 +1,6 @@
 # BACKLOG — незакрытые моменты и улучшения
 
-Обновлён: 2026-08-29. Состояние кодовой базы: 669/669 pytest, ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
+Обновлён: 2026-08-29. Состояние кодовой базы: 665/665 pytest, ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
 
 ## 🔴 P0 — перед включением ончейн-слоя в проде
 
@@ -46,6 +46,7 @@
 | # | Задача | Статус |
 |---|---|---|
 | B3 | Тесты `/api/mini/*` (9 шт: state/auth/tip/trade/create/lang) | ✅ `tests/test_mini_api.py` |
+| B4 | Тесты `_buy_core`/`_sell_core` (7 шт, моки цепочки) | ✅ `tests/test_onchain_handlers.py` |
 | C1 | N+1 в `/api/markets` → batch `bulk_market_views()` | ✅ |
 | C2 | Параллельные RPC `totalSupply` через `asyncio.gather` | ✅ |
 | C4 | `log.debug/warning` в 7 критичных silent-`except` | ✅ server/base/tips |
