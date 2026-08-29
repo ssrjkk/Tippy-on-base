@@ -200,6 +200,10 @@ async def cmd_oc_create(message: types.Message) -> None:
     if subsidy > common._to_micro(common.config.MARKET_MAX_SUBSIDY_USDC):
         await message.answer(i18n.t(lang, 'market_max_bank', n=f'{common.config.MARKET_MAX_SUBSIDY_USDC:.0f}'))
         return
+    daily_cap = common._to_micro(common.config.MARKET_SUBSIDY_DAILY_MAX_USDC)
+    if not await common.ledger.try_book_subsidy(subsidy, daily_cap):
+        await message.answer(i18n.t(lang, 'oc_subsidy_cap', amount=f'{common.config.MARKET_SUBSIDY_DAILY_MAX_USDC:.0f}'))
+        return
     question = head[1].strip()
     options = segs[1:][:MAX_ONCHAIN_OUTCOMES]
     close_at = int(time.time()) + 7 * 86400
