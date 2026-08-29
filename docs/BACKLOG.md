@@ -9,17 +9,17 @@ ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОС
 |---|---|---|---|
 | 1 | Деплой OutcomeMarket с **multisig-владельцем** (`--owner <Safe>`) | owner может ownerResolve любой рынок — с hot-ключом это единственный red flag | S |
 | 2 | Smoke на **Base Sepolia**: деплой + полный цикл /oc_create→buy→resolve→redeem | живой тест против настоящего USDC (FiatTokenV2 домен не был исполнен на реальной сети) | M |
-| 3 | Пуш `dcef58c` + зелёный прогон CI на GitHub | CI не видел новый коммит | S |
+| ~~3~~ | ~~Пуш `dcef58c` + зелёный прогон CI на GitHub~~ | ✅ запушено (`f6f51e7`, `088fa6b`) | ~~S~~ |
 
 ## 🟠 P1 — деньги: закрываемые кодом (можно делать сейчас)
 
 | # | Задача | Детали | Оценка |
 |---|---|---|---|
-| 4 | **Атомарный gas-бюджет**: `UPDATE gas_drips SET count = count+1 WHERE count < max RETURNING count` | сейчас проверка-и-инкремент не атомарны между процессами — два бота могут перелимитить на 1–2 дрипа | S |
-| 5 | **x402 авто-ретрай 502-кейса**: cron-джоб, который по 'auth:'-резервам с обновлённым ключом (finalize вернул True, но кредит упал) дозачитывает баланс | уже есть reconcile для несеттлнутых; 502-вариант (settlement tx известен, кредит упал) закрывается повторным finalize за один вызов | S |
+| ~~4~~ | ~~**Атомарный gas-бюджет**~~ | ✅ `try_book_gas_drip()` — атомарный INSERT…RETURNING | ~~S~~ |
+| ~~5~~ | ~~**x402 авто-ретрай 502-кейса**~~ | ✅ `reconcile_stale_x402()` + watcher в `main.py` | ~~S~~ |
 | 6 | **Батчинг redeem/cancelExpired** в OutcomeMarket: `redeemMany(uint256[], uint8[])` | экономия газа при массовых выплатах; менять контракт ДО деплоя | M |
 | 7 | **Spend Permissions**: делегирование бюджета агенту через Smart Wallet (coinbase/spend-permissions) | агент торгует в лимитах пользователя — ключевой agentic-commerce примитив Coinbase | L |
-| 8 | **Лимит subsidy на сутки** для /oc_create (аналог gas-бюджета) | защита казны при спаме создания рынков | S |
+| ~~8~~ | ~~**Лимит subsidy на сутки** для /oc_create~~ | ✅ `try_book_subsidy()` + `market_subsidies` table + wired into `/oc_create` | ~~S~~ |
 
 ## 🟡 P2 — дистрибуция и UX (стратегия Coinbase)
 
