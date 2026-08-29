@@ -10,6 +10,7 @@ objects directly — so a single patch here propagates everywhere.
 """
 
 import logging
+import time
 
 from eth_account.messages import encode_defunct
 from eth_typing import ChecksumAddress
@@ -65,24 +66,59 @@ HOT_WALLET = Web3.to_checksum_address(w3.eth.account.from_key(config.HOT_WALLET_
 USDC = Web3.to_checksum_address(config.USDC_ADDRESS)
 usdc = w3.eth.contract(address=USDC, abi=config.ERC20_ABI)
 
+# Circuit breaker: if all RPC providers fail 5+ times within 60s, pause for 30s.
+_CB_FAIL_THRESHOLD = 5
+_CB_WINDOW_SECONDS = 60
+_CB_OPEN_SECONDS = 30
+_cb_fail_times: list[float] = []
+_cb_open_until: float = 0.0
+
+
+def _cb_record_failure() -> None:
+    now = time.monotonic()
+    _cb_fail_times.append(now)
+    # Prune old entries outside the window
+    cutoff = now - _CB_WINDOW_SECONDS
+    while _cb_fail_times and _cb_fail_times[0] < cutoff:
+        _cb_fail_times.pop(0)
+    if len(_cb_fail_times) >= _CB_FAIL_THRESHOLD and _cb_open_until <= now:
+        _cb_open_until = now + _CB_OPEN_SECONDS
+        log.warning("RPC circuit breaker OPEN for %ds (%d failures in %ds)",
+                    _CB_OPEN_SECONDS, len(_cb_fail_times), _CB_WINDOW_SECONDS)
+
+
+def _cb_check() -> None:
+    now = time.monotonic()
+    if _cb_open_until > now:
+        raise RuntimeError(f"RPC circuit breaker open — retry in {int(_cb_open_until - now)}s")
+
+
+def _cb_reset() -> None:
+    _cb_fail_times.clear()
+
 
 def _rpc_call(fn, *args, token_address: str | None = None, abi=None):
     """Try `fn(contract)` across all RPC providers before giving up.
 
     `fn` receives an ERC-20 handle bound to each provider (USDC by default).
     Returns the result on success; raises the last exception if all fail.
+    Includes circuit breaker: pauses if all providers fail repeatedly.
     """
+    _cb_check()
     last_err = None
     for provider in _w3_providers:
         try:
             tok = Web3.to_checksum_address(token_address) if token_address else USDC
             contract = provider.eth.contract(address=tok, abi=abi or config.ERC20_ABI)
-            return fn(contract, *args)
+            result = fn(contract, *args)
+            _cb_reset()
+            return result
         except Exception as e:
             last_err = e
             url = getattr(getattr(provider, "provider", None), "endpoint_uri", "?")
             log.debug("RPC %s failed: %s", url, e)
             continue
+    _cb_record_failure()
     raise RuntimeError(f"all RPC providers failed: {last_err}")
 
 
@@ -91,18 +127,23 @@ def _contract_read(contract_address: str, abi: list, fn_name: str, *args):
 
     Same failover discipline as _rpc_call, but for arbitrary contracts
     (feeds, resolvers, routers, ...) so a throttling endpoint can't break UX.
+    Includes circuit breaker: pauses if all providers fail repeatedly.
     """
+    _cb_check()
     last_err = None
     cs = Web3.to_checksum_address(contract_address)
     for provider in _w3_providers:
         try:
             contract = provider.eth.contract(address=cs, abi=abi)
-            return getattr(contract.functions, fn_name)(*args).call()
+            result = getattr(contract.functions, fn_name)(*args).call()
+            _cb_reset()
+            return result
         except Exception as e:
             last_err = e
             url = getattr(getattr(provider, "provider", None), "endpoint_uri", "?")
             log.debug("RPC %s failed (%s): %s", url, fn_name, e)
             continue
+    _cb_record_failure()
     raise RuntimeError(f"all RPC providers failed for {fn_name}: {last_err}")
 
 

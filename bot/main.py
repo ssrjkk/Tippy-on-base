@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import signal
 import time
 
 from aiogram import Bot, Dispatcher, types
@@ -172,6 +173,14 @@ async def main() -> None:
             await asyncio.sleep(config.POLL_SECONDS * 8)
 
     tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot)), asyncio.create_task(onchain_watcher(bot)), asyncio.create_task(x402_reconcile_watcher())]
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown(loop, tasks)))
+        except NotImplementedError:
+            pass  # Windows doesn't support add_signal_handler
+
     try:
         while True:
             try:
@@ -181,13 +190,23 @@ async def main() -> None:
                     await dp.start_polling(bot, skip_updates=True)
                 break
             except TelegramNetworkError as e:
-                # Transient network outage at startup: retry instead of dying
-                # so a brief connectivity blip does not kill the whole bot.
                 log.warning('telegram unreachable, retrying in 15s: %s', e)
                 await asyncio.sleep(15)
     finally:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await asyncio.to_thread(ledger.close)
+        except Exception:
+            pass
+        log.info('bot shut down gracefully')
+
+
+async def _shutdown(loop, tasks):
+    """Signal handler: cancel all tasks and stop the loop."""
+    log.info('shutdown signal received, cancelling tasks...')
+    for task in tasks:
+        task.cancel()
 if __name__ == '__main__':
     asyncio.run(main())

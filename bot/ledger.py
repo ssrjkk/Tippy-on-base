@@ -447,6 +447,11 @@ class Ledger:
         """Reconnect if the underlying connection is dead/broken."""
         self._conn._ensure()
 
+    def ping(self) -> None:
+        """Lightweight DB liveness check (SELECT 1). Raises on failure."""
+        with self._lock:
+            self._conn.execute("SELECT 1")
+
     @staticmethod
     def _run_alembic(database: str) -> None:
         """Run ``alembic upgrade head`` to apply tracked schema migrations.

@@ -199,7 +199,6 @@ async def reconcile_stale_x402(older_than_seconds: int = 600) -> int:
 
     Returns the number of finalized rows."""
     stale = await ledger.x402_auth_reservations(older_than_seconds)
-    print('DEBUG reconcile: ledger=', type(ledger).__module__, 'stale=', len(stale))
     finalized = 0
     for row in stale:
         payer = row['sender']

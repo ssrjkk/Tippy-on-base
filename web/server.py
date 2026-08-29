@@ -106,6 +106,7 @@ async def rate_limit(request: Request, call_next):
     # iframe and must stay framable. These two are safe everywhere.
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
     response.headers.setdefault('Referrer-Policy', 'no-referrer')
+    response.headers.setdefault('Cache-Control', 'no-store, no-cache, must-revalidate')
     response.headers.setdefault('Content-Security-Policy',
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'self' https://web.telegram.org")
     try:
@@ -371,15 +372,27 @@ def api_info() -> dict:
 
 @app.get('/api/health', tags=['stats'])
 async def api_health() -> dict:
-    """Liveness + deposit-scanner health. If the scanner falls behind the chain
-    head, deposits would be picked up late — `deposit_lag` makes that visible."""
+    """Liveness + deposit-scanner health + DB connectivity."""
     head = None
     try:
         head = base.w3.eth.block_number
     except Exception:
         pass
     last = await ledger.last_block()
-    return {'status': 'ok', 'hot_wallet': str(hot_wallet()), 'chain_head': head, 'last_scanned_block': last, 'deposit_lag': head - last if head is not None else None}
+    db_ok = True
+    try:
+        await ledger.ping()
+    except Exception:
+        db_ok = False
+    status = 'ok' if db_ok else 'degraded'
+    return {
+        'status': status,
+        'hot_wallet': str(hot_wallet()),
+        'chain_head': head,
+        'last_scanned_block': last,
+        'deposit_lag': head - last if head is not None else None,
+        'db': 'ok' if db_ok else 'down',
+    }
 
 @app.post('/api/x402/tip', tags=['x402'])
 async def api_x402_tip(request: Request) -> Response:
