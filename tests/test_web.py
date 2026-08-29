@@ -696,3 +696,52 @@ def test_css_has_new_ui_styles(client):
         ".empty",
     ):
         assert needle in css
+
+
+def test_miniapp_meta_tags_render_public_url(client, monkeypatch):
+    """/app must embed fc:miniapp meta with the REAL public URL — the Base
+    App crawls these tags to render the launch card."""
+    from web import mini as mini_mod
+
+    monkeypatch.setattr(mini_mod, "public_base_url", lambda: "https://tippy.example.com")
+    r = client.get('/app')
+    assert r.status_code == 200
+    assert 'fc:miniapp' in r.text
+    assert 'https://tippy.example.com/app' in r.text
+    assert '__PUBLIC_URL__' not in r.text, "placeholder must never leak to users"
+
+
+def test_farcaster_manifest_404_when_not_configured(client, monkeypatch):
+    from pathlib import Path
+
+    from web import server as web_server
+
+    monkeypatch.setattr(web_server, "ROOT", Path(__file__).resolve().parent.parent)
+    manifest = Path(__file__).resolve().parent.parent / 'deploy' / 'farcaster_manifest.json'
+    exists = manifest.exists()
+    if exists:
+        pytest.skip('operator manifest present on this machine')
+    r = client.get('/.well-known/farcaster.json')
+    assert r.status_code == 404
+
+
+def test_farcaster_manifest_served_when_configured(client):
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    manifest = root / 'deploy' / 'farcaster_manifest.json'
+    sample = '{"accountAssociation": {"header": "h", "payload": "p", "signature": "s"}}'
+    manifest.write_text(sample, encoding='utf-8')
+    try:
+        r = client.get('/.well-known/farcaster.json')
+        assert r.status_code == 200
+        assert 'accountAssociation' in r.text
+    finally:
+        manifest.unlink()
+
+
+def test_miniapp_webhook_always_200(client):
+    r = client.post('/api/webhook-miniaction', json={'event': 'notification_clicked'})
+    assert r.status_code == 200
+    r = client.post('/api/webhook-miniaction', content=b'not json',
+                    headers={'content-type': 'application/json'})
+    assert r.status_code == 200  # never make the platform retry

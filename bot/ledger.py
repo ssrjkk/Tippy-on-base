@@ -399,6 +399,10 @@ CREATE TABLE IF NOT EXISTS treasury_votes (
     created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
     UNIQUE (proposal_id, tg_id)
 );
+CREATE TABLE IF NOT EXISTS gas_drips (
+    day  BIGINT PRIMARY KEY,              -- UTC day (unix // 86400)
+    count BIGINT NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS onchain_markets (
     id         BIGINT PRIMARY KEY,               -- on-chain OutcomeMarket marketId
     creator    BIGINT NOT NULL,
@@ -647,6 +651,147 @@ class Ledger:
             )
             self._conn.commit()
             return True
+
+    def reserve_x402_auth(self, nonce: str, tg_id: int, amount_micro: int, sender: str) -> bool:
+        """Reserve an EIP-3009 authorization nonce (scheme "exact"): the row
+        key is `auth:<nonce>` in x402_payments. True = reserved (this caller
+        may settle); False = already used (replay). The balance credit only
+        lands in finalize_x402_auth, after the on-chain settlement succeeds."""
+        if not nonce:
+            return False
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO x402_payments (tx_hash, recipient_tg, amount_micro, sender) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (tx_hash) DO NOTHING",
+                (nonce, tg_id, amount_micro, sender),
+            )
+            committed = cur.rowcount > 0
+            self._conn.commit()
+            return committed
+
+    def release_x402_auth(self, nonce: str) -> None:
+        """Free a reserved nonce after a failed settlement, so the payer can
+        re-sign (the on-chain nonce was never burned)."""
+        if not nonce:
+            return
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM x402_payments WHERE tx_hash = %s", (nonce,)
+            )
+            self._conn.commit()
+
+    def gas_drip_count_today(self) -> int:
+        """How many gas drips the bot has performed today (UTC). DB-backed so
+        the budget survives bot restarts."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT count FROM gas_drips WHERE day = %s",
+                (int(time.time()) // 86400,),
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def increment_gas_drip(self) -> None:
+        with self._lock:
+            day = int(time.time()) // 86400
+            self._conn.execute(
+                "INSERT INTO gas_drips (day, count) VALUES (%s, 1) "
+                "ON CONFLICT (day) DO UPDATE SET count = gas_drips.count + 1",
+                (day,),
+            )
+            self._conn.commit()
+
+    def x402_auth_reservations(self, older_than_seconds: int) -> list[dict]:
+        """Reserved EIP-3009 auth rows ('auth:<nonce>') older than the cutoff:
+        the reconciliation sweep finalizes or releases them."""
+        with self._lock:
+            # The cutoff is computed by the DATABASE clock: comparing the
+            # DB-written created_at against the app's time.time() breaks on
+            # even a 1-second clock skew between the two.
+            return self._conn.execute(
+                "SELECT tx_hash, recipient_tg, amount_micro, sender, created_at "
+                "FROM x402_payments WHERE tx_hash LIKE 'auth:%%' "
+                "AND created_at + %s <= EXTRACT(EPOCH FROM now())::bigint "
+                "ORDER BY created_at",
+                (older_than_seconds,),
+            ).fetchall()
+
+    def finalize_x402_credit(
+        self, nonce: str, settlement_tx: str, recipient_tg: int,
+        amount_micro: int, sender: str,
+    ) -> bool:
+        """Atomically convert a reserved EIP-3009 authorization into a settled,
+        credited x402 tip: swap the row key to the settlement tx, credit the
+        recipient, log it. False = the reservation is gone (replay/race) —
+        the caller must NOT credit again."""
+        if not nonce or not settlement_tx:
+            return False
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE x402_payments SET tx_hash = %s, recipient_tg = %s, "
+                "amount_micro = %s, sender = %s WHERE tx_hash = %s",
+                (settlement_tx, recipient_tg, amount_micro, sender, nonce),
+            )
+            if cur.rowcount == 0:
+                return False
+            self.ensure_user(recipient_tg, None)
+            self._conn.execute(
+                "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                (amount_micro, recipient_tg),
+            )
+            self._conn.execute(
+                "INSERT INTO tx_log (kind, tg_id, counterparty, amount, tx_hash, note) "
+                "VALUES ('x402', %s, %s, %s, %s, 'x402 agent payment (EIP-3009)')",
+                (recipient_tg, sender, amount_micro, settlement_tx),
+            )
+            self._conn.commit()
+            return True
+
+    def finalize_x402_paywall(
+        self, nonce: str, settlement_tx: str, owner_tg: int, item_id: int,
+        amount_micro: int, sender: str,
+    ) -> bool:
+        """Atomically convert a reserved authorization into a settled paywall
+        purchase: swap the row key to the settlement tx, record the purchase,
+        credit the item owner. False = reservation gone (replay/race)."""
+        if not nonce or not settlement_tx:
+            return False
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE x402_payments SET tx_hash = %s, recipient_tg = %s, "
+                "amount_micro = %s, sender = %s WHERE tx_hash = %s",
+                (settlement_tx, owner_tg, amount_micro, sender, nonce),
+            )
+            if cur.rowcount == 0:
+                return False
+            self._conn.execute(
+                "INSERT INTO paywall_purchases (item_id, buyer_tg, tx_hash, amount_micro) "
+                "VALUES (%s, NULL, %s, %s)",
+                (item_id, settlement_tx, amount_micro),
+            )
+            self._conn.execute(
+                "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                (amount_micro, owner_tg),
+            )
+            self._conn.execute(
+                "INSERT INTO tx_log (kind, tg_id, counterparty, amount, tx_hash, note) "
+                "VALUES ('paywall_earn', %s, %s, %s, %s, 'x402 sale (EIP-3009)')",
+                (owner_tg, str(item_id), amount_micro, settlement_tx),
+            )
+            self._conn.commit()
+            return True
+
+    def finalize_x402_auth(self, nonce: str, settlement_tx: str) -> bool:
+        """Swap the reserved auth-nonce key for the real settlement tx hash
+        once the on-chain transferWithAuthorization has confirmed."""
+        if not nonce or not settlement_tx:
+            return False
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE x402_payments SET tx_hash = %s WHERE tx_hash = %s",
+                (settlement_tx, nonce),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
 
     def x402_paid(self, tx_hash: str) -> bool:
         with self._lock:
@@ -2251,6 +2396,18 @@ class Ledger:
                 "SELECT address FROM user_wallets WHERE tg_id = %s", (tg_id,)
             ).fetchone()
         return row["address"] if row else None
+
+    def tg_id_of_wallet_address(self, address: str) -> int | None:
+        """The tg_id owning a CUSTODIAL in-bot wallet with this address
+        (user_wallets). Complements tg_id_of_address (external linked
+        wallets). Basename tipping resolves through both."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT tg_id FROM user_wallets WHERE LOWER(address) = LOWER(%s) "
+                "AND active = true LIMIT 1",
+                (address,),
+            ).fetchone()
+        return int(row["tg_id"]) if row else None
 
     def wallet_address_exists(self, address: str) -> bool:
         """True if another user already attached this wallet address."""

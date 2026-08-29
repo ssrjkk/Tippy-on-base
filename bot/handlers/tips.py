@@ -4,7 +4,7 @@ from decimal import Decimal
 from aiogram import types
 from aiogram.filters import Command
 
-from bot import i18n
+from bot import i18n, tip_targets
 
 from . import _common as common
 
@@ -77,17 +77,28 @@ async def cmd_tip(message: types.Message) -> None:
         to_name = message.reply_to_message.from_user.username
     elif rest:
         target = rest[0]
-        if not target.startswith('@'):
-            await message.answer(i18n.t(lang, 'tip_need_recipient'))
+        # Basenames (`name.base.eth`) resolve on-chain to an address, then to
+        # the Tippy user that owns the address (linked or custodial wallet).
+        bn_id, bn_err = await tip_targets.resolve_tip_target(target)
+        if bn_err == 'basename_unknown':
+            await message.answer(i18n.t(lang, 'tip_basename_unknown',
+                                        name=target.lstrip('@').lower()))
             return
-        username = target[1:]
-        to_id = await common.ledger.find_by_username(username)
-        if to_id is None:
-            to_id = await _resolve_in_chat(message, username)
-        if to_id is None:
-            await message.answer(i18n.t(lang, 'tip_user_not_found', user=username))
-            return
-        to_name = username
+        if bn_id is not None:
+            to_id = bn_id
+            to_name = target.lstrip('@').lower()
+        else:
+            if not target.startswith('@'):
+                await message.answer(i18n.t(lang, 'tip_need_recipient'))
+                return
+            username = target[1:]
+            to_id = await common.ledger.find_by_username(username)
+            if to_id is None:
+                to_id = await _resolve_in_chat(message, username)
+            if to_id is None:
+                await message.answer(i18n.t(lang, 'tip_user_not_found', user=username))
+                return
+            to_name = username
     else:
         await message.answer(i18n.t(lang, 'tip_who'))
         return

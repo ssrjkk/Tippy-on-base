@@ -45,7 +45,7 @@ accounting backed by public proof-of-reserves.
 - Winners split the whole pot proportionally (2% fee on net profit to the creator)
 - Inline cards, quick-amount buttons, two-tap resolution, cancel/refund paths
 
-### ⛓️ On-chain markets — Polymarket on Base (`/oc*`)
+### 🎯 Cally — Polymarket on Base (`/oc*`)
 - `/oc_create 50 Who wins? | Alice | Bob 7d` — creates a market in the
   **OutcomeMarket.sol** contract: the subsidy is locked on-chain, shares are
   real **ERC-1155 tokens**, every trade is a USDC transfer anyone can verify

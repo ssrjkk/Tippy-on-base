@@ -34,7 +34,7 @@ TABLES = [
     "user_settings", "user_wallets", "x402_payments", "paywall_items", "paywall_purchases",
     "paywall_channels", "paywall_subscriptions", "markets", "market_shares",
     "suspicious_activity", "community_treasuries", "treasury_transactions",
-    "treasury_proposals", "treasury_votes", "onchain_markets", "onchain_trades",
+    "treasury_proposals", "treasury_votes", "onchain_markets", "onchain_trades", "gas_drips",
 ]
 
 
@@ -96,6 +96,10 @@ def ledger(monkeypatch):
     for _mod in (web.mini, web.frame, web.x402):
         if hasattr(_mod, "ledger"):
             monkeypatch.setattr(_mod, "ledger", async_fresh)
+    # tip_targets holds its own module reference to the ledger proxy —
+    # rebind it too, or basename resolution would hit the DEV database.
+    import bot.tip_targets
+    monkeypatch.setattr(bot.tip_targets, "ledger", async_fresh)
     handlers._common._money_cmd_last.clear()
     web.server._rl_state.clear()
     yield fresh

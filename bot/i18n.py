@@ -568,6 +568,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Max tip per send: <b>{n} USDC</b>.",
         "zh": "单次最多：<b>{n} USDC</b>。",
     },
+    "tip_basename_unknown": {
+        "ru": "Имя <b>{name}</b> не привязано ни к одному пользователю Tippy. Попроси владельца привязать кошелёк: /link или /wallet",
+        "en": "<b>{name}</b> is not linked to any Tippy user. Ask the owner to link their wallet: /link or /wallet",
+        "zh": "<b>{name}</b> 未绑定任何 Tippy 用户。请让对方绑定钱包：/link 或 /wallet",
+    },
     "tip_need_recipient": {
         "ru": "Укажи получателя: /tip 5 @username",
         "en": "Specify recipient: /tip 5 @username",
@@ -1908,14 +1913,14 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     # ----- on-chain markets (/oc*) -----
     "oc_disabled": {
-        "ru": "⛓️ Ончейн-рынки выключены: контракт OutcomeMarket не задеплоен (OUTCOME_MARKET_ADDRESS не настроен).",
-        "en": "⛓️ On-chain markets are off: the OutcomeMarket contract is not deployed (OUTCOME_MARKET_ADDRESS not set).",
-        "zh": "⛓️ 链上市场未启用：OutcomeMarket 合约未部署（未配置 OUTCOME_MARKET_ADDRESS）。",
+        "ru": "🎯 Cally выключен: контракт ончейн-рынков не задеплоен (OUTCOME_MARKET_ADDRESS не настроен).",
+        "en": "🎯 Cally is off: the on-chain markets contract is not deployed (OUTCOME_MARKET_ADDRESS not set).",
+        "zh": "🎯 Cally 未启用：链上市场合约未部署（未配置 OUTCOME_MARKET_ADDRESS）。",
     },
     "oc_list_header": {
-        "ru": "⛓️ <b>Ончейн-рынки (Base)</b> — доли ERC-1155, расчёты в USDC на-цепи:",
-        "en": "⛓️ <b>On-chain markets (Base)</b> — ERC-1155 shares, USDC settled on-chain:",
-        "zh": "⛓️ <b>链上市场（Base）</b>— ERC-1155 份额，USDC 链上结算：",
+        "ru": "🎯 <b>Cally</b> — ончейн-рынки на Base: доли ERC-1155, расчёты в USDC на-цепи:",
+        "en": "🎯 <b>Cally</b> — on-chain markets on Base: ERC-1155 shares, USDC settled on-chain:",
+        "zh": "🎯 <b>Cally</b> — Base 链上市场：ERC-1155 份额，USDC 链上结算：",
     },
     "oc_list_empty": {
         "ru": "Пока пусто. Создай первый: /oc_create 50 Вопрос | Вариант 1 | Вариант 2 7d",
@@ -1978,19 +1983,19 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "你的个人钱包 <code>{addr}</code> 仅有 {have} USDC。请从内部余额充值：/withdraw <code>{addr}</code> &lt;金额&gt;",
     },
     "oc_created": {
-        "ru": "⛓️ Рынок <b>#{id}</b> создан НА-ЦЕПИ: <b>{q}</b>\nСубсидия заблокирована в контракте, кошелёк: <code>{addr}</code>\nТорговля: /oc_buy {id} &lt;вариант&gt; &lt;сумма&gt;",
-        "en": "⛓️ Market <b>#{id}</b> created ON-CHAIN: <b>{q}</b>\nSubsidy locked in the contract, wallet: <code>{addr}</code>\nTrade: /oc_buy {id} &lt;option&gt; &lt;amount&gt;",
-        "zh": "⛓️ 市场 <b>#{id}</b> 已在链上创建：<b>{q}</b>\n补贴已锁定在合约中，钱包：<code>{addr}</code>\n交易：/oc_buy {id} &lt;选项&gt; &lt;金额&gt;",
+        "ru": "🎯 Рынок <b>#{id}</b> создан в Cally НА-ЦЕПИ: <b>{q}</b>\nСубсидия заблокирована в контракте, кошелёк: <code>{addr}</code>\nТорговля: /oc_buy {id} &lt;вариант&gt; &lt;сумма&gt;",
+        "en": "🎯 Market <b>#{id}</b> created on Cally ON-CHAIN: <b>{q}</b>\nSubsidy locked in the contract, wallet: <code>{addr}</code>\nTrade: /oc_buy {id} &lt;option&gt; &lt;amount&gt;",
+        "zh": "🎯 市场 <b>#{id}</b> 已在 Cally 链上创建：<b>{q}</b>\n补贴已锁定在合约中，钱包：<code>{addr}</code>\n交易：/oc_buy {id} &lt;选项&gt; &lt;金额&gt;",
     },
     "oc_bought": {
-        "ru": "⛓️ Куплено: <b>{shares}</b> долей «{label}» за {cost} USDC\n🔗 {url}",
-        "en": "⛓️ Bought: <b>{shares}</b> shares of “{label}” for {cost} USDC\n🔗 {url}",
-        "zh": "⛓️ 已买入：<b>{shares}</b> 份「{label}」，花费 {cost} USDC\n🔗 {url}",
+        "ru": "🎯 Куплено на Cally: <b>{shares}</b> долей «{label}» за {cost} USDC\n🔗 {url}",
+        "en": "🎯 Bought on Cally: <b>{shares}</b> shares of “{label}” for {cost} USDC\n🔗 {url}",
+        "zh": "🎯 已在 Cally 买入：<b>{shares}</b> 份「{label}」，花费 {cost} USDC\n🔗 {url}",
     },
     "oc_sold": {
-        "ru": "⛓️ Продано: <b>{shares}</b> долей «{label}» за {value} USDC\n🔗 {url}",
-        "en": "⛓️ Sold: <b>{shares}</b> shares of “{label}” for {value} USDC\n🔗 {url}",
-        "zh": "⛓️ 已卖出：<b>{shares}</b> 份「{label}」，获得 {value} USDC\n🔗 {url}",
+        "ru": "🎯 Продано на Cally: <b>{shares}</b> долей «{label}» за {value} USDC\n🔗 {url}",
+        "en": "🎯 Sold on Cally: <b>{shares}</b> shares of “{label}” for {value} USDC\n🔗 {url}",
+        "zh": "🎯 已在 Cally 卖出：<b>{shares}</b> 份「{label}」，获得 {value} USDC\n🔗 {url}",
     },
     "oc_redeemed": {
         "ru": "🏆 Выигрыш забран с контракта: <b>{amount} USDC</b> → <code>{addr}</code>",
@@ -2003,9 +2008,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "你的钱包没有该选项的份额。持仓：/oc_pos",
     },
     "oc_pos_header": {
-        "ru": "⛓️ Доли личного кошелька <code>{addr}</code>:",
-        "en": "⛓️ Shares of personal wallet <code>{addr}</code>:",
-        "zh": "⛓️ 个人钱包 <code>{addr}</code> 的份额：",
+        "ru": "🎯 Доли Cally личного кошелька <code>{addr}</code>:",
+        "en": "🎯 Cally shares of personal wallet <code>{addr}</code>:",
+        "zh": "🎯 个人钱包 <code>{addr}</code> 的 Cally 份额：",
     },
     "oc_pos_empty": {
         "ru": "Долей пока нет. Купи: /oc_buy &lt;id&gt; &lt;вариант&gt; &lt;сумма&gt;",
@@ -2038,8 +2043,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "zh": "结果 <b>{idx}</b> 已在链上敲定。赢家可按 $1/份额 领取：/oc_redeem\n🔗 {url}",
     },
     "oc_pick": {
-        "ru": "⛓️ Рынок <b>#{id}</b> закрылся: <b>{q}</b>\n\nВыбери победивший исход — я зафиксирую его в контракте на Base.",
-        "en": "⛓️ Market <b>#{id}</b> closed: <b>{q}</b>\n\nPick the winning outcome — I will finalize it in the contract on Base.",
+        "ru": "🎯 Рынок Cally <b>#{id}</b> закрылся: <b>{q}</b>\n\nВыбери победивший исход — я зафиксирую его в контракте на Base.",
+        "en": "🎯 Cally market <b>#{id}</b> closed: <b>{q}</b>\n\nPick the winning outcome — I will finalize it in the contract on Base.",
         "zh": "⛓️ 市场 <b>#{id}</b> 已截止：<b>{q}</b>\n\n请选择获胜结果——我将在 Base 合约中敲定。",
     },
     "oc_won_dm": {

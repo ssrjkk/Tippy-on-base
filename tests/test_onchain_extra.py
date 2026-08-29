@@ -724,25 +724,29 @@ def test_aerodrome_quote_failure_returns_none(monkeypatch):
 # ------------------------------------------------------ basename availability
 
 def test_basename_available_free_and_taken(monkeypatch):
+    """Availability is RESOLVER-based: a name is free when the L2 resolver
+    holds no addr record for it. Registry.owner is NOT a valid check — under
+    .base.eth it returns the L2Registrar for every subnode, which made the
+    old implementation report every name as taken."""
     fake = _fake_w3(monkeypatch)
-    owners = {}
+    records = {}  # resolver node -> addr (0x0... = no record)
 
-    class Registry:
+    class Resolver:
         class functions:
             @staticmethod
-            def owner(node):
+            def addr(node):
                 class C:
                     @staticmethod
                     def call():
-                        return owners.get(node.hex(), "0x" + "00" * 20)
+                        return records.get(node.hex(), "0x" + "00" * 20)
 
                 return C()
 
-    _bind_contract(fake, Registry())
+    _bind_contract(fake, Resolver())
     free = base.namehash("free.base.eth")
     taken = base.namehash("jesse.base.eth")
-    owners[free.hex()] = "0x" + "00" * 20
-    owners[taken.hex()] = Web3.to_checksum_address("0x" + "77" * 20)
+    records[taken.hex()] = Web3.to_checksum_address("0x" + "77" * 20)
+    # unregistered: no record -> zero addr -> available
     assert base.basename_available_sync("free.base.eth") is True
     assert base.basename_available_sync("jesse.base.eth") is False
 

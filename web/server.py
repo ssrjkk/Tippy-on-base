@@ -3,6 +3,7 @@
 Run:  python -m web.server
 """
 import json
+import logging
 import os
 import sys
 import time
@@ -36,6 +37,7 @@ _ENABLE_OPENAPI: bool = os.environ.get('ENABLE_OPENAPI', '0') == '1'
 from bot.config import validate as _validate_config
 
 _validate_config()
+log = logging.getLogger("web.server")
 app = FastAPI(title='Tippy API', version='1.1.0',
     description='Public API of **Tippy** — a community economy in USDC on Base.\n\nFeatures: instant tips, Polymarket-style prediction markets (LMSR AMM), paywalled content, and **x402 HTTP payments for AI agents** (`POST /api/x402/tip`, `POST /api/x402/paywall`).\n\n* All amounts are USDC; `_usdc` fields are human-readable floats, `_micro` fields are integer micro-units (1e6 = 1 USDC).\n* `/api/solvency` is the Proof of Reserves: bot liabilities vs on-chain USDC (TipBotVault contract when deployed, else hot wallet).\n* Rate-limited per IP to protect the RPC quota.',
     contact={'name': 'ssrjkk', 'url': 'https://github.com/ssrjkk/Tippy-on-base'},
@@ -190,7 +192,20 @@ async def api_prediction(market_id: int) -> dict:
 
 @app.get('/api/leaderboard', tags=['users'])
 async def api_leaderboard() -> list[dict]:
-    return [{**r, 'total_usdc': _usdc(r['total_micro'])} for r in await ledger.leaderboard(10)]
+    from bot import tip_targets
+    out = []
+    for r in await ledger.leaderboard(10):
+        row = {**r, 'total_usdc': _usdc(r['total_micro'])}
+        if not row.get('username'):
+            # No Telegram username — surface the user's primary Basename.
+            try:
+                basename = await tip_targets.display_name_for(int(r['tg_id']))
+            except Exception:
+                basename = None
+            if basename:
+                row['username'] = basename
+        out.append(row)
+    return out
 
 @app.get('/api/user/{tg_id}', tags=['users'])
 async def api_user(tg_id: int, request: Request) -> dict:
@@ -454,7 +469,44 @@ async def me_page() -> FileResponse:
 
 @app.get('/app', include_in_schema=False)
 async def mini_app():
-    return FileResponse(STATIC / 'app.html')
+    """The Mini App page, with Base-App embed meta tags rendered against the
+    public URL (the Base App crawls these tags to render the launch card)."""
+    from web.mini import public_base_url
+    html = (STATIC / 'app.html').read_text(encoding='utf-8')
+    base_url = public_base_url()
+    html = html.replace('__PUBLIC_URL__', base_url)
+    html = html.replace('__PUBLIC_HOST__', base_url.split('//')[-1])
+    return Response(content=html, media_type='text/html')
+
+@app.post('/api/webhook-miniaction', include_in_schema=False)
+async def miniapp_webhook(request: Request):
+    """Base App mini app webhook (notification clicks, app events).
+
+    No money moves through this endpoint — it exists so the manifest can
+    declare a webhookUrl. Events are logged for the operator; the response
+    is always 200 so the platform does not retry indefinitely.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    log.info('miniapp webhook event: %s', payload)
+    return Response(status_code=200)
+
+@app.get('/.well-known/farcaster.json', include_in_schema=False)
+async def farcaster_manifest():
+    """Base App / Farcaster mini app manifest.
+
+    The operator signs the accountAssociation payload in the Base Build
+    portal (or with their Farcaster custody key) and saves the full JSON as
+    `deploy/farcaster_manifest.json` — see docs/DEPLOY.md, "Base App mini
+    app". Missing file -> 404 (the mini app is simply not discoverable yet).
+    """
+    from fastapi.responses import JSONResponse
+    manifest = ROOT / 'deploy' / 'farcaster_manifest.json'
+    if not manifest.exists():
+        return JSONResponse(status_code=404, content={'detail': 'farcaster manifest not configured'})
+    return Response(content=manifest.read_text(encoding='utf-8'), media_type='application/json')
 
 @app.get('/tos', tags=['legal'])
 async def tos() -> Response:

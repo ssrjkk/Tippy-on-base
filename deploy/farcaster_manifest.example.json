@@ -1,0 +1,18 @@
+{
+  "accountAssociation": {
+    "header": "PASTE_BASE_BUILD_PORTAL_HEADER",
+    "payload": "PASTE_BASE_BUILD_PORTAL_PAYLOAD",
+    "signature": "PASTE_BASE_BUILD_PORTAL_SIGNATURE"
+  },
+  "miniapp": {
+    "version": "1",
+    "name": "Tippy",
+    "iconUrl": "https://YOUR_PUBLIC_HOST/static/icon.png",
+    "homeUrl": "https://YOUR_PUBLIC_HOST/app",
+    "imageUrl": "https://YOUR_PUBLIC_HOST/static/miniapp-hero.png",
+    "buttonTitle": "💸 Открыть Tippy",
+    "splashImageUrl": "https://YOUR_PUBLIC_HOST/static/splash.png",
+    "splashBackgroundColor": "#0A0B0D",
+    "webhookUrl": "https://YOUR_PUBLIC_HOST/api/webhook-miniaction"
+  }
+}

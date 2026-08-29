@@ -330,6 +330,27 @@ python scripts/smoke_onchain.py
 
 ---
 
+## Этап 4.7. Base App mini app (дистрибуция в ленте Base)
+
+Mini app = наш дашборд `/app` внутри ленты Base App. Чтобы Base App
+принял приложение:
+
+**1. Подпиши манифест** в [Base Build portal](https://portal.base.dev)
+(или fc-домен верификацией Farcaster-ключом): возьми `deploy/farcaster_manifest.example.json`,
+подставь свой публичный хост и подпись, сохрани как `deploy/farcaster_manifest.json`.
+
+**2. Проверь** — `GET /.well-known/farcaster.json` должен отдать твой JSON (404 =
+файл не создан), а `GET /app` — HTML с тегами `fc:miniapp` (URL подставляется
+автоматически из MINI_APP_URL/WEBHOOK_URL).
+
+**3. Картинки** уже сгенерированы (`web/static/miniapp-hero.png`, `icon.png`,
+`splash.png`) — замени на свои, если хочешь.
+
+**4. Webhook** мини-аппа: `POST /api/webhook-miniaction` — события платформы
+пишутся в лог; деньги через него не ходят.
+
+---
+
 ## Этап 5. Демо для гранта (Loom)
 
 1. Запиши экран: `/start` → `/deposit` → депозит → DM → `/tip` → рынок →

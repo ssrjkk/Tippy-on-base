@@ -26,8 +26,6 @@ from .chain.transfers import _send_lock  # noqa: F401
 # wallet's ETH even at one drip each.
 _DRIP_COOLDOWN_SECONDS = 3600
 _last_drip: dict[str, float] = {}
-_drip_day: int = -1
-_drip_count: int = 0
 
 
 def _check_chain() -> None:
@@ -40,15 +38,15 @@ def _check_chain() -> None:
 async def _ensure_gas(w3: Web3, user_addr: str, needed_wei: int) -> None:
     """Drip gas from the hot wallet if `user_addr` cannot pay for a tx.
 
-    Rate-limited per user wallet AND capped globally per UTC day.
+    Two limits: a per-wallet cooldown (in-memory, short-lived) and a global
+    per-UTC-day budget persisted in the DB — the budget survives bot
+    restarts, so a restart cannot be used to re-arm a drained budget.
     """
-    global _drip_day, _drip_count
     if w3.eth.get_balance(Web3.to_checksum_address(user_addr)) >= needed_wei:
         return
-    day = int(time.time()) // 86400
-    if _drip_day != day:
-        _drip_day, _drip_count = day, 0
-    if _drip_count >= int(getattr(config, "GAS_DRIP_DAILY_MAX", 50)):
+    from bot.ledger import async_ledger as ledger
+
+    if await ledger.gas_drip_count_today() >= int(getattr(config, "GAS_DRIP_DAILY_MAX", 50)):
         raise RuntimeError("daily gas top-up budget exhausted — try tomorrow")
     now = time.monotonic()
     last = _last_drip.get(user_addr.lower(), 0.0)
@@ -61,7 +59,7 @@ async def _ensure_gas(w3: Web3, user_addr: str, needed_wei: int) -> None:
 
     await send_eth(user_addr, drip_wei)
     _last_drip[user_addr.lower()] = now
-    _drip_count += 1
+    await ledger.increment_gas_drip()
 
 # Minimal ERC20 ABI — only the functions we need (approve/allowance/balanceOf).
 _ERC20_EXTRAS_ABI = json.loads("""[

@@ -4,7 +4,7 @@ import html
 from aiogram import types
 from aiogram.filters import Command
 
-from bot import i18n
+from bot import i18n, tip_targets
 
 from . import _common as common
 
@@ -31,7 +31,11 @@ async def _top_text() -> str:
         return i18n.t('ru', 'top_empty')
     lines = []
     for i, row in enumerate(rows, 1):
-        uname = await common.ledger.username_of(row['tg_id']) or f"id{row['tg_id']}"
+        uname = await common.ledger.username_of(row['tg_id'])
+        if not uname:
+            # No Telegram username — show the user's PRIMARY basename
+            # (Base identity) instead of a bare id.
+            uname = await tip_targets.display_name_for(int(row['tg_id'])) or f"id{row['tg_id']}"
         medal = '🥇' if i == 1 else '🥈' if i == 2 else '🥉' if i == 3 else '▫️'
         lines.append(f"{medal} <b>@{uname}</b> — {common._fmt(row['total'])} USDC")
     return i18n.t('ru', 'top_title') + '\n\n' + '\n'.join(lines)

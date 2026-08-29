@@ -97,20 +97,25 @@ async def reverse_basename(address: str) -> str | None:
 
 
 def basename_available_sync(name: str) -> bool | None:
-    """True when `<name>.base.eth` has no owner in the Basenames Registry.
+    """True when `<name>.base.eth` resolves to the zero address — i.e. NO
+    resolver record exists for it (unregistered).
 
-    None for malformed input or RPC failure. Note: expired names keep their
-    owner until re-registered, so False means taken-or-expired — 0x0 owner is
-    the only unambiguous 'free' signal.
+    IMPORTANT: availability must be checked via the L2 RESOLVER, not
+    `Registry.owner(namehash(name))` — under .base.eth the registry returns
+    the L2Registrar for every subnode, so owner != 0 even for names nobody
+    registered (the old check reported literally everything as 'taken').
+
+    None for malformed input or RPC failure. False = a resolver record
+    exists (registered, or at least configured).
     """
     name = (name or "").strip().lower()
     if not _BASENAME_RE.match(name):
         return None
     try:
-        owner = core._contract_read(
-            config.BASE_REGISTRY_ADDRESS, _REGISTRY_ABI, "owner", namehash(name)
+        addr = core._contract_read(
+            config.BASE_L2_RESOLVER_ADDRESS, _RESOLVER_ABI, "addr", namehash(name)
         )
-        return int(owner, 16) == 0 if owner else True
+        return not (addr and int(addr, 16))
     except Exception:
         return None
 
