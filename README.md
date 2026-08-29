@@ -196,10 +196,10 @@ worst-case payout.
 
 ## Roadmap
 
-- Per-user deposit addresses (CREATE2 vaults)
+- Per-user deposit addresses (CREATE2 vaults) ✅
 - Withdrawal batching for gas savings
 - Order-book style CLOB on top of the AMM
-- On-chain market escrow (trustless resolution via UMA-style oracle)
+- ~~On-chain market escrow (trustless resolution via UMA-style oracle)~~ ✅ shipped as **Cally** (OutcomeMarket ERC-1155)
 
 ## Contributing
 

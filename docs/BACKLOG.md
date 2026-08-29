@@ -35,12 +35,12 @@ ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОС
 
 | # | Задача | Детали |
 |---|---|---|
-| 14 | `bot/chain/deposits.py` — дубль логики `base.py`: делегировать или удалить | риск дрейфа копий |
-| 15 | `estimate_buy_shares` — мёртвый код после паритет-рефактора: удалить или заюзать | |
-| 16 | `bot/cache.py` (Redis) и relayer pool — не подключены: удалить или включить | |
-| 17 | `eip1559_fees_sync`: переменная `priority_wei` на деле в gwei — переименовать | |
+| ~~14~~ | ~~`bot/chain/deposits.py` — дубль логики `base.py`~~ | ✅ удалён, импорты почищены |
+| ~~15~~ | ~~`estimate_buy_shares` — мёртвый код~~ | ✅ удалён |
+| ~~16~~ | ~~`bot/cache.py` (Redis) и relayer pool~~ | ✅ удалён вместе с `test_cache.py` |
+| ~~17~~ | ~~`eip1559_fees_sync`: `priority_wei` → `priority_gwei`~~ | ✅ переименован |
 | 18 | CSP `unsafe-inline` → nonce-based CSP для всех шаблонов | L |
-| 19 | README roadmap: отметить Cally как shipped | S |
+| ~~19~~ | ~~README roadmap: отметить Cally как shipped~~ | ✅ |
 
 ## ⚫ Принятые трейдоффы (задокументированы, менять не планируется)
 

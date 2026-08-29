@@ -244,11 +244,10 @@ def eip1559_fees_sync(priority_gwei: float = 0.01) -> dict:
     if not blk or blk.get("base_fee_gwei") is None:
         return {"base_fee_gwei": 0, "priority_gwei": priority_gwei, "max_fee_gwei": priority_gwei}
     base_fee = blk["base_fee_gwei"]
-    priority_wei = priority_gwei
     return {
         "base_fee_gwei": base_fee,
         "priority_gwei": priority_gwei,
-        "max_fee_gwei": (base_fee * 2 + priority_wei),
+        "max_fee_gwei": (base_fee * 2 + priority_gwei),
     }
 
 

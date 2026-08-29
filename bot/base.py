@@ -20,7 +20,6 @@ from . import config
 from .chain import (  # noqa: F401  (re-exported below as facade surface)
     basenames,
     core,
-    deposits,
     dex,
     network,
     prices,
@@ -523,4 +522,3 @@ usdc_to_eth_quote_sync = dex.usdc_to_eth_quote_sync
 usdc_to_eth_quote = dex.usdc_to_eth_quote_sync
 
 hot_wallet_chain = core.hot_wallet
-_scan_deposits_chain = deposits._scan_deposits

@@ -162,29 +162,6 @@ async def quote_sell(market_id: int, outcome: int, shares: int) -> int:
     return contract.functions.quoteSell(market_id, outcome, shares).call()
 
 
-async def estimate_buy_shares(market_id: int, outcome: int, spend_micro: int) -> int:
-    """Estimate how many shares you get for `spend_micro` USDC.
-
-    Binary search over the on-chain quoteBuy view (free eth_calls). The upper
-    bound grows geometrically: an LMSR price can sit arbitrarily close to
-    zero, so a fixed `spend * 10` ceiling would under-quote cheap outcomes.
-    """
-    lo, hi = 0, max(spend_micro, 1_000_000)
-    for _ in range(24):
-        if await quote_buy(market_id, outcome, hi) > spend_micro:
-            break
-        lo, hi = hi, hi * 4
-    best = lo
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if await quote_buy(market_id, outcome, mid) <= spend_micro:
-            best = mid
-            lo = mid
-        else:
-            hi = mid - 1
-    return best
-
-
 async def buy(market_id: int, outcome: int, shares: int, max_cost_micro: int,
               user_private_key: str) -> str:
     """On-chain buy: drip gas -> approve -> buy. Returns tx hash.
