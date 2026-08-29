@@ -104,7 +104,17 @@ async def mini_state(request: Request) -> dict:
         pot = sum(totals.values())
         bets.append({'id': int(b['id']), 'question': b['question'], 'creator': int(b['creator']), 'pot_usdc': _fmt(pot), 'options': [{'index': i, 'label': lbl, 'pool_usdc': _fmt(totals.get(i, 0)), 'chance_pct': round(100 * totals.get(i, 0) / pot, 1) if pot else 0.0} for i, lbl in enumerate(options)]})
     history = [{'kind': r['kind'], 'amount': _fmt(r['amount']), 'note': r['note'] or '', 'counterparty': r['counterparty'] or '', 'created_at': r['created_at']} for r in await ledger.history(tg_id, 10)]
-    top = [{'username': r.get('username') or f"id{r['tg_id']}", 'total_usdc': _fmt(r['total_micro'])} for r in await ledger.leaderboard(5)]
+    from bot import tip_targets
+    top_rows = await ledger.leaderboard(5)
+    top = []
+    for r in top_rows:
+        name = r.get('username')
+        if not name:
+            try:
+                name = await tip_targets.display_name_for(int(r['tg_id']))
+            except Exception:
+                name = None
+        top.append({'username': name or f"id{r['tg_id']}", 'total_usdc': _fmt(r['total_micro'])})
     lang = (await ledger.get_settings(tg_id)).get('lang', 'ru')
     from bot import onchain_market as om
     onchain = await om.market_views(8)

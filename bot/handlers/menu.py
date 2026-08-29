@@ -5,7 +5,7 @@ from aiogram import F, types
 from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
-from bot import i18n
+from bot import i18n, tip_targets
 
 from . import _common as common
 from .bets import _bets_text, _market_detail_text
@@ -97,7 +97,7 @@ async def cmd_menu(message: types.Message) -> None:
     await message.answer(i18n.t(lang, 'menu_balance', bal=await _fmt_balance(message.from_user.id)), reply_markup=common._menu_kb(lang))
 
 async def _donate_landing(message: types.Message, target_id: int) -> None:
-    creator = await common.ledger.username_of(target_id) or f'id{target_id}'
+    creator = await common.ledger.username_of(target_id) or await tip_targets.display_name_for(target_id) or f'id{target_id}'
     addr = common.base.hot_wallet()
     lang = await _lang(message.from_user.id)
     caption = i18n.t(lang, 'donate_support', user=creator, addr=addr)

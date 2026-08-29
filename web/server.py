@@ -149,10 +149,18 @@ async def api_volume_history(days: int=14) -> list[dict]:
 
 @app.get('/api/markets', tags=['markets'])
 async def api_markets(status: str='open') -> list[dict]:
+    from bot import tip_targets
     out = []
     for b in await ledger.bets_by_status(status, 20):
         view = await ledger.market_view(b['id'])
         if view:
+            if not view['creator'].get('username'):
+                try:
+                    bn = await tip_targets.display_name_for(view['creator']['id'])
+                except Exception:
+                    bn = None
+                if bn:
+                    view['creator']['username'] = bn
             view['pot_usdc'] = _usdc(view['pot'])
             for o in view['options']:
                 o['pool_usdc'] = _usdc(o['pool'])
@@ -161,9 +169,17 @@ async def api_markets(status: str='open') -> list[dict]:
 
 @app.get('/api/market/{bet_id}', tags=['markets'])
 async def api_market(bet_id: int) -> dict:
+    from bot import tip_targets
     view = await ledger.market_view(bet_id)
     if not view:
         raise HTTPException(status_code=404, detail='Market not found')
+    if not view['creator'].get('username'):
+        try:
+            bn = await tip_targets.display_name_for(view['creator']['id'])
+        except Exception:
+            bn = None
+        if bn:
+            view['creator']['username'] = bn
     view['pot_usdc'] = _usdc(view['pot'])
     for o in view['options']:
         o['pool_usdc'] = _usdc(o['pool'])
@@ -236,8 +252,16 @@ async def api_user(tg_id: int, request: Request) -> dict:
             'is_owner': True,
         }
     # Public view: totals only (no live balance, positions, or per-tx history).
+    username = v.get('username')
+    if not username:
+        try:
+            bn = await tip_targets.display_name_for(tg_id)
+        except Exception:
+            bn = None
+        if bn:
+            username = bn
     return {
-        'username': v.get('username'),
+        'username': username,
         'tg_username': v.get('username'),
         'tips_sent_usdc': _usdc(v['tips_sent_micro']),
         'tips_received_usdc': _usdc(v['tips_received_micro']),

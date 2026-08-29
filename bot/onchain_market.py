@@ -304,6 +304,40 @@ async def redeem(market_id: int, user_private_key: str) -> int:
     return payout
 
 
+async def redeem_many(market_ids: list[int], user_private_key: str) -> int:
+    """Batch redeem winnings from multiple resolved markets. Returns total payout in micro-USDC."""
+    _check_chain()
+    w3 = _w3()
+    account = w3.eth.account.from_key(user_private_key)
+    user_addr = account.address
+    contract = _market_contract(w3)
+
+    tx = contract.functions.redeemMany(market_ids).build_transaction({
+        "from": user_addr,
+        "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
+        "gas": 200000 * len(market_ids),
+        "gasPrice": w3.eth.gas_price,
+    })
+    signed = w3.eth.account.sign_transaction(tx, private_key=user_private_key)
+    with _send_lock:
+        raw_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    tx_hash = raw_hash.hex() if isinstance(raw_hash, bytes) else raw_hash
+    receipt = w3.eth.wait_for_transaction_receipt(raw_hash, timeout=60)
+    if receipt.status != 1:
+        raise RuntimeError(f"redeemMany reverted: {tx_hash}")
+    payout = 0
+    from . import base
+    for log in receipt.get("logs", []):
+        if log.get("address", "").lower() == config.USDC_ADDRESS.lower():
+            try:
+                ev = base.usdc.events.Transfer().process_log(log)
+                if ev["args"]["to"].lower() == user_addr.lower():
+                    payout += int(ev["args"]["value"])
+            except Exception:
+                pass
+    return payout
+
+
 async def create_market(num_outcomes: int, subsidy_micro: int, closes_at: int,
                          creator_private_key: str) -> int:
     """Create a new on-chain market. Returns market_id."""

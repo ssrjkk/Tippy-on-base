@@ -434,6 +434,49 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
         }
     }
 
+    /// @notice Batch claim refunds from multiple cancelled markets in one tx.
+    function claimCancelledMany(uint256[] calldata marketIds) external nonReentrant returns (uint256 totalPayout) {
+        for (uint256 i = 0; i < marketIds.length; i++) {
+            Market storage m = _existingMarket(marketIds[i]);
+            if (!m.cancelled) revert NotResolved();
+
+            uint256 rate = claimRatePerShare[marketIds[i]];
+            uint256 reserved = unclaimedEscrowMicro[marketIds[i]];
+            if (rate == 0 || reserved == 0) revert NothingToClaim();
+
+            uint256 burned = 0;
+            for (uint8 j = 0; j < m.numOutcomes; j++) {
+                uint256 id = _tokenId(marketIds[i], j);
+                uint256 bal = balanceOf(msg.sender, id);
+                if (bal > 0) {
+                    _burn(msg.sender, id, bal);
+                    burned += bal;
+                }
+            }
+            if (burned == 0) revert NothingToRedeem();
+
+            uint256 payout = (burned * rate) / RATE_SCALE;
+            if (payout > reserved) payout = reserved;
+            unclaimedEscrowMicro[marketIds[i]] = reserved - payout;
+            totalPayout += payout;
+            emit CancelClaimed(marketIds[i], msg.sender, burned, payout);
+
+            uint256 leftSupply = 0;
+            for (uint8 j = 0; j < m.numOutcomes; j++) {
+                leftSupply += totalSupply(_tokenId(marketIds[i], j));
+            }
+            uint256 leftover = unclaimedEscrowMicro[marketIds[i]];
+            if (leftSupply == 0 && leftover > 0) {
+                unclaimedEscrowMicro[marketIds[i]] = 0;
+                usdc.safeTransfer(m.creator, leftover);
+                emit CreatorSwept(marketIds[i], m.creator, leftover);
+            }
+        }
+        if (totalPayout > 0) {
+            usdc.safeTransfer(msg.sender, totalPayout);
+        }
+    }
+
     // ---------------------------------------------------------------------
     // Redemption
     // ---------------------------------------------------------------------
@@ -451,6 +494,27 @@ contract OutcomeMarket is ERC1155Supply, Ownable, ReentrancyGuard {
         m.escrowMicro -= payoutMicro;
         usdc.safeTransfer(msg.sender, payoutMicro);
         emit Redeemed(marketId, msg.sender, payoutMicro, payoutMicro);
+    }
+
+    /// @notice Batch redeem winnings from multiple resolved markets in one tx.
+    function redeemMany(uint256[] calldata marketIds) external nonReentrant returns (uint256 totalPayout) {
+        for (uint256 i = 0; i < marketIds.length; i++) {
+            Market storage m = _existingMarket(marketIds[i]);
+            if (!m.resolved) revert NotResolved();
+            if (m.cancelled) revert AlreadyCancelled();
+
+            uint256 tokenId = _tokenId(marketIds[i], m.winningOutcome);
+            uint256 payout = balanceOf(msg.sender, tokenId);
+            if (payout == 0) revert NothingToRedeem();
+
+            _burn(msg.sender, tokenId, payout);
+            m.escrowMicro -= payout;
+            totalPayout += payout;
+            emit Redeemed(marketIds[i], msg.sender, payout, payout);
+        }
+        if (totalPayout > 0) {
+            usdc.safeTransfer(msg.sender, totalPayout);
+        }
     }
 
     // ---------------------------------------------------------------------

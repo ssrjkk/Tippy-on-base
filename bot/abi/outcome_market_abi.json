@@ -213,6 +213,57 @@
  {
   "inputs": [
    {
+    "name": "marketIds",
+    "type": "uint256[]"
+   }
+  ],
+  "name": "redeemMany",
+  "outputs": [
+   {
+    "name": "totalPayout",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "name": "marketId",
+    "type": "uint256"
+   }
+  ],
+  "name": "claimCancelled",
+  "outputs": [
+   {
+    "name": "payoutMicro",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "name": "marketIds",
+    "type": "uint256[]"
+   }
+  ],
+  "name": "claimCancelledMany",
+  "outputs": [
+   {
+    "name": "totalPayout",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
     "name": "numOutcomes",
     "type": "uint8"
    },
