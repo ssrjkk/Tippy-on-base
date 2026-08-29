@@ -1,13 +1,13 @@
 # BACKLOG — незакрытые моменты и улучшения
 
-Обновлён: 2026-08-29. Состояние кодовой базы: 669/669 pytest, ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
+Обновлён: 2026-08-30. Состояние кодовой базы: 669/669 pytest, ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
 
 ## 🔴 P0 — перед включением ончейн-слоя в проде
 
 | # | Задача | Зачем | Оценка |
 |---|---|---|---|
 | 1 | Деплой OutcomeMarket с **multisig-владельцем** (`--owner <Safe>`) | owner может ownerResolve любой рынок — с hot-ключом это единственный red flag | S |
-| 2 | Smoke на **Base Sepolia**: деплой + полный цикл /oc_create→buy→resolve→redeem | живой тест против настоящего USDC (FiatTokenV2 домен не был исполнен на реальной сети) | M |
+| ~~2~~ | ~~Smoke на **Base Sepolia**: деплой + полный цикл /oc_create→buy→resolve→redeem~~ | ✅ `scripts/smoke_full_cycle.py` — 8 инвариантов зелёные на Base Sepolia. TestUSDC + OutcomeMarket deploys, createMarket(2,$10,90s) → buy(500K shares @ ~$0.50) → ownerResolve(winner=1) → redeem. Profit: $247K micro-USDC. L2 RPC requires polling for state propagation. | ~~M~~ |
 | ~~3~~ | ~~Пуш `dcef58c` + зелёный прогон CI на GitHub~~ | ✅ запушено (`f6f51e7`, `088fa6b`) | ~~S~~ |
 
 ## 🟠 P1 — деньги: закрываемые кодом (можно делать сейчас)

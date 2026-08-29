@@ -70,6 +70,8 @@ scripts/*
 !scripts/reencrypt_wallets.py
 !scripts/validate_env.py
 !scripts/smoke_onchain.py
+!scripts/smoke_full_cycle.py
+!scripts/TestUSDC.sol
 !scripts/check_i18n.py
 
 # Agent runtime artifacts
