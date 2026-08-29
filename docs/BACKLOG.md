@@ -1,6 +1,6 @@
 # BACKLOG — незакрытые моменты и улучшения
 
-Обновлён: 2026-08-29. Состояние кодовой базы: 665/665 pytest, ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
+Обновлён: 2026-08-29. Состояние кодовой базы: 669/669 pytest, ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
 
 ## 🔴 P0 — перед включением ончейн-слоя в проде
 
@@ -38,7 +38,7 @@
 | ~~15~~ | ~~`estimate_buy_shares` — мёртвый код~~ | ✅ удалён |
 | ~~16~~ | ~~`bot/cache.py` (Redis) и relayer pool~~ | ✅ удалён вместе с `test_cache.py` |
 | ~~17~~ | ~~`eip1559_fees_sync`: `priority_wei` → `priority_gwei`~~ | ✅ переименован |
-| 18 | CSP `unsafe-inline` → nonce-based CSP для всех шаблонов | L |
+| ~~18~~ | CSP `unsafe-inline` → nonce-based CSP для всех шаблонов | ✅ `_nonce_inject()` в middleware: per-request nonce на inline `<script>/<style>`, `esm.sh`/`jsdelivr` в whitelist, `unsafe-inline` убран | 
 | ~~19~~ | ~~README roadmap: отметить Cally как shipped~~ | ✅ |
 
 ### ✅ Round 3–4 (2026-08-29) — тесты, перф и надёжность
@@ -58,6 +58,6 @@
 
 - Stray USDC → OutcomeMarket: stranded dust (NatSpec), только rescueETH.
 - Негативный кэш Basenames 5 минут: свежепривязанный кошелёк ждёт до 5 мин.
-- CSP: `frame-ancestors` Telegram + unsafe-inline скрипты.
+- CSP: `frame-ancestors` Telegram; per-request nonce на inline скрипты/стили + whitelist esm.sh/jsdelivr (unsafe-inline убран).
 - Диспут: 1 на рынок, финал за владельцем (trust model).
 - `deploys`: OWNER_KEY в env для деплоя — только для тестнета; mainnet = multisig.

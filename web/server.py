@@ -2,15 +2,18 @@
 
 Run:  python -m web.server
 """
+import base64
 import json
 import logging
 import os
+import re
+import secrets
 import sys
 import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -77,6 +80,27 @@ def _client_ip(request: Request) -> str:
     return client
 
 
+_CSP_SCRIPT_WHITELIST = "https://esm.sh https://cdn.jsdelivr.net"
+
+
+def _nonce_inject(html: str, nonce: str) -> str:
+    """Add a CSP nonce attribute to every inline <script>/<style> tag so the
+    strict 'nonce-…' directive can replace 'unsafe-inline' on HTML pages.
+
+    Tags that already carry a nonce are left alone; external <script src=…>
+    tags are NOT touched (their origins are source-whitelisted instead).
+    """
+    tag_re = re.compile(r'<\s*(script|style)\b([^>]*)>', re.IGNORECASE)
+
+    def _repl(m: re.Match) -> str:
+        tag_name, attrs = m.group(1), m.group(2)
+        if 'nonce=' in attrs or re.search(r'\bsrc\s*=', attrs):
+            return m.group(0)
+        return f'<{tag_name} nonce="{nonce}"{attrs}>'
+
+    return tag_re.sub(_repl, html)
+
+
 @app.middleware('http')
 async def rate_limit(request: Request, call_next):
     path = request.url.path
@@ -103,16 +127,35 @@ async def rate_limit(request: Request, call_next):
                     del _rl_state[ip]
     response = await call_next(request)
     # No X-Frame-Options here on purpose: the Mini App runs inside Telegram's
-    # iframe and must stay framable. These two are safe everywhere.
+    # iframe and must stay framable. These four are safe everywhere.
+    nonce = base64.b64encode(secrets.token_bytes(16)).decode()
+    ctype = response.headers.get('content-type', '')
+    body = None
+    if ctype.startswith('text/html'):
+        try:
+            chunks = [c async for c in response.body_iterator]
+            body = b''.join(chunks)
+        except Exception:
+            body = None
+        if body:
+            try:
+                body = _nonce_inject(body.decode('utf-8', 'replace'), nonce).encode('utf-8')
+            except Exception:
+                body = None
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
     response.headers.setdefault('Referrer-Policy', 'no-referrer')
     response.headers.setdefault('Cache-Control', 'no-store, no-cache, must-revalidate')
     response.headers.setdefault('Content-Security-Policy',
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'self' https://web.telegram.org")
+        f"default-src 'self'; script-src 'self' 'nonce-{nonce}' {_CSP_SCRIPT_WHITELIST}; "
+        f"style-src 'self' 'nonce-{nonce}'; img-src 'self' data: https:; "
+        "connect-src 'self'; frame-ancestors 'self' https://web.telegram.org")
     try:
         await ledger.rollback()
     except Exception:
         log.warning("ledger.rollback() failed after request to %s", path, exc_info=True)
+    if body is not None:
+        return StreamingResponse(iter([body]), status_code=response.status_code,
+                                 headers=dict(response.headers), media_type=ctype or 'text/html')
     return response
 
 def _usdc(micro: int) -> float:

@@ -1,5 +1,6 @@
 """Web dashboard API tests (FastAPI TestClient)."""
 
+import re
 import types
 
 import pytest
@@ -745,3 +746,39 @@ def test_miniapp_webhook_always_200(client):
     r = client.post('/api/webhook-miniaction', content=b'not json',
                     headers={'content-type': 'application/json'})
     assert r.status_code == 200  # never make the platform retry
+
+
+def test_csp_header_strict_no_unsafe_inline(client):
+    r = client.get('/')
+    csp = r.headers.get('content-security-policy', '')
+    assert 'script-src' in csp
+    assert "script-src 'self' 'unsafe-inline'" not in csp
+    assert 'nonce-' in csp
+    assert 'frame-ancestors' in csp
+
+
+def test_csp_injects_nonce_into_inline_scripts(client):
+    # /app serves the Mini App which has inline <script> blocks → must get nonces.
+    r = client.get('/app')
+    assert 'nonce="' in r.text
+    csp = r.headers.get('content-security-policy', '')
+    m = re.search(r"'nonce-([^']+)'", csp)
+    assert m, 'nonce missing from CSP'
+    assert f'nonce="{m.group(1)}"' in r.text  # header nonce matches the inline tags
+    # External module import from the KitSDK CDN must be source-whitelisted.
+    assert 'https://esm.sh' in csp
+
+
+def test_csp_nonce_varies_per_request(client):
+    r1 = client.get('/app')
+    r2 = client.get('/app')
+    n1 = re.search(r"'nonce-([^']+)'", r1.headers['content-security-policy']).group(1)
+    n2 = re.search(r"'nonce-([^']+)'", r2.headers['content-security-policy']).group(1)
+    assert n1 != n2  # nonce must be unpredictable across requests
+
+
+def test_csp_non_html_untouched(client):
+    # API JSON responses should not be rewritten with nonces.
+    r = client.get('/api/info')
+    assert r.status_code == 200
+    assert 'nonce="' not in r.text
