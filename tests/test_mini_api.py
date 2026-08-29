@@ -3,8 +3,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from web.auth import COOKIE_NAME, make_session
 from web import server
+from web.auth import COOKIE_NAME, make_session
 
 
 def _auth(client, tg_id):

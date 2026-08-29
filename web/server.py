@@ -153,22 +153,21 @@ async def api_volume_history(days: int=14) -> list[dict]:
 @app.get('/api/markets', tags=['markets'])
 async def api_markets(status: str='open') -> list[dict]:
     from bot import tip_targets
-    out = []
-    for b in await ledger.bets_by_status(status, 20):
-        view = await ledger.market_view(b['id'])
-        if view:
-            if not view['creator'].get('username'):
-                try:
-                    bn = await tip_targets.display_name_for(view['creator']['id'])
-                except Exception:
-                    bn = None
-                if bn:
-                    view['creator']['username'] = bn
-            view['pot_usdc'] = _usdc(view['pot'])
-            for o in view['options']:
-                o['pool_usdc'] = _usdc(o['pool'])
-            out.append(view)
-    return out
+    bets = await ledger.bets_by_status(status, 20)
+    bet_ids = [int(b['id']) for b in bets]
+    views = await ledger.bulk_market_views(bet_ids)
+    for view in views:
+        if not view['creator'].get('username'):
+            try:
+                bn = await tip_targets.display_name_for(view['creator']['id'])
+            except Exception:
+                bn = None
+            if bn:
+                view['creator']['username'] = bn
+        view['pot_usdc'] = _usdc(view['pot'])
+        for o in view['options']:
+            o['pool_usdc'] = _usdc(o['pool'])
+    return views
 
 @app.get('/api/market/{bet_id}', tags=['markets'])
 async def api_market(bet_id: int) -> dict:

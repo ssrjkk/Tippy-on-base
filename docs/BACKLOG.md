@@ -1,7 +1,6 @@
 # BACKLOG — незакрытые моменты и улучшения
 
-Обновлён: 2026-08-29. Состояние кодовой базы: 630/630 pytest, forge 40/40,
-ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
+Обновлён: 2026-08-29. Состояние кодовой базы: 669/669 pytest, ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
 
 ## 🔴 P0 — перед включением ончейн-слоя в проде
 
@@ -41,6 +40,18 @@ ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОС
 | ~~17~~ | ~~`eip1559_fees_sync`: `priority_wei` → `priority_gwei`~~ | ✅ переименован |
 | 18 | CSP `unsafe-inline` → nonce-based CSP для всех шаблонов | L |
 | ~~19~~ | ~~README roadmap: отметить Cally как shipped~~ | ✅ |
+
+### ✅ Round 3–4 (2026-08-29) — тесты, перф и надёжность
+
+| # | Задача | Статус |
+|---|---|---|
+| B3 | Тесты `/api/mini/*` (9 шт: state/auth/tip/trade/create/lang) | ✅ `tests/test_mini_api.py` |
+| C1 | N+1 в `/api/markets` → batch `bulk_market_views()` | ✅ |
+| C2 | Параллельные RPC `totalSupply` через `asyncio.gather` | ✅ |
+| C4 | `log.debug/warning` в 7 критичных silent-`except` | ✅ server/base/tips |
+| C5 | **Audit-логгер** `tipbot.audit` для credit/transfer/debit | ✅ |
+| C6 | **Notification outbox** (retry с backoff до 3600s) + worker | ✅ 4 теста |
+| C7 | **Exponential backoff** в deposit watcher (до 120s) | ✅ |
 
 ## ⚫ Принятые трейдоффы (задокументированы, менять не планируется)
 

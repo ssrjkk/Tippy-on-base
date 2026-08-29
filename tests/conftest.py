@@ -35,6 +35,7 @@ TABLES = [
     "paywall_channels", "paywall_subscriptions", "markets", "market_shares",
     "suspicious_activity", "community_treasuries", "treasury_transactions",
     "treasury_proposals", "treasury_votes", "onchain_markets", "onchain_trades", "gas_drips",
+    "notification_outbox",
 ]
 
 

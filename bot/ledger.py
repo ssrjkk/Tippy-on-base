@@ -432,6 +432,14 @@ CREATE TABLE IF NOT EXISTS onchain_trades (
     created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
 );
 CREATE INDEX IF NOT EXISTS idx_onchain_trades_market ON onchain_trades (market_id, outcome);
+CREATE TABLE IF NOT EXISTS notification_outbox (
+    id         BIGSERIAL PRIMARY KEY,
+    chat_id    BIGINT NOT NULL,
+    text       TEXT NOT NULL,
+    retries    INT NOT NULL DEFAULT 0,
+    next_retry_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+    created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+);
 """
 
 class Ledger:
@@ -2734,6 +2742,64 @@ class Ledger:
             ).fetchall()
         return {int(r["option_idx"]): int(r["c"]) for r in rows}
 
+    def bulk_market_views(self, bet_ids: list[int]) -> list[dict]:
+        """Batch market_view for multiple bet IDs — fixes N+1 query pattern."""
+        if not bet_ids:
+            return []
+        placeholders = ",".join(["%s"] * len(bet_ids))
+        with self._lock:
+            bets = self._conn.execute(
+                f"SELECT * FROM bets WHERE id IN ({placeholders})", bet_ids
+            ).fetchall()
+            totals_rows = self._conn.execute(
+                f"SELECT bet_id, option_idx, SUM(amount_micro) AS total "
+                f"FROM bet_positions WHERE bet_id IN ({placeholders}) "
+                f"GROUP BY bet_id, option_idx", bet_ids
+            ).fetchall()
+            backers_rows = self._conn.execute(
+                f"SELECT bet_id, option_idx, COUNT(DISTINCT tg_id) AS c "
+                f"FROM bet_positions WHERE bet_id IN ({placeholders}) "
+                f"GROUP BY bet_id, option_idx", bet_ids
+            ).fetchall()
+        totals_map: dict[int, dict[int, int]] = {}
+        for r in totals_rows:
+            bid = int(r["bet_id"])
+            totals_map.setdefault(bid, {})[int(r["option_idx"])] = int(r["total"])
+        backers_map: dict[int, dict[int, int]] = {}
+        for r in backers_rows:
+            bid = int(r["bet_id"])
+            backers_map.setdefault(bid, {})[int(r["option_idx"])] = int(r["c"])
+        out = []
+        for bet in bets:
+            bid = int(bet["id"])
+            options = json.loads(bet["options"])
+            totals = totals_map.get(bid, {})
+            pot = sum(totals.values())
+            backers = backers_map.get(bid, {})
+            items = []
+            for i, opt in enumerate(options):
+                pool = totals.get(i, 0)
+                prob = round(pool / pot * 100, 1) if pot else 0.0
+                items.append({"index": i, "label": opt, "pool": pool, "probability": prob, "backers": backers.get(i, 0)})
+            creator_name = self.username_of(bet["creator"])
+            out.append({
+                "id": bid, "question": bet["question"], "status": bet["status"],
+                "winner": bet["winner"], "close_at": bet["close_at"],
+                "creator": {"id": bet["creator"], "username": creator_name},
+                "options": items, "pot": pot,
+                "total_backers": sum(backers.values()),
+            })
+        return out
+
+    def _backers_per_option(self, bet_id: int) -> dict[int, int]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT option_idx, COUNT(DISTINCT tg_id) AS c FROM bet_positions "
+                "WHERE bet_id = %s GROUP BY option_idx",
+                (bet_id,),
+            ).fetchall()
+        return {int(r["option_idx"]): int(r["c"]) for r in rows}
+
     def payouts_for(self, bet_id: int) -> list[dict]:
         """Per-backer outcome of a RESOLVED market (deterministic re-computation
         of the parimutuel math used by resolve_bet). Used for result DMs."""
@@ -2868,6 +2934,46 @@ class Ledger:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    # ---------- notification outbox ----------
+
+    def enqueue_notification(self, chat_id: int, text: str) -> int:
+        """Queue a Telegram notification for retry-safe delivery."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO notification_outbox (chat_id, text) VALUES (%s, %s) RETURNING id",
+                (chat_id, text),
+            )
+            self._conn.commit()
+            return int(cur.fetchone()["id"])
+
+    def dequeue_notifications(self, limit: int = 10) -> list[dict]:
+        """Fetch pending notifications due for delivery."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, chat_id, text FROM notification_outbox "
+                "WHERE next_retry_at <= EXTRACT(EPOCH FROM now())::bigint "
+                "ORDER BY id LIMIT %s", (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def ack_notification(self, notif_id: int) -> None:
+        """Mark a notification as delivered (delete it)."""
+        with self._lock:
+            self._conn.execute("DELETE FROM notification_outbox WHERE id = %s", (notif_id,))
+            self._conn.commit()
+
+    def retry_notification(self, notif_id: int, backoff: int) -> None:
+        """Schedule a failed notification for retry with exponential backoff (max 3600s)."""
+        import time as _time
+        delay = min(backoff * 2, 3600)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE notification_outbox SET retries = retries + 1, "
+                "next_retry_at = %s WHERE id = %s",
+                (int(_time.time()) + delay, notif_id),
+            )
+            self._conn.commit()
 
 
 ledger = Ledger()

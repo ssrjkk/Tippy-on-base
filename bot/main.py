@@ -175,7 +175,22 @@ async def main() -> None:
                 log.warning('x402 reconcile failed: %s', e)
             await asyncio.sleep(config.POLL_SECONDS * 8)
 
-    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot)), asyncio.create_task(onchain_watcher(bot)), asyncio.create_task(x402_reconcile_watcher())]
+    async def notification_outbox_worker() -> None:
+        """Drain queued Telegram notifications with retry logic."""
+        while True:
+            try:
+                items = await asyncio.to_thread(ledger.dequeue_notifications)
+                for n in items:
+                    try:
+                        await bot.send_message(n['chat_id'], n['text'])
+                        await asyncio.to_thread(ledger.ack_notification, n['id'])
+                    except Exception:
+                        await asyncio.to_thread(ledger.retry_notification, n['id'], 30)
+            except Exception as e:
+                log.warning('notification outbox worker failed: %s', e)
+            await asyncio.sleep(5)
+
+    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot)), asyncio.create_task(onchain_watcher(bot)), asyncio.create_task(x402_reconcile_watcher()), asyncio.create_task(notification_outbox_worker())]
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
