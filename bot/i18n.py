@@ -2057,6 +2057,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "This outcome was disputed by the contract owner — the final say is theirs (ownerResolve).",
         "zh": "该结果已被合约所有者异议——最终决定权在其手中（ownerResolve）。",
     },
+    "oc_subsidy_cap": {
+        "ru": "Суточный лимит субсидий Cally исчерпан (${amount} USDC забронировано сегодня). Попробуй завтра или уменьши субсидию.",
+        "en": "The daily Cally subsidy cap (${amount} USDC booked today) is reached. Try tomorrow or lower the subsidy.",
+        "zh": "已达到 Cally 每日补贴上限（今日已预订 ${amount} USDC）。请明天再试或降低补贴。",
+    },
     "oc_registry_warn": {
         "ru": "Рынок создан В КОНТРАКТЕ, но не сохранён в реестре бота ({err}) — напиши /oc {id2}, он добавится повторно.",
         "en": "Market created IN THE CONTRACT but not saved to the bot registry ({err}) — send /oc {id2}, it will be re-added.",

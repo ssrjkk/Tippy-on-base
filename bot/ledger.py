@@ -403,6 +403,10 @@ CREATE TABLE IF NOT EXISTS gas_drips (
     day  BIGINT PRIMARY KEY,              -- UTC day (unix // 86400)
     count BIGINT NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS market_subsidies (
+    day  BIGINT PRIMARY KEY,              -- UTC day (unix // 86400)
+    total_micro BIGINT NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS onchain_markets (
     id         BIGINT PRIMARY KEY,               -- on-chain OutcomeMarket marketId
     creator    BIGINT NOT NULL,
@@ -680,25 +684,25 @@ class Ledger:
             )
             self._conn.commit()
 
-    def gas_drip_count_today(self) -> int:
-        """How many gas drips the bot has performed today (UTC). DB-backed so
-        the budget survives bot restarts."""
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT count FROM gas_drips WHERE day = %s",
-                (int(time.time()) // 86400,),
-            ).fetchone()
-        return int(row["count"]) if row else 0
+    def try_book_gas_drip(self, daily_max: int) -> bool:
+        """Atomically book one gas drip against the UTC daily budget.
 
-    def increment_gas_drip(self) -> None:
+        The check-and-increment is a single conditional UPDATE: two bot
+        processes can never both book the last remaining drip (the old
+        SELECT-then-UPDATE pattern had exactly that race). False = budget
+        exhausted for today."""
         with self._lock:
             day = int(time.time()) // 86400
-            self._conn.execute(
+            cur = self._conn.execute(
                 "INSERT INTO gas_drips (day, count) VALUES (%s, 1) "
-                "ON CONFLICT (day) DO UPDATE SET count = gas_drips.count + 1",
-                (day,),
+                "ON CONFLICT (day) DO UPDATE SET count = gas_drips.count + 1 "
+                "WHERE gas_drips.count < %s "
+                "RETURNING count",
+                (day, daily_max),
             )
+            booked = cur.fetchone() is not None
             self._conn.commit()
+            return booked
 
     def x402_auth_reservations(self, older_than_seconds: int) -> list[dict]:
         """Reserved EIP-3009 auth rows ('auth:<nonce>') older than the cutoff:
@@ -714,6 +718,25 @@ class Ledger:
                 "ORDER BY created_at",
                 (older_than_seconds,),
             ).fetchall()
+
+    def try_book_subsidy(self, amount_micro: int, daily_max_micro: int) -> bool:
+        """Atomically book an on-chain market subsidy against the UTC daily
+        cap (protects the treasury from market-creation spam). False = the
+        cap would be exceeded — the creator must wait until tomorrow."""
+        if amount_micro <= 0 or amount_micro > daily_max_micro:
+            return False
+        with self._lock:
+            day = int(time.time()) // 86400
+            cur = self._conn.execute(
+                "INSERT INTO market_subsidies (day, total_micro) VALUES (%s, %s) "
+                "ON CONFLICT (day) DO UPDATE SET total_micro = market_subsidies.total_micro + %s "
+                "WHERE market_subsidies.total_micro + %s <= %s "
+                "RETURNING total_micro",
+                (day, amount_micro, amount_micro, amount_micro, daily_max_micro),
+            )
+            booked = cur.fetchone() is not None
+            self._conn.commit()
+            return booked
 
     def finalize_x402_credit(
         self, nonce: str, settlement_tx: str, recipient_tg: int,

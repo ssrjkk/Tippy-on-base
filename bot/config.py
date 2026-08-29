@@ -251,6 +251,9 @@ GAS_DRIP_THRESHOLD_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_THRESHOLD_ETH
 # Global safety cap: max gas drips the hot wallet performs per UTC day across
 # ALL user wallets (blocks drip-farming with many fresh wallets).
 GAS_DRIP_DAILY_MAX: int = int(os.environ.get("GAS_DRIP_DAILY_MAX", "50"))
+# Daily cap on TOTAL on-chain market subsidies (/oc_create) across ALL
+# creators — protects the treasury from market-creation spam.
+MARKET_SUBSIDY_DAILY_MAX_USDC: Decimal = Decimal(os.environ.get("MARKET_SUBSIDY_DAILY_MAX_USDC", "2000"))
 
 
 def validate() -> None:

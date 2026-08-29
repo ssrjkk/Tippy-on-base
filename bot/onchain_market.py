@@ -46,8 +46,7 @@ async def _ensure_gas(w3: Web3, user_addr: str, needed_wei: int) -> None:
         return
     from bot.ledger import async_ledger as ledger
 
-    if await ledger.gas_drip_count_today() >= int(getattr(config, "GAS_DRIP_DAILY_MAX", 50)):
-        raise RuntimeError("daily gas top-up budget exhausted — try tomorrow")
+    daily_max = int(getattr(config, "GAS_DRIP_DAILY_MAX", 50))
     now = time.monotonic()
     last = _last_drip.get(user_addr.lower(), 0.0)
     if now - last < _DRIP_COOLDOWN_SECONDS:
@@ -57,9 +56,14 @@ async def _ensure_gas(w3: Web3, user_addr: str, needed_wei: int) -> None:
         raise RuntimeError("on-chain gas top-up disabled (GAS_DRIP_ETH=0)")
     from .chain.transfers import send_eth
 
+    # Book FIRST (atomically), drip second: an over-booking on a failed send
+    # wastes a drip slot, but an under-book after a successful send would
+    # let concurrent requests exceed the budget. Book-then-send also closes
+    # the send-then-count race between processes.
+    if not await ledger.try_book_gas_drip(daily_max):
+        raise RuntimeError("daily gas top-up budget exhausted — try tomorrow")
     await send_eth(user_addr, drip_wei)
     _last_drip[user_addr.lower()] = now
-    await ledger.increment_gas_drip()
 
 # Minimal ERC20 ABI — only the functions we need (approve/allowance/balanceOf).
 _ERC20_EXTRAS_ABI = json.loads("""[
