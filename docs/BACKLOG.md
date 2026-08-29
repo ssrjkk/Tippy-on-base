@@ -17,7 +17,7 @@ ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОС
 |---|---|---|---|
 | ~~4~~ | ~~**Атомарный gas-бюджет**~~ | ✅ `try_book_gas_drip()` — атомарный INSERT…RETURNING | ~~S~~ |
 | ~~5~~ | ~~**x402 авто-ретрай 502-кейса**~~ | ✅ `reconcile_stale_x402()` + watcher в `main.py` | ~~S~~ |
-| 6 | **Батчинг redeem/cancelExpired** в OutcomeMarket: `redeemMany(uint256[], uint8[])` | экономия газа при массовых выплатах; менять контракт ДО деплоя | M |
+| ~~6~~ | ~~**Батчинг redeem/cancelExpired** в OutcomeMarket~~ | ✅ `redeemMany(uint256[])` + `claimCancelledMany(uint256[])` в контракте, ABI + Python wrapper | ~~M~~ |
 | 7 | **Spend Permissions**: делегирование бюджета агенту через Smart Wallet (coinbase/spend-permissions) | агент торгует в лимитах пользователя — ключевой agentic-commerce примитив Coinbase | L |
 | ~~8~~ | ~~**Лимит subsidy на сутки** для /oc_create~~ | ✅ `try_book_subsidy()` + `market_subsidies` table + wired into `/oc_create` | ~~S~~ |
 
@@ -28,7 +28,7 @@ ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОС
 | 9 | **MiniKit SDK** в /app: `@farcaster/miniapp-sdk` — quick actions, notifications, `addMiniApp` | сейчас /app — чистый webview; SDK добавит нотификации и кнопку добавления | M |
 | 10 | **Торговля из Mini App** (сейчас display-only + подсказка): подписание через Smart Wallet (Base Accounts) вместо приватного ключа | убирает /withdraw-фандинг из флоу | L |
 | 11 | **Paymaster (gasless)** через CDP — требует CDP-аккаунт | чаевые и голосования без ETH у пользователя | M |
-| 12 | **Basenames в донатах и профилях** (`/donate`, /u/{id}, x402-инвойсы) — обратный резолв уже есть (`display_name_for`) | единая идентичность | S |
+| ~~12~~ | ~~**Basenames в донатах и профилях**~~ | ✅ `display_name_for` fallback в donate landing, market creator, user profile, mini app leaderboard | ~~S~~ |
 | 13 | **Уведомления Base App** через mini app webhook (сейчас только лог) | победителям рынков — нотификация в ленте | M |
 
 ## 🟢 P3 — гигиена кода (космос, но дешёво)
