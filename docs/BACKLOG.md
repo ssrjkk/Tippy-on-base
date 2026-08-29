@@ -25,7 +25,7 @@ ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОС
 
 | # | Задача | Детали | Оценка |
 |---|---|---|---|
-| 9 | **MiniKit SDK** в /app: `@farcaster/miniapp-sdk` — quick actions, notifications, `addMiniApp` | сейчас /app — чистый webview; SDK добавит нотификации и кнопку добавления | M |
+| ~~9~~ | ~~**MiniKit SDK** в /app~~ | ✅ `@farcaster/miniapp-sdk` CDN + `sdk.actions.ready()` + `addMiniApp` button | ~~M~~ |
 | 10 | **Торговля из Mini App** (сейчас display-only + подсказка): подписание через Smart Wallet (Base Accounts) вместо приватного ключа | убирает /withdraw-фандинг из флоу | L |
 | 11 | **Paymaster (gasless)** через CDP — требует CDP-аккаунт | чаевые и голосования без ETH у пользователя | M |
 | ~~12~~ | ~~**Basenames в донатах и профилях**~~ | ✅ `display_name_for` fallback в donate landing, market creator, user profile, mini app leaderboard | ~~S~~ |
