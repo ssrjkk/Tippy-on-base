@@ -133,6 +133,7 @@ def _tx_info_sync(tx_hash: str) -> dict | None:
     try:
         tx = w3.eth.get_transaction(tx_hash)
     except Exception:
+        log.warning("get_transaction(%s) failed", tx_hash, exc_info=True)
         return None
     receipt = None
     try:
@@ -336,6 +337,7 @@ def _check_pending_withdrawn_sync() -> None:
             receipt = w3.eth.get_transaction_receipt(tx_hash)
             rpc_ok = True
         except Exception:
+            log.warning("get_transaction_receipt(%s) failed", tx_hash, exc_info=True)
             receipt = None
             rpc_ok = False
         if receipt is None:

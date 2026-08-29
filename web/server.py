@@ -112,7 +112,7 @@ async def rate_limit(request: Request, call_next):
     try:
         await ledger.rollback()
     except Exception:
-        pass
+        log.warning("ledger.rollback() failed after request to %s", path, exc_info=True)
     return response
 
 def _usdc(micro: int) -> float:
@@ -129,6 +129,7 @@ async def _safe_hot_balance() -> float | None:
     try:
         return round(await hot_balance(), 2)
     except Exception:
+        log.warning("hot_balance() RPC failed", exc_info=True)
         return None
 
 async def _safe_vault_balance() -> float | None:
@@ -136,6 +137,7 @@ async def _safe_vault_balance() -> float | None:
         bal = await vault_balance()
         return round(bal, 2) if bal is not None else None
     except Exception:
+        log.warning("vault_balance() RPC failed", exc_info=True)
         return None
 
 @app.get('/api/stats', tags=['stats'])

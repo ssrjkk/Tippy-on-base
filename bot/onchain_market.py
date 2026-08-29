@@ -122,9 +122,11 @@ async def market_state(market_id: int) -> tuple[int, int, int]:
     # ERC1155Supply tracks total supply in a dedicated mapping — minting
     # credits traders, never the zero address, so balanceOf(0x0) is NOT the
     # supply (that mistake silently made this return q=[0,...] forever).
-    total_q = 0
-    for i in range(num_outcomes):
-        total_q += contract.functions.totalSupply(market_id * 256 + i).call()
+    supplies = await asyncio.gather(
+        *[asyncio.to_thread(contract.functions.totalSupply(market_id * 256 + i).call)
+          for i in range(num_outcomes)]
+    )
+    total_q = sum(supplies)
     return total_q, b, num_outcomes
 
 

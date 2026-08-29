@@ -32,12 +32,15 @@ _bot_kwargs = {"session": _session} if _session else {}
 bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML), **_bot_kwargs)
 
 async def deposit_watcher() -> None:
+    backoff = config.POLL_SECONDS
     while True:
         try:
             credited = await base.poll_deposits()
+            backoff = config.POLL_SECONDS  # reset on success
         except Exception as e:
-            log.warning('deposit poll failed: %s', e)
-            await asyncio.sleep(config.POLL_SECONDS)
+            log.warning('deposit poll failed (backoff %ds): %s', backoff, e)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 120)
             continue
         for d in credited:
             try:

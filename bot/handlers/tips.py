@@ -1,4 +1,5 @@
 ﻿"""/tip  handlers."""
+import logging
 from decimal import Decimal
 
 from aiogram import types
@@ -9,6 +10,8 @@ from bot import i18n, tip_targets
 from . import _common as common
 
 __all__ = ['_notify_tip_received', '_resolve_in_chat', 'cmd_rain', 'cmd_tip']
+
+log = logging.getLogger("tipbot.tips")
 
 @common.router.message(Command('rain'))
 async def cmd_rain(message: types.Message) -> None:
@@ -126,7 +129,7 @@ async def _notify_tip_received(message: types.Message, to_id: int, amount_micro:
         lang = await common.user_lang(to_id)
         await message.bot.send_message(to_id, i18n.t(lang, 'tip_received', amount=common._fmt(amount_micro), sender=sender))
     except Exception:
-        pass
+        log.warning("tip notification to user %d failed", to_id, exc_info=True)
 
 async def _resolve_in_chat(message: types.Message, username: str) -> int | None:
     try:
@@ -136,5 +139,6 @@ async def _resolve_in_chat(message: types.Message, username: str) -> int | None:
                 await common.ledger.ensure_user(user.id, user.username)
                 return user.id
     except Exception:
+        log.warning("chat member scan for @%s failed", username, exc_info=True)
         return None
     return None

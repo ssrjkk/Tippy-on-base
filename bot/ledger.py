@@ -5,6 +5,7 @@ Deposits credit here; withdrawals debit here and send USDC on-chain.
 """
 
 import json
+import logging
 import secrets
 import threading
 import time
@@ -16,6 +17,8 @@ import psycopg.errors
 from psycopg.rows import dict_row
 
 from . import config
+
+audit_log = logging.getLogger("tipbot.audit")
 
 MICRO = 10**config.USDC_DECIMALS
 
@@ -632,6 +635,7 @@ class Ledger:
                 (kind, tg_id, counterparty, amount_micro, tx_hash, note),
             )
             self._conn.commit()
+            audit_log.info(json.dumps({"event": "credit", "tg_id": tg_id, "amount_micro": amount_micro, "kind": kind, "counterparty": counterparty, "tx_hash": tx_hash}))
 
     def credit_x402(self, recipient_tg: int, tx_hash: str, amount_micro: int, sender: str) -> bool:
         """Credit an on-chain x402 payment to a user. Atomic and replay-proof.
@@ -1123,6 +1127,7 @@ class Ledger:
                 (from_id, str(to_id), amount_micro),
             )
             self._conn.commit()
+            audit_log.info(json.dumps({"event": "transfer", "from": from_id, "to": to_id, "amount_micro": amount_micro}))
             return True
 
     def debit(self, tg_id: int, amount_micro: int) -> bool:
@@ -1131,6 +1136,8 @@ class Ledger:
                 "UPDATE users SET balance = balance - %s WHERE tg_id = %s AND balance >= %s",
                 (amount_micro, tg_id, amount_micro),
             )
+            if cur.rowcount > 0:
+                audit_log.info(json.dumps({"event": "debit", "tg_id": tg_id, "amount_micro": amount_micro, "note": ""}))
             return cur.rowcount > 0
 
     def reserve_withdraw(
