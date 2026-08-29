@@ -8,6 +8,11 @@
 <meta property="og:title" content="Tippy — чаевые и рынки в USDC на Base">
 <meta property="og:description" content="Чаевые, ончейн-рынки и AI-агент в USDC. Открой прямо в Base App.">
 <meta property="og:image" content="__PUBLIC_URL__/static/miniapp-hero.png">
+<script type="module">
+  import { sdk } from 'https://esm.sh/@farcaster/miniapp-sdk';
+  window.__fcSdk = sdk;
+  try { await sdk.actions.ready(); } catch(e) {}
+</script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#0A0B0D;--card:#14161A;--card2:#1C1F26;--accent:#0052FF;--accent2:#1a6aff;--success:#16a34a;--danger:#ef4444;--text:#fff;--text2:#9aa0a6;--text3:#6b7280;--border:#2a2d35;--radius:12px;--safe-b:env(safe-area-inset-bottom,0px)}
@@ -298,6 +303,8 @@ input,textarea{font-family:inherit;outline:none}
       </div>
 
       <a href="https://t.me/tippy_on_base_bot" target="_blank" class="btn btn-secondary btn-full" style="margin-top:12px">Telegram Bot</a>
+
+      <button class="btn btn-primary btn-full" id="addMiniApp" style="margin-top:8px;display:none" onclick="addMiniApp()">⭐ Add to Base App</button>
     </div>
   </div>
 
@@ -419,7 +426,24 @@ async function init() {
       } catch(e) { console.error('auth error', e); }
     }
   }
+  // Farcaster Mini App: show "Add" button if not already added
+  const sdk = window.__fcSdk;
+  if (sdk) {
+    try {
+      const ctx = await sdk.context;
+      if (ctx && !ctx.client?.added) {
+        document.getElementById('addMiniApp').style.display = '';
+      }
+    } catch(e) {}
+  }
   await loadState();
+}
+
+async function addMiniApp() {
+  const sdk = window.__fcSdk;
+  if (sdk) {
+    try { await sdk.actions.addMiniApp(); } catch(e) { toast('Could not add app', 'error'); }
+  }
 }
 
 async function loadState() {
