@@ -1,4 +1,4 @@
-# Tippy — Community Economy in USDC on Base
+# Tippy - Community Economy in USDC on Base
 
 [![CI](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml/badge.svg)](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml)
 ![Tests](https://img.shields.io/badge/tests-422%20passed-brightgreen)
