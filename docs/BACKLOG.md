@@ -4,9 +4,11 @@
 
 ## 🔴 P0 — перед включением ончейн-слоя в проде
 
+> ✅ **P0 полностью закрыт** (2026-08-30): Smoke #2 на Base Sepolia, деплой #1 на Base mainnet с Safe owner.
+
 | # | Задача | Зачем | Оценка |
 |---|---|---|---|
-| 1 | Деплой OutcomeMarket с **multisig-владельцем** (`--owner <Safe>`) | owner может ownerResolve любой рынок — с hot-ключом это единственный red flag | S |
+| ~~1~~ | ~~Деплой OutcomeMarket с **multisig-владельцем** (`--owner <Safe>`)~~ | ✅ Base mainnet `0xBA6F07331ABDb33d319095E0c78f79Fc0b68681E`. Owner=`0x0635...e2` (Safe 1/1). Gas=4,250,810. `OUTCOME_MARKET_ADDRESS` в .env | ~~S~~ |
 | ~~2~~ | ~~Smoke на **Base Sepolia**: деплой + полный цикл /oc_create→buy→resolve→redeem~~ | ✅ `scripts/smoke_full_cycle.py` — 8 инвариантов зелёные на Base Sepolia. TestUSDC + OutcomeMarket deploys, createMarket(2,$10,90s) → buy(500K shares @ ~$0.50) → ownerResolve(winner=1) → redeem. Profit: $247K micro-USDC. L2 RPC requires polling for state propagation. | ~~M~~ |
 | ~~3~~ | ~~Пуш `dcef58c` + зелёный прогон CI на GitHub~~ | ✅ запушено (`f6f51e7`, `088fa6b`) | ~~S~~ |
 
