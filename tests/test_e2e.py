@@ -205,6 +205,9 @@ def install_rpc(monkeypatch, logs=(), block=1000, receipts=None, fail_first=0, t
         send_raw_transaction=send_raw,
     )
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=eth, to_wei=_to_wei))
+    # Never fall through to the live BASE_RPC_FALLBACK_URLS in tests —
+    # the fake w3 above (incl. its fail_first outage window) is authoritative.
+    monkeypatch.setattr(base, "_RPC_FALLBACKS", [])
     monkeypatch.setattr(
         base,
         "usdc",

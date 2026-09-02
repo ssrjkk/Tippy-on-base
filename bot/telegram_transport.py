@@ -56,12 +56,27 @@ class _PinnedHostResolver(AbstractResolver):
             await self._fallback.close()
 
 
-def make_session(pinned_ip: str | None) -> AiohttpSession | None:
-    """Build an aiogram session with a pinned resolver, or None if unused."""
-    if not pinned_ip:
+def make_session(proxy: str | None = None, pinned_ip: str | None = None) -> AiohttpSession | None:
+    """Build an aiogram session for API calls, or None if using the default.
+
+    ``proxy`` is an http(s)/socks5 URL (e.g. ``socks5h://127.0.0.1:1080``)
+    when api.telegram.org is blocked at the network level while the
+    machine itself can reach the outside world through the proxy.
+
+    ``pinned_ip`` pins the api.telegram.org hostname to a fixed IP when DNS
+    is poisoned (TLS SNI/certificate still use the real hostname).
+
+    Only one of the two is needed; both can be set (proxy wins for the
+    actual connection, the pin is harmless).
+    """
+    if not (proxy or pinned_ip):
         return None
-    session = AiohttpSession()
-    session._connector_init["resolver"] = _PinnedHostResolver(pinned_ip)
+    session = AiohttpSession(proxy=proxy) if proxy else AiohttpSession()
+    if pinned_ip and not proxy:
+        session._connector_init["resolver"] = _PinnedHostResolver(pinned_ip)
     session._should_reset_connector = True
-    log.warning("api.telegram.org pinned to %s (TELEGRAM_API_IP)", pinned_ip)
+    if proxy:
+        log.warning("api.telegram.org accessed via TELEGRAM_API_PROXY")
+    if pinned_ip:
+        log.warning("api.telegram.org pinned to %s (TELEGRAM_API_IP)", pinned_ip)
     return session

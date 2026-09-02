@@ -225,6 +225,9 @@ def test_poll_deposits_first_run(monkeypatch):
         def tg_id_of_address(self, addr):
             return None
 
+        def tg_id_of_proxy(self, addr):
+            return None
+
     monkeypatch.setattr(base, "ledger", FakeLedger())
 
     scanned = []
@@ -266,6 +269,9 @@ def test_poll_deposits_chunked_sweep_checkpoints_each_chunk(monkeypatch):
             pass
 
         def tg_id_of_address(self, addr):
+            return None
+
+        def tg_id_of_proxy(self, addr):
             return None
 
     fl = FakeLedger()
@@ -311,6 +317,9 @@ def test_poll_deposits_chunk_cap_limits_single_sweep(monkeypatch):
         def tg_id_of_address(self, addr):
             return None
 
+        def tg_id_of_proxy(self, addr):
+            return None
+
     fl = FakeLedger()
     monkeypatch.setattr(base, "ledger", fl)
 
@@ -345,6 +354,9 @@ def test_poll_deposits_skips_x402_paid_tx(monkeypatch):
             seen["pending"] = (tx, sender, amount)
 
         def tg_id_of_address(self, addr):
+            return None
+
+        def tg_id_of_proxy(self, addr):
             return None
 
     monkeypatch.setattr(base, "ledger", FakeLedger())
@@ -394,6 +406,9 @@ def test_poll_deposits_rescans_recent_blocks_for_reorg(monkeypatch):
         def tg_id_of_address(self, addr):
             return None
 
+        def tg_id_of_proxy(self, addr):
+            return None
+
     monkeypatch.setattr(base, "ledger", FakeLedger())
     monkeypatch.setattr(
         base,
@@ -426,6 +441,9 @@ def test_poll_deposits_auto_claims_linked(monkeypatch):
 
         def tg_id_of_address(self, addr):
             return 777 if addr == "0xowner" else None
+
+        def tg_id_of_proxy(self, addr):
+            return None
 
         def claim_for_sender(self, tg_id, sender):
             calls.append((tg_id, sender))

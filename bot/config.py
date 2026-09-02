@@ -33,6 +33,10 @@ TRUST_PROXY_XFF: bool = os.environ.get("TRUST_PROXY_XFF", "0") == "1"
 POLL_SECONDS: int = int(os.environ.get("POLL_SECONDS", "15"))
 # Pin api.telegram.org to a reachable Telegram DC IP when DNS is poisoned/blocked.
 TELEGRAM_API_IP: str = os.environ.get("TELEGRAM_API_IP", "").strip()
+# HTTP(S)/SOCKS proxy for Bot API calls when api.telegram.org is blocked at
+# the network level (e.g. regional censorship). Examples:
+#   http://user:pass@host:8080   socks5://host:1080   socks5h://host:1080
+TELEGRAM_API_PROXY: str = os.environ.get("TELEGRAM_API_PROXY", "").strip()
 # RPC request timeout in seconds (guards watchers/web against a hung provider)
 RPC_TIMEOUT_SECONDS: int = int(os.environ.get("RPC_TIMEOUT_SECONDS", "10"))
 
@@ -100,7 +104,7 @@ MAX_WALLETS_PER_USER: int = int(os.environ.get("MAX_WALLETS_PER_USER", "10"))
 WITHDRAW_LARGE_USDC_THRESHOLD: int = int(os.environ.get("WITHDRAW_LARGE_USDC_THRESHOLD", "500"))
 
 # Owner/announcements (/broadcast) — Telegram numeric ID
-ADMIN_TG_ID: int | None = int(os.environ.get("ADMIN_TG_ID", "0")) or None
+ADMIN_TG_ID: int | None = int(os.environ.get("ADMIN_TG_ID", "0") or "0") or None
 
 # Group rain (/rain <amount> [count]) — giveaway, pure transfers
 RAIN_MAX_USDC: Decimal = Decimal(os.environ.get("RAIN_MAX_USDC", "100"))
@@ -142,13 +146,23 @@ AI_MAX_QUESTION_LEN: int = int(os.environ.get("AI_MAX_QUESTION_LEN", "1000"))
 AI_MAX_ANSWER_CHARS: int = int(os.environ.get("AI_MAX_ANSWER_CHARS", "3500"))
 
 # Agent: Telegram user ID for the autonomous agent (0 = disabled)
-AGENT_TG_ID: int = int(os.environ.get("AGENT_TG_ID", "0"))
+AGENT_TG_ID: int = int(os.environ.get("AGENT_TG_ID", "0") or "0")
 
 # Solvency alerting: Telegram chat/user ID for emergency alerts
-SOLVENCY_ALERT_CHAT_ID: int = int(os.environ.get("SOLVENCY_ALERT_CHAT_ID", os.environ.get("ADMIN_TG_ID", "0")))
+SOLVENCY_ALERT_CHAT_ID: int = int(
+    (os.environ.get("SOLVENCY_ALERT_CHAT_ID", "") or os.environ.get("ADMIN_TG_ID", "") or "0").strip() or "0"
+)
 
 # CREATE2 factory contract address (empty = disabled)
 CREATE2_FACTORY_ADDRESS: str = os.environ.get("CREATE2_FACTORY_ADDRESS", "")
+# Deployed USDCForwarder implementation the factory's proxies delegatecall.
+CREATE2_FACTORY_FORWARDER: str = os.environ.get("CREATE2_FACTORY_FORWARDER", "")
+# Full EIP-1167 proxy creation bytecode (prefix + forwarder + suffix). Must
+# match what Create2Factory deploys so offline address derivation matches.
+CREATE2_PROXY_BYTECODE: str = os.environ.get("CREATE2_PROXY_BYTECODE", "").lower()
+# Operator opt-in (see bot/create2.py): CREATE2 stays disabled until set to "1"
+# AND a factory + forwarder are configured.
+CREATE2_SAFE_DEPOSITS: bool = os.environ.get("CREATE2_SAFE_DEPOSITS", "") == "1"
 
 # Oracle for on-chain prediction markets (address + private key)
 ORACLE_ADDRESS: str = os.environ.get("ORACLE_ADDRESS", "")
@@ -177,8 +191,11 @@ PAYWALL_MAX_CONTENT_LEN: int = int(os.environ.get("PAYWALL_MAX_CONTENT_LEN", "40
 # the daily housekeeping watcher so the DB stays bounded in active groups.
 MESSAGE_INDEX_RETENTION_SECONDS: int = int(os.environ.get("MESSAGE_INDEX_RETENTION_SECONDS", str(90 * 86400)))
 
-# USDC on Base mainnet (well-audited, no custom contracts in MVP)
-USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+# USDC on Base mainnet (well-audited, no custom contracts in MVP).
+# Override for testnet (Base Sepolia: 0x036CbD53842c5426634e7929541eC2318f3dCF7e).
+USDC_ADDRESS: str = os.environ.get(
+    "USDC_ADDRESS", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+)
 USDC_DECIMALS = 6
 
 # Wrapped ETH on Base (canonical address shared with the OP stack).

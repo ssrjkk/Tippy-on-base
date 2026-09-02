@@ -78,11 +78,24 @@ async def cmd_balance(message: types.Message) -> None:
 @common.router.message(Command('deposit'))
 async def cmd_deposit(message: types.Message) -> None:
     await common.ledger.ensure_user(message.from_user.id, message.from_user.username)
+    # With CREATE2 enabled, materialise the user's proxy and register it so the
+    # deposit scanner credits them when the proxy forwards funds to the hot
+    # wallet. Deterministic address; idempotent deploy (no-op if already live).
+    from bot.create2 import get_deposit_address, is_create2_enabled
+    if is_create2_enabled():
+        c2_addr = get_deposit_address(message.from_user.id)
+        if c2_addr:
+            await common.create2.deploy_proxy(message.from_user.id)
+            await common.ledger.set_create2_proxy(message.from_user.id, c2_addr)
     text = await _deposit_text(message.from_user.id)
     lang = await common.user_lang(message.from_user.id)
-    qr = await common._qr_bytes(str(common.base.hot_wallet()))
+    show_addr = str(common.base.hot_wallet())
+    if is_create2_enabled() and get_deposit_address(message.from_user.id):
+        show_addr = get_deposit_address(message.from_user.id)
+    qr = await common._qr_bytes(show_addr)
+    scan = common.config.BASESCAN_URL
     if qr:
-        await message.answer_photo(BufferedInputFile(qr, filename='qr.png'), caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=i18n.t(lang, 'deposit_qr_button'), url='https://basescan.org/address/' + str(common.base.hot_wallet()))]]))
+        await message.answer_photo(BufferedInputFile(qr, filename='qr.png'), caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=i18n.t(lang, 'deposit_qr_button'), url=f'{scan}/address/' + show_addr)]]))
     else:
         await message.answer(text)
 

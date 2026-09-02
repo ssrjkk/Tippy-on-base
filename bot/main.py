@@ -27,7 +27,7 @@ else:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 log = logging.getLogger("tipbot")
-_session = make_session(config.TELEGRAM_API_IP)
+_session = make_session(config.TELEGRAM_API_PROXY, config.TELEGRAM_API_IP)
 _bot_kwargs = {"session": _session} if _session else {}
 bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML), **_bot_kwargs)
 
@@ -110,6 +110,24 @@ async def channel_watcher() -> None:
             log.warning('channel kick check failed: %s', e)
         await asyncio.sleep(config.POLL_SECONDS * 4)
 
+async def create2_sweep_watcher() -> None:
+    """Move USDC from per-user CREATE2 proxies to the hot wallet.
+
+    The proxy itself only holds funds; until ``forward()`` runs the deposit
+    scanner (which watches the hot wallet) never sees them. Runs alongside the
+    deposit poller; idle when CREATE2 is disabled or no proxy holds USDC.
+    """
+    from bot.create2 import is_create2_enabled, sweep_all_proxies
+    while True:
+        try:
+            if is_create2_enabled():
+                swept = await sweep_all_proxies()
+                if swept:
+                    log.info('create2 sweep: forwarded for %s', swept)
+        except Exception as e:
+            log.warning('create2 sweep failed: %s', e)
+        await asyncio.sleep(config.POLL_SECONDS)
+
 async def housekeeping_watcher() -> None:
     """Daily DB housekeeping: prune the reaction-tip message index so tables
     do not grow forever in active groups (balances live in `users`, so no
@@ -190,7 +208,7 @@ async def main() -> None:
                 log.warning('notification outbox worker failed: %s', e)
             await asyncio.sleep(5)
 
-    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot)), asyncio.create_task(onchain_watcher(bot)), asyncio.create_task(x402_reconcile_watcher()), asyncio.create_task(notification_outbox_worker())]
+    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(create2_sweep_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot)), asyncio.create_task(onchain_watcher(bot)), asyncio.create_task(x402_reconcile_watcher()), asyncio.create_task(notification_outbox_worker())]
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

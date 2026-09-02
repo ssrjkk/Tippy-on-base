@@ -282,6 +282,8 @@ def _poll_deposits_sync() -> list[dict]:
                 continue  # already credited via /api/x402 — never double-credit
             ledger.record_pending(dep["tx_hash"], dep["sender"], dep["amount_micro"])
             owner = ledger.tg_id_of_address(dep["sender"])
+            if owner is None:
+                owner = ledger.tg_id_of_proxy(dep["sender"])
             if owner:
                 for c in ledger.claim_for_sender(owner, dep["sender"]):
                     credited.append(

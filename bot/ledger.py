@@ -440,6 +440,13 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
     next_retry_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
     created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
 );
+CREATE TABLE IF NOT EXISTS create2_proxies (
+    tg_id        BIGINT PRIMARY KEY,
+    proxy_address TEXT NOT NULL,
+    deployed     BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_create2_proxies_addr ON create2_proxies (LOWER(proxy_address));
 """
 
 class Ledger:
@@ -628,6 +635,46 @@ class Ledger:
                 (address,),
             ).fetchone()
         return row["tg_id"] if row else None
+
+    def set_create2_proxy(self, tg_id: int, proxy_address: str) -> None:
+        """Record a CREATE2 proxy address for a tg_id (upsert).
+
+        Only touches create2_proxies — the deposit scanner resolves the owner
+        via tg_id_of_proxy. Never writes wallet_links so a user's own /link stays
+        untouched (wallet_links.address is UNIQUE and owned by the /link flow).
+        """
+        with self._lock:
+            self.ensure_user(tg_id, None)
+            self._conn.execute(
+                "INSERT INTO create2_proxies (tg_id, proxy_address) "
+                "VALUES (%s, %s) "
+                "ON CONFLICT (tg_id) DO UPDATE SET proxy_address = EXCLUDED.proxy_address",
+                (tg_id, proxy_address.lower()),
+            )
+            self._conn.commit()
+
+    def tg_id_of_proxy(self, proxy_address: str) -> int | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT tg_id FROM create2_proxies WHERE LOWER(proxy_address) = LOWER(%s)",
+                (proxy_address,),
+            ).fetchone()
+        return row["tg_id"] if row else None
+
+    def create2_proxy_of(self, tg_id: int) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT proxy_address FROM create2_proxies WHERE tg_id = %s",
+                (tg_id,),
+            ).fetchone()
+        return row["proxy_address"] if row else None
+
+    def list_create2_proxies(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT tg_id, proxy_address, deployed FROM create2_proxies ORDER BY tg_id"
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # ---------- balances / transfers ----------
 

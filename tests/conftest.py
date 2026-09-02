@@ -20,6 +20,9 @@ os.environ.setdefault("WALLET_ENC_KEY", "a" * 32)  # Test-only: 32-char key for 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-ci-only-32ch!")
 os.environ.setdefault("X402_ENABLED", "1")
 os.environ.setdefault("X402_RECEIVE_ADDRESS", "0x0000000000000000000000000000000000000001")
+os.environ.setdefault("ADMIN_TG_ID", "111")
+# Tests fake Base MAINNET (chain 8453); the repo .env points to Sepolia.
+os.environ.setdefault("EXPECTED_CHAIN_ID", "8453")
 TEST_DB_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5432/tipbot_test"
 )
@@ -35,7 +38,7 @@ TABLES = [
     "paywall_channels", "paywall_subscriptions", "markets", "market_shares",
     "suspicious_activity", "community_treasuries", "treasury_transactions",
     "treasury_proposals", "treasury_votes", "onchain_markets", "onchain_trades", "gas_drips",
-    "notification_outbox",
+    "notification_outbox", "create2_proxies",
 ]
 
 
@@ -67,6 +70,20 @@ def _pg_test_db():
     if last is not None:
         pytest.exit(f"PostgreSQL not available: {last}", returncode=1)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_create2(monkeypatch):
+    """Disable the CREATE2 deposit flow for tests by default.
+
+    The real .env wires a live factory + forwarder; handler tests (e.g.
+    cmd_deposit, e2e user journey) must not deploy proxies to Mainnet/Base.
+    test_create2.py re-enables it explicitly via its own monkeypatches.
+    """
+    import bot.create2
+
+    monkeypatch.setattr(bot.create2, "FACTORY_ADDRESS", None)
+    monkeypatch.setattr(bot.create2, "CREATE2_SAFE_DEPOSITS", False)
 
 
 @pytest.fixture()

@@ -35,7 +35,7 @@
 Кошелёк уже сгенерирован в `.env` (раздел `HOT_WALLET_KEY`), публичный адрес:
 
 ```
-0x862b4C5ab70a9b6B432cBF0dFD8a28230ccf0b67
+0xcd49f5b85B7C20EF2970f526c3D9058af5a240F0
 ```
 
 Пополни его с любого кошелька/биржи (Base network!):
@@ -45,7 +45,7 @@
 | **ETH** | газ на выводы пользователей | ~$5 (0.002 ETH) |
 | **USDC** | стартовая ликвидность выплат | $20–50 |
 
-Проверь пополнение на `basescan.org/address/0x862b...`.
+Проверь пополнение на `basescan.org/address/0xcd49...`.
 
 > ⚠️ Нельзя пополнить «потом»: первый же вывод пользователя жжёт газ из
 > этого кошелька. Если ETH кончится — выводы будут падать и автоматически
@@ -434,6 +434,38 @@ docker compose restart bot web
 - [ ] X-аккаунт с постом «мы live»
 - [ ] Loom-демо по сценарию GRANT.md §4
 - [ ] `.env` на сервере, бэкап БД настроен
+
+## Этап 6. CREATE2 персональные депозитные адреса (Base Sepolia)
+
+Вместо общего hot-адреса каждый юзер получает детерминированный USDC-адрес
+(EIP-1167 прокси за `Create2Factory`). Отправка USDC на прокси `forward()`-ится
+на hot wallet, а сканер зачисляет по `owner = tg_id_of_proxy(sender)`.
+
+```env
+CREATE2_FACTORY_ADDRESS=0x6Ee14Ee07f09B40505c0E815dAbFb97251a26f0c
+CREATE2_FACTORY_FORWARDER=0x2c66CD5393Fba7e1EFdfD866B0A622aA29D032cB
+CREATE2_PROXY_BYTECODE=<EIP-1167 init: 3d602d…f3>
+CREATE2_SAFE_DEPOSITS=1
+```
+
+- Деплой (идемпотентный): `scripts/deploy_create2_factory.py` (флаги `--wire-env`, `--dry-run`).
+- Схема БД — таблица `create2_proxies` (миграция `004_create2_proxies`).
+- Sweep: `create2_sweep_watcher` каждые `POLL_SECONDS` форвардит прокси с балансом >0.
+- Диагностика E2E: `D:/Dev/Temp/opencode/e2e_create2.py` (копируется как `/app/e2e_create2.py`).
+- **Комиссия за деплой прокси** платит hot wallet (ETH на Sepolia), юзер платит только gas сети за Swift USDC.
+
+## Этап 7. Telecom API через прокси
+
+Если `api.telegram.org` заблокирован на уровне сети, бот может ходить через
+HTTP(S)/SOCKS-прокси. Задайте в `.env` (перезапустить после этого):
+
+```env
+TELEGRAM_API_PROXY=socks5h://user:pass@host:1080   # или http://host:8080
+# TELEGRAM_API_IP=149.154.167.220                  # пининг IP при отравленном DNS (опция)
+```
+
+Без `TELEGRAM_API_PROXY` бот использует прямое подключение (обычный случай).
+
 ## Required secrets
 
 - `BOT_TOKEN`, `HOT_WALLET_KEY` — see `.env.example`.
