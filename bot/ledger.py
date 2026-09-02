@@ -1519,9 +1519,15 @@ class Ledger:
 
     def get_bet(self, bet_id: int) -> dict | None:
         with self._lock:
-            return self._conn.execute(
+            cur = self._conn.execute(
                 "SELECT * FROM bets WHERE id = %s", (bet_id,)
-            ).fetchone()
+            )
+            row = cur.fetchone()
+            # Pure read: drop the open transaction so the shared connection
+            # never pins table locks for a later DDL (CREATE/ALTER), matching
+            # the rollback-after-request convention documented on rollback().
+            self._conn.rollback()
+            return row
 
     def get_bet_for_update(self, bet_id: int) -> dict | None:
         """SELECT FOR UPDATE — exclusive lock on the bets row until the
