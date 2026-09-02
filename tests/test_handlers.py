@@ -503,39 +503,37 @@ def test_cmd_tip_throttled(ledger):
 # ---------- withdraw ----------
 
 
-async def _mock_send_ab(to, amt):
-    return "0x" + "ab" * 32
-
-
-def test_cmd_withdraw_success(ledger, monkeypatch):
+def test_cmd_withdraw_success(ledger):
     ledger.credit(ALICE, 10_000_000, "deposit")
-    monkeypatch.setattr(handlers.base, "send_usdc", _mock_send_ab)
     m = Message(f"/withdraw {ACC.address} 5", from_id=ALICE)
     run(cmd_withdraw(m))
-    assert "Отправлено" in m.answers[0][0]
-    assert "basescan.org/tx/0x" in m.answers[0][0]
-    # 5 USDC sent + 1% fee (50_000 micro) debited.
+    # Batching: the withdrawal is QUEUED (not instantly sent), flushed later.
+    assert "очередь" in m.answers[0][0]
+    # 5 USDC enqueued + 1% fee (50_000 micro) debited.
     assert ledger.balance(ALICE) == Decimal("4.950000")
+    q = ledger.withdraw_queue()
+    assert len(q) == 1
+    assert q[0]["status"] == "queued"
+    assert q[0]["counterparty"].lower() == ACC.address.lower()
+    assert q[0]["amount"] == 5_000_000
+    assert ledger.pending_withdraws() == []  # not yet broadcast
 
 
-async def _mock_send_boom(to, amt):
-    raise RuntimeError("rpc down")
-
-
-def test_cmd_withdraw_refund_on_failure(ledger, monkeypatch):
+def test_cmd_withdraw_queued_not_refunded_by_handler(ledger):
+    """A failed chain send no longer refunds at the handler: the row stays
+    queued and the batch flush (watcher) handles success/refund, so a crash
+    between enqueue and flush cannot silently lose the user's debited USDC."""
     ledger.credit(ALICE, 10_000_000, "deposit")
-
-    monkeypatch.setattr(handlers.base, "send_usdc", _mock_send_boom)
     m = Message(f"/withdraw {ACC.address} 5", from_id=ALICE)
     run(cmd_withdraw(m))
-    assert "Ошибка" in m.answers[0][0]
-    assert ledger.balance(ALICE) == Decimal("10.000000")  # full refund incl. fee
+    assert "очередь" in m.answers[0][0]
+    assert ledger.balance(ALICE) == Decimal("4.950000")
     rows = ledger._conn.execute(
         "SELECT kind, status FROM tx_log WHERE tg_id = %s AND kind = 'withdraw' ORDER BY id",
         (ALICE,),
     ).fetchall()
-    # One withdraw row kept as an audit trail, marked refunded; no fee charged.
-    assert [(r["kind"], r["status"]) for r in rows] == [("withdraw", "refunded")]
+    # Enqueued, not refunded — the row waits in the batch queue.
+    assert [(r["kind"], r["status"]) for r in rows] == [("withdraw", "queued")]
 
 
 def test_cmd_withdraw_bad_format(ledger):
@@ -560,16 +558,11 @@ def test_cmd_withdraw_below_min(ledger):
     assert ledger.balance(ALICE) == Decimal("10.000000")
 
 
-async def _mock_send_ef(to, amt):
-    return "0x" + "ef" * 32
-
-
-def test_cmd_withdraw_throttled(ledger, monkeypatch):
-    monkeypatch.setattr(handlers.base, "send_usdc", _mock_send_ef)
+def test_cmd_withdraw_throttled(ledger):
     ledger.credit(ALICE, 10_000_000, "deposit")
     m1 = Message(f"/withdraw {ACC.address} 1", from_id=ALICE)
     run(cmd_withdraw(m1))
-    assert "Отправлено" in m1.answers[0][0]
+    assert "очередь" in m1.answers[0][0]
     m2 = Message(f"/withdraw {ACC.address} 1", from_id=ALICE)
     run(cmd_withdraw(m2))
     assert "Слишком часто" in m2.answers[0][0]
@@ -582,14 +575,10 @@ def test_cmd_withdraw_daily_limit(ledger, monkeypatch):
     monkeypatch.setattr(handlers.config, "MONEY_CMD_COOLDOWN_SECONDS", 0)
     ledger.credit(ALICE, 100_000_000, "deposit")
 
-    async def _mock_send_cd(to, amt):
-        return "0x" + "cd" * 32
-
-    monkeypatch.setattr(handlers.base, "send_usdc", _mock_send_cd)
     for _ in range(config.MAX_WITHDRAWS_PER_DAY):
         m = Message(f"/withdraw {ACC.address} 1", from_id=ALICE)
         run(cmd_withdraw(m))
-        assert "Отправлено" in m.answers[0][0]
+        assert "очередь" in m.answers[0][0]
     m = Message(f"/withdraw {ACC.address} 1", from_id=ALICE)
     run(cmd_withdraw(m))
     assert "Лимит" in m.answers[0][0]

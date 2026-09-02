@@ -60,6 +60,23 @@ HOT_WALLET = Web3.to_checksum_address(w3.eth.account.from_key(config.HOT_WALLET_
 USDC = Web3.to_checksum_address(config.USDC_ADDRESS)
 usdc = w3.eth.contract(address=USDC, abi=config.ERC20_ABI)
 
+# Minimal TipBotVault surface used for batch payouts (contracts/TipBotVault.sol).
+# The hot wallet is the vault's relayer (see scripts/deploy_vault.py), so it can
+# sign batchDistribute; the vault enforces a daily relayer cap + reserve check.
+_VAULT_BATCH_ABI = [
+    {
+        "type": "function",
+        "name": "batchDistribute",
+        "stateMutability": "nonpayable",
+        "constant": False,
+        "inputs": [
+            {"name": "recipients", "type": "address[]", "internalType": "address[]"},
+            {"name": "amounts", "type": "uint256[]", "internalType": "uint256[]"},
+        ],
+        "outputs": [{"name": "total", "type": "uint256", "internalType": "uint256"}],
+    }
+]
+
 
 def _rpc_call(fn, *args, **kwargs):
     """Try `fn` on primary RPC, then fall back to alternatives.
@@ -413,6 +430,142 @@ async def send_usdc(to_address: str, amount_micro: int) -> str:
     responsive during the ~10s RPC call.
     """
     return await asyncio.to_thread(_send_usdc_sync, to_address, amount_micro)
+
+
+# ---------------------------------------------------------------------------
+# Withdraw batching (P1): /withdraw enqueues; a watcher flushes the queue in a
+# single TipBotVault.batchDistribute tx (one on-chain tx for many recipients),
+# saving gas vs. N direct transfers. See docs/ECOSYSTEM_DESIGN.md §4.1.
+# ---------------------------------------------------------------------------
+
+def _row_fee_micro(row: dict) -> int:
+    """Fee stored in the withdraw row's `note` ('fee=<micro>'), else recompute."""
+    note = row.get("note") or ""
+    if note.startswith("fee="):
+        try:
+            return int(note.split("=", 1)[1])
+        except (ValueError, IndexError):
+            pass
+    return withdraw_fee(int(row["amount"]))
+
+
+def _refund_rows(rows: list[dict]) -> None:
+    """Refund claimed rows that can never be sent (vault failure, no fallback)."""
+    for r in rows:
+        ledger.refund_withdraw(
+            int(r["id"]), int(r["tg_id"]), int(r["amount"]) + _row_fee_micro(r)
+        )
+
+
+def _batch_must_flush(queue: list[dict], now: int) -> bool:
+    """True when ANY flush threshold is met (time / count / amount)."""
+    oldest = min(int(r["created_at"]) for r in queue)
+    total = sum(int(r["amount"]) for r in queue)
+    amount_micro = int(
+        (config.WITHDRAW_BATCH_FLUSH_USDC * Decimal(10**config.USDC_DECIMALS)).to_integral_value(
+            rounding=ROUND_CEILING
+        )
+    )
+    return (
+        (now - oldest) >= config.WITHDRAW_BATCH_FLUSH_SECONDS
+        or len(queue) >= config.WITHDRAW_BATCH_FLUSH_COUNT
+        or total >= amount_micro
+    )
+
+
+def _send_vault_batch_sync(rows: list[dict]) -> str:
+    """Send one TipBotVault.batchDistribute tx from the hot wallet (vault relayer).
+
+    Returns the tx hash; raises BroadcastUncertainError when broadcast could not
+    confirm, or a plain Exception on revert/insufficient reserves etc.
+    """
+    recipients = [Web3.to_checksum_address(r["counterparty"]) for r in rows]
+    amounts = [int(r["amount"]) for r in rows]
+    vault = w3.eth.contract(
+        address=Web3.to_checksum_address(config.VAULT_ADDRESS), abi=_VAULT_BATCH_ABI
+    )
+    acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
+    with _send_lock:
+        nonce = core.get_transaction_count(HOT_WALLET, first=w3)
+        base_fee = core.get_latest_base_fee(first=w3)
+        priority = w3.to_wei("0.01", "gwei")
+        max_fee = base_fee * 2 + priority
+        tx = vault.functions.batchDistribute(recipients, amounts).build_transaction(
+            {
+                "from": HOT_WALLET,
+                "nonce": nonce,
+                "maxPriorityFeePerGas": priority,
+                "maxFeePerGas": max_fee,
+                "chainId": w3.eth.chain_id,
+            }
+        )
+        signed = acct.sign_transaction(tx)
+        tx_hash = "0x" + Web3.keccak(signed.raw_transaction).hex()
+        try:
+            raw = core.send_raw_transaction(signed.raw_transaction, first=w3)
+        except Exception:
+            raise BroadcastUncertainError(tx_hash) from None
+        return "0x" + raw.hex()
+
+
+def _flush_direct(rows: list[dict]) -> dict:
+    """No-vault fallback: send each queued row via the direct hot-wallet path."""
+    sent = 0
+    for r in rows:
+        wd_id, to, amt = int(r["id"]), r["counterparty"], int(r["amount"])
+        try:
+            tx_hash = _send_usdc_sync(to, amt)
+            ledger.mark_withdraw_done(wd_id, tx_hash)
+            sent += 1
+        except BroadcastUncertainError as e:
+            ledger.set_withdraw_pending_hash(wd_id, e.tx_hash)
+            sent += 1
+        except Exception as e:
+            log.warning("direct batch withdraw %s failed (%s); refunding", wd_id, e)
+            ledger.refund_withdraw(wd_id, int(r["tg_id"]), amt + _row_fee_micro(r))
+    return {"flushed": sent, "mode": "direct"}
+
+
+def _flush_withdraw_batch_sync() -> dict:
+    """One flush sweep of the queued-withdraw batch. Returns a result report."""
+    queue = ledger.withdraw_queue()
+    if not queue:
+        return {"flushed": 0, "mode": "none"}
+    now = int(time.time())
+    if not _batch_must_flush(queue, now):
+        return {"flushed": 0, "mode": "waiting"}
+
+    claimed = ledger.claim_withdraw_batch([int(r["id"]) for r in queue])
+    if not claimed:
+        return {"flushed": 0, "mode": "none"}
+    claimed_set = set(claimed)
+    claimed_rows = [r for r in queue if int(r["id"]) in claimed_set]
+
+    if config.VAULT_ADDRESS:
+        try:
+            tx_hash = _send_vault_batch_sync(claimed_rows)
+            ledger.set_withdraw_batch_hash(claimed, tx_hash)
+            return {"flushed": len(claimed), "mode": "vault", "tx_hash": tx_hash}
+        except BroadcastUncertainError as e:
+            ledger.set_withdraw_batch_hash(claimed, e.tx_hash)
+            return {"flushed": len(claimed), "mode": "vault_uncertain", "tx_hash": e.tx_hash}
+        except Exception as e:
+            log.warning("vault batchDistribute failed (%s); %s", e,
+                        "direct fallback" if config.WITHDRAW_BATCH_FALLBACK_DIRECT
+                        else "refunding claimed")
+            if not config.WITHDRAW_BATCH_FALLBACK_DIRECT:
+                _refund_rows(claimed_rows)
+                return {"flushed": 0, "mode": "vault_failed_refunded", "error": str(e)}
+            result = _flush_direct(claimed_rows)
+            result["mode"] = "direct_fallback"
+            return result
+
+    return _flush_direct(claimed_rows)
+
+
+async def flush_withdraw_batch() -> dict:
+    """Async: run one batch-flush sweep off the event loop."""
+    return await asyncio.to_thread(_flush_withdraw_batch_sync)
 
 
 async def kick_expired_channel_subscriptions(bot) -> int:

@@ -866,6 +866,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "❌ Insufficient balance. Need <b>{need} USDC</b> (amount + fee {fee}).\nBalance: <b>{bal} USDC</b>",
         "zh": "❌ 余额不足。需要 <b>{need} USDC</b>（金额 + 手续费 {fee}）。\n余额：<b>{bal} USDC</b>",
     },
+    "withdraw_queued": {
+        "ru": "⏳ <b>{amount} USDC</b> поставлено в очередь на вывод (комиссия {fee}).\nОтправлю батчем в течение минуты — пришлю TX, когда подтвердится.",
+        "en": "⏳ <b>{amount} USDC</b> queued for withdrawal (fee {fee}).\nI'll send it batched within a minute; you'll get the TX once it confirms.",
+        "zh": "⏳ <b>{amount} USDC</b> 已加入提现队列（手续费 {fee}）。\n将在一分钟内批量发送，确认后会提供交易号。",
+    },
     "withdraw_ok": {
         "ru": "✅ Отправлено <b>{amount} USDC</b> (комиссия {fee})\nTx: <a href=\"{tx_url}\"><code>{tx}</code></a>",
         "en": "✅ Sent <b>{amount} USDC</b> (fee {fee})\nTx: <a href=\"{tx_url}\"><code>{tx}</code></a>",

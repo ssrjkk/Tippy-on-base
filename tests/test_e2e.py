@@ -359,15 +359,23 @@ def test_e2e_user_journey_deposit_tip_withdraw(e2e, monkeypatch):
     run(cmd_stats(m))
     assert "Отправил" in m.answers[0][0]
 
-    # withdraw 10 USDC (1% fee = 0.1): balance 110 - 10 - 0.1 = 99.9
+    # withdraw 10 USDC (1% fee = 0.1): balance 110 - 10 - 0.1 = 99.9.
+    # /withdraw only ENQUEUES (P1 batching); the watcher flushes later.
     to_addr = ACC2.address
     m = Message(f"/withdraw {to_addr} 10", from_id=ALICE, bot=bot)
     run(cmd_withdraw(m))
-    assert "Отправлено" in m.answers[0][0]
-    assert "basescan.org/tx/" in m.answers[0][0]
-    assert captured3["to"] == to_addr and captured3["amount"] == 10 * USDC
+    assert "очередь" in m.answers[0][0]
     assert e2e.balance(ALICE) == Decimal("99.900000")
     assert e2e.withdrawals_today(ALICE) == 1
+    q = e2e.withdraw_queue()
+    assert len(q) == 1 and q[0]["status"] == "queued"
+    assert e2e.pending_withdraws() == []  # queued rows aren't pending
+
+    # flush the batch (direct fallback since VAULT_ADDRESS is unset in tests)
+    monkeypatch.setattr(config, "WITHDRAW_BATCH_FLUSH_COUNT", 1)
+    report = run(base.flush_withdraw_batch())
+    assert report["mode"] == "direct" and report["flushed"] == 1
+    assert captured3["to"] == to_addr and captured3["amount"] == 10 * USDC
     # fee was recorded and the withdraw row is 'done'
     fees = e2e._conn.execute(
         "SELECT amount FROM tx_log WHERE kind='fee' AND tg_id=%s ORDER BY id DESC LIMIT 1",
@@ -920,17 +928,22 @@ def test_e2e_withdraw_refund_paths(e2e, monkeypatch):
     fund(e2e, ALICE, 100)
     to_addr = ACC2.address
 
-    # 1) send fails on-chain (after broadcast) -> row stays pending with the
-    # pre-computed tx hash; the watcher settles from the real receipt later.
-    # NEVER an immediate refund — that would double-pay if the tx confirmed.
+    # 1) /withdraw only ENQUEUES; the batch FLUSH then fails on-chain (after
+    # broadcast) -> row stays pending with the pre-computed tx hash; the
+    # watcher settles from the real receipt later. NEVER an immediate refund —
+    # that would double-pay if the tx confirmed.
     m = Message(f"/withdraw {to_addr} 10", from_id=ALICE, bot=bot)
+    run(cmd_withdraw(m))
+    assert "очередь" in m.answers[0][0]
+    assert e2e.balance(ALICE) == Decimal("89.900000")  # debited (amount+fee), not refunded
+    assert e2e.withdraw_queue()[0]["status"] == "queued"
 
     def boom(raw):
         raise ConnectionError("no gas")
     base.w3.eth.send_raw_transaction = boom
-    run(cmd_withdraw(m))
-    assert "⏳" in m.answers[0][0]  # BroadcastUncertainError message
-    assert e2e.balance(ALICE) == Decimal("89.900000")  # debited (amount+fee), not refunded
+    monkeypatch.setattr(config, "WITHDRAW_BATCH_FLUSH_COUNT", 1)
+    report = run(base.flush_withdraw_batch())
+    assert report["mode"] == "direct" and report["flushed"] == 1
     assert len(e2e.pending_withdraws()) == 1  # pending with tx hash
 
     # 2) pending with no tx_hash, past the stuck timeout -> refunded by watcher

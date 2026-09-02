@@ -124,6 +124,19 @@ DEPOSIT_SCAN_MAX_CHUNKS_PER_SWEEP: int = int(os.environ.get("DEPOSIT_SCAN_MAX_CH
 # considered stuck/dropped and the user is refunded automatically.
 WITHDRAW_STUCK_TIMEOUT_SECONDS: int = int(os.environ.get("WITHDRAW_STUCK_TIMEOUT_SECONDS", "600"))
 
+# Withdrawal batching (P1): /withdraw enqueues; a watcher flushes the queue in
+# a single TipBotVault.batchDistribute tx to save gas (one on-chain tx for many
+# recipients instead of N). The queue flushes when ANY threshold is hit.
+#   WITHDRAW_BATCH_FLUSH_SECONDS - max age of the oldest queued withdraw
+#   WITHDRAW_BATCH_FLUSH_COUNT   - max queued withdrawals in one batch
+#   WITHDRAW_BATCH_FLUSH_USDC    - max total queued value (USDC)
+# If VAULT_ADDRESS is unset (no vault), the watcher falls back to sending each
+# queued row via the direct hot-wallet transfer (no batch, no gas saving).
+WITHDRAW_BATCH_FLUSH_SECONDS: int = int(os.environ.get("WITHDRAW_BATCH_FLUSH_SECONDS", "60"))
+WITHDRAW_BATCH_FLUSH_COUNT: int = int(os.environ.get("WITHDRAW_BATCH_FLUSH_COUNT", "20"))
+WITHDRAW_BATCH_FLUSH_USDC: Decimal = Decimal(os.environ.get("WITHDRAW_BATCH_FLUSH_USDC", "50"))
+WITHDRAW_BATCH_FALLBACK_DIRECT: bool = os.environ.get("WITHDRAW_BATCH_FALLBACK_DIRECT", "1") == "1"
+
 # Dead-market protection: after close_at + grace, anyone can refund a market.
 MARKET_GRACE_HOURS: int = int(os.environ.get("MARKET_GRACE_HOURS", "72"))
 GRACE_WARN_BEFORE_HOURS: int = int(os.environ.get("GRACE_WARN_BEFORE_HOURS", "12"))

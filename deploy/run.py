@@ -105,6 +105,7 @@ async def _start_bot_polling() -> None:
     tasks = [
         asyncio.create_task(_deposit_watcher(tg_bot, ledger)),
         asyncio.create_task(_withdraw_watcher()),
+        asyncio.create_task(_batch_withdraw_watcher()),
         asyncio.create_task(_market_watcher(tg_bot, ledger)),
         asyncio.create_task(_channel_watcher(tg_bot)),
         asyncio.create_task(_create2_sweep_watcher()),
@@ -163,6 +164,16 @@ async def _withdraw_watcher():
         except Exception as e:
             log.warning("withdraw check failed: %s", e)
         await asyncio.sleep(config.POLL_SECONDS)
+
+
+async def _batch_withdraw_watcher():
+    from bot import base
+    while True:
+        try:
+            await base.flush_withdraw_batch()
+        except Exception as e:
+            log.warning("batch withdraw flush failed: %s", e)
+        await asyncio.sleep(config.WITHDRAW_BATCH_FLUSH_SECONDS)
 
 
 async def _create2_sweep_watcher():

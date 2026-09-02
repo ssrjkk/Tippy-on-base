@@ -59,6 +59,20 @@ async def withdraw_watcher() -> None:
             log.warning('withdraw check failed: %s', e)
         await asyncio.sleep(config.POLL_SECONDS)
 
+async def batch_withdraw_watcher() -> None:
+    """Flush queued withdrawals through TipBotVault.batchDistribute.
+
+    /withdraw enqueues; this watcher flushes the queue (gaas-saving batched
+    payout) whenever a flush condition is met. Runs on a shorter cadence than
+    the slow refund sweep so isolated withdrawals still land promptly.
+    """
+    while True:
+        try:
+            await base.flush_withdraw_batch()
+        except Exception as e:
+            log.warning('batch withdraw flush failed: %s', e)
+        await asyncio.sleep(config.WITHDRAW_BATCH_FLUSH_SECONDS)
+
 async def market_watcher() -> None:
     """Once per cycle: remind market creators to resolve markets whose deadline
     passed (both parimutuel bets and LMSR AMM markets). Without resolution the
@@ -208,7 +222,7 @@ async def main() -> None:
                 log.warning('notification outbox worker failed: %s', e)
             await asyncio.sleep(5)
 
-    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(create2_sweep_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot)), asyncio.create_task(onchain_watcher(bot)), asyncio.create_task(x402_reconcile_watcher()), asyncio.create_task(notification_outbox_worker())]
+    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(batch_withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(create2_sweep_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot)), asyncio.create_task(onchain_watcher(bot)), asyncio.create_task(x402_reconcile_watcher()), asyncio.create_task(notification_outbox_worker())]
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

@@ -409,25 +409,13 @@ async def cmd_withdraw(message: types.Message) -> None:
     if wd_id is None:
         await message.answer(i18n.t(lang, 'tip_no_balance'))
         return
-    try:
-        tx_hash = await common.base.send_usdc(to_address, amount_micro)
-        await common.ledger.mark_withdraw_done(wd_id, tx_hash)
-        await common.ledger.record_withdraw_fee(message.from_user.id, to_address, fee_micro, tx_hash)
-        tx_url = f'{common.config.BASESCAN_URL}/tx/{tx_hash}'
-        await message.answer(i18n.t(lang, 'withdraw_ok', amount=common._fmt(amount_micro), fee=common._fmt(fee_micro), tx_url=tx_url, tx=tx_hash[:22]))
-    except common.base.BroadcastUncertainError as e:
-        # The tx may or may not have landed in the mempool; its hash is known.
-        # NEVER refund now (a late-confirming tx would double-pay). Record the
-        # hash and let the pending-withdraw watcher settle from the real
-        # receipt (success -> done, revert/stuck -> refund, RPC down -> wait).
-        await common.ledger.set_withdraw_pending_hash(wd_id, e.tx_hash)
-        await message.answer(
-            i18n.t(lang, 'withdraw_checking',
-                   amount=common._fmt(amount_micro), fee=common._fmt(fee_micro))
-        )
-    except Exception as e:
-        await common.ledger.refund_withdraw(wd_id, message.from_user.id, total_micro)
-        await message.answer(i18n.t(lang, 'withdraw_error', error=str(e)))
+    # Batching (P1): the withdrawal is enqueued and flushed on-chain by the
+    # batch watcher (TipBotVault.batchDistribute) once a time/count/amount
+    # threshold is hit — many withdrawals settle in ONE tx (gas savings).
+    await message.answer(
+        i18n.t(lang, 'withdraw_queued',
+               amount=common._fmt(amount_micro), fee=common._fmt(fee_micro))
+    )
 
 @common.router.message(Command('tx'))
 async def cmd_tx(message: types.Message) -> None:

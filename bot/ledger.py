@@ -23,6 +23,16 @@ audit_log = logging.getLogger("tipbot.audit")
 MICRO = 10**config.USDC_DECIMALS
 
 
+def _extract_fee(note: str | None) -> int:
+    """Parse fee from tx_log note field ('fee=12345' → 12345)."""
+    if note and note.startswith("fee="):
+        try:
+            return int(note.split("=", 1)[1])
+        except (ValueError, IndexError):
+            pass
+    return 0
+
+
 # ---------- LMSR AMM math (prediction markets v2) ----------
 #
 # The Logarithmic Market Scoring Rule (Hanson 2003) prices outcome shares:
@@ -1198,11 +1208,13 @@ class Ledger:
     def reserve_withdraw(
         self, tg_id: int, to_address: str, amount_micro: int, fee_micro: int
     ) -> int | None:
-        """Atomically debit amount+fee and reserve a 'pending' withdrawal row.
+        """Atomically debit amount+fee and enqueue a withdrawal.
 
         Returns the tx_log id, or None if the user lacks the balance. The row is
-        written BEFORE any on-chain send, so the withdraw watcher can refund it if
-        the process crashes between debit and send (tx_hash stays NULL).
+        written BEFORE any on-chain send and starts as **queued**: it sits in the
+        batch-payout queue until the batch watcher flushes it (via
+        TipBotVault.batchDistribute or a direct transfer). Crash between debit and
+        send is safe — the queued row survives and is flushed/refunded later.
         """
         with self._lock:
             total = amount_micro + fee_micro
@@ -1214,11 +1226,18 @@ class Ledger:
                 return None
             cur = self._conn.execute(
                 "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note, status) "
-                "VALUES ('withdraw', %s, %s, %s, %s, 'pending') RETURNING id",
+                "VALUES ('withdraw', %s, %s, %s, %s, 'queued') RETURNING id",
                 (tg_id, to_address, amount_micro, f"fee={fee_micro}"),
             )
+            wd_id = int(cur.fetchone()["id"])
+            if fee_micro > 0:
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note, status) "
+                    "VALUES ('fee', %s, %s, %s, %s, 'done')",
+                    (tg_id, to_address, fee_micro, f"withdraw_id={wd_id}"),
+                )
             self._conn.commit()
-            return int(cur.fetchone()["id"])
+            return wd_id
 
     def record_withdraw_fee(
         self, tg_id: int, to_address: str, fee_micro: int, tx_hash: str
@@ -1361,13 +1380,18 @@ class Ledger:
         return rows
 
     def withdrawals_today(self, tg_id: int) -> int:
-        """Successful withdrawals in the last 24h (anti gas-griefing)."""
+        """Withdrawal requests in the last 24h (anti gas-griefing).
+
+        Counts both `queued` (in the batch, not yet on-chain) and `done`
+        (actually paid out) rows, so a user cannot spam the queue past
+        MAX_WITHDRAWS_PER_DAY while withdrawals sit batched.
+        """
         since = int(time.time()) - 86400
         with self._lock:
             row = self._conn.execute(
                 "SELECT COUNT(*) AS c FROM tx_log "
                 "WHERE tg_id = %s AND kind = 'withdraw' "
-                "AND COALESCE(status, 'done') = 'done' AND created_at >= %s",
+                "AND COALESCE(status, 'done') IN ('queued', 'done') AND created_at >= %s",
                 (tg_id, since),
             ).fetchone()
         return int(row["c"])
@@ -1436,7 +1460,11 @@ class Ledger:
             ).fetchall()
 
     def pending_withdraws(self) -> list[dict]:
-        """Withdraw rows not yet confirmed: status IS NULL (legacy), 'pending'.
+        """Withdraw rows not yet confirmed: status IS NULL (legacy) or 'pending'.
+
+        `queued` rows (waiting in the batch queue, not yet sent on-chain) are
+        deliberately excluded — the refund sweep must NOT refund something that
+        has not been broadcast yet.
 
         `note` carries `fee=<micro>` (written by reserve_withdraw) so the
         refund sweep can restore the exact debited total for rows created
@@ -1446,7 +1474,7 @@ class Ledger:
             return self._conn.execute(
                 "SELECT id, tg_id, counterparty, amount, tx_hash, status, note, created_at "
                 "FROM tx_log WHERE kind = 'withdraw' "
-                "AND COALESCE(status, '') NOT IN ('done', 'refunded') ORDER BY id"
+                "AND COALESCE(status, '') NOT IN ('done', 'refunded', 'queued') ORDER BY id"
             ).fetchall()
 
     def mark_withdraw_done(self, wd_id: int, tx_hash: str) -> None:
@@ -1454,6 +1482,52 @@ class Ledger:
             self._conn.execute(
                 "UPDATE tx_log SET tx_hash = %s, status = 'done' WHERE id = %s",
                 (tx_hash, wd_id),
+            )
+            self._conn.commit()
+
+    def withdraw_queue(self) -> list[dict]:
+        """Withdraw rows sitting in the batch queue (not yet broadcast on-chain).
+
+        Returned oldest-first so the batch-payout watcher can flush a bounded
+        window. Each row carries the recipient (`counterparty`), the payout
+        amount (`amount`, fee separately held in `note`), and `created_at`.
+        """
+        with self._lock:
+            return self._conn.execute(
+                "SELECT id, tg_id, counterparty, amount, tx_hash, status, note, created_at "
+                "FROM tx_log WHERE kind = 'withdraw' AND status = 'queued' ORDER BY id"
+            ).fetchall()
+
+    def claim_withdraw_batch(self, wd_ids: list[int]) -> list[int]:
+        """Atomically claim queued rows for broadcast.
+
+        Flips `queued` -> `pending` and returns ONLY the ids that were still
+        `queued` (i.e. this caller won the claim). A concurrent batch watcher
+        cannot double-broadcast the same row: after the first claim the row is
+        `pending` and no longer selected by `withdraw_queue()`. A crash between
+        claim and broadcast leaves rows `pending` with tx_hash NULL, which the
+        refund sweep refunds after WITHDRAW_STUCK_TIMEOUT — safe, nothing sent.
+        """
+        if not wd_ids:
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "UPDATE tx_log SET status = 'pending' "
+                "WHERE id = ANY(%s) AND status = 'queued' RETURNING id",
+                (wd_ids,),
+            ).fetchall()
+            self._conn.commit()
+            return [int(r["id"]) for r in rows]
+
+    def set_withdraw_batch_hash(self, wd_ids: list[int], tx_hash: str) -> None:
+        """Associate a broadcast tx hash with claimed (pending) rows."""
+        if not wd_ids:
+            return
+        with self._lock:
+            self._conn.execute(
+                "UPDATE tx_log SET tx_hash = %s "
+                "WHERE id = ANY(%s) AND status = 'pending'",
+                (tx_hash, wd_ids),
             )
             self._conn.commit()
 
@@ -1481,6 +1555,10 @@ class Ledger:
             )
             self._conn.execute(
                 "UPDATE tx_log SET status = 'refunded' WHERE id = %s", (wd_id,)
+            )
+            self._conn.execute(
+                "UPDATE tx_log SET status = 'refunded' "
+                "WHERE kind = 'fee' AND note = %s", (f"withdraw_id={wd_id}",)
             )
             self._conn.commit()
 

@@ -180,10 +180,12 @@ def test_reserve_withdraw_atomic(ledger):
     wd_id = ledger.reserve_withdraw(ALICE, "0x" + "b" * 40, 5_000_000, 50_000)
     assert wd_id is not None
     assert ledger.balance(ALICE) == Decimal("4.950000")  # amount + fee debited
-    rows = ledger.pending_withdraws()
+    # Rows start queued (pending batch broadcast), not in the pending sweep.
+    assert ledger.pending_withdraws() == []
+    rows = ledger.withdraw_queue()
     assert len(rows) == 1
     assert rows[0]["id"] == wd_id
-    assert rows[0]["status"] == "pending"
+    assert rows[0]["status"] == "queued"
     assert rows[0]["amount"] == 5_000_000
     # Short balance -> nothing reserved, balance untouched.
     assert ledger.reserve_withdraw(ALICE, "0x" + "c" * 40, 100_000_000, 1) is None
@@ -194,7 +196,6 @@ def test_record_withdraw_fee_logs(ledger):
     fund(ledger, ALICE, 10_000_000)
     wd_id = ledger.reserve_withdraw(ALICE, "0x" + "b" * 40, 5_000_000, 50_000)
     ledger.mark_withdraw_done(wd_id, "0x" + "f" * 64)
-    ledger.record_withdraw_fee(ALICE, "0x" + "b" * 40, 50_000, "0x" + "f" * 64)
     rows = ledger.history(ALICE, 10)
     kinds = [r["kind"] for r in rows]
     assert kinds == ["fee", "withdraw", "deposit"]
