@@ -73,6 +73,28 @@ def _pg_test_db():
 
 
 @pytest.fixture(autouse=True)
+def _clean_shared_ledger():
+    """Reset the shared bot.ledger.ledger singleton before each test.
+
+    Tests that don't request the `ledger` fixture call the import-time
+    singleton directly. `_pg_test_db` drops the database at session start,
+    which kills that connection; on reconnect to the brand-new empty DB a
+    statement can fail ("relation does not exist") and leave the connection
+    in [INERROR], poisoning every later fixture-less test (e.g.
+    test_bet_card_unknown -> InFailedSqlTransaction). Rolling it back here
+    drops that stale transaction so each test starts from a clean state.
+    """
+    try:
+        from bot import ledger as ledger_mod
+        led = getattr(ledger_mod, "ledger", None)
+        if led is not None:
+            led.rollback()
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_create2(monkeypatch):
     """Disable the CREATE2 deposit flow for tests by default.
 

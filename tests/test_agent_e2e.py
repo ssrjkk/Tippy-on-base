@@ -40,6 +40,13 @@ class TestE2EAgentCycle:
 
         # Provide a key so _call_llm reaches the mocked urlopen below.
         monkeypatch.setenv("AI_API_KEY", "test-key")
+        # Assign the signal revenue to a real tg_id, or sell_signal refuses to
+        # create the paywall ("AGENT_TG_ID not configured"). setenv is not
+        # enough: both config modules capture AGENT_TG_ID at import time.
+        import agent.config
+        import bot.config
+        monkeypatch.setattr(bot.config, "AGENT_TG_ID", 42)
+        monkeypatch.setattr(agent.config, "AGENT_TG_ID", 42)
 
         # Mock news
         mock_news = MagicMock()
