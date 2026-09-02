@@ -300,6 +300,7 @@ async def api_user(tg_id: int, request: Request) -> dict:
     username = v.get('username')
     if not username:
         try:
+            from bot import tip_targets
             bn = await tip_targets.display_name_for(tg_id)
         except Exception:
             bn = None

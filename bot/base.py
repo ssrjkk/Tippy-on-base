@@ -267,6 +267,14 @@ def _poll_deposits_sync() -> list[dict]:
     last = ledger.last_block()
     if last == 0:
         last = current - config.DEPOSIT_SCAN_LOOKBACK_BLOCKS
+    elif current < last:
+        # The chain rolled back below our checkpoint (reorg/new fork): if we
+        # kept scanning from `last` we'd skip any deposit that landed in the
+        # rolled-back window. Rewind to force a re-scan of the recent confirmed
+        # blocks; record_pending/claim_for_sender are idempotent so a re-scan
+        # can never double-credit.
+        log.warning("chain reorg detected: current=%s < last=%s; rewinding scan window", current, last)
+        last = current - 1
     if current <= last:
         return credited
     start = max(1, min(last + 1, current - config.DEPOSIT_CONFIRM_BLOCKS))
@@ -336,19 +344,14 @@ def _check_pending_withdrawn_sync() -> None:
                 ledger.refund_withdraw(wd_id, int(row["tg_id"]), total_micro)
             continue
         try:
-            receipt = w3.eth.get_transaction_receipt(tx_hash)
-            rpc_ok = True
+            receipt = core.get_transaction_receipt(tx_hash, first=w3)
         except Exception:
-            log.warning("get_transaction_receipt(%s) failed", tx_hash, exc_info=True)
-            receipt = None
-            rpc_ok = False
+            # RPC unreachable on every provider: we cannot determine the tx
+            # state. Do NOT refund — a successful on-chain tx would otherwise
+            # be double-paid (user keeps the funds and gets a refund). Leave
+            # the row pending; the next sweep re-checks once RPC recovers.
+            continue
         if receipt is None:
-            if not rpc_ok:
-                # RPC unreachable: we cannot determine the tx state. Do NOT
-                # refund — a successful on-chain tx would otherwise be
-                # double-paid (user keeps the funds and gets a refund). Leave
-                # the row pending; the next sweep re-checks once RPC recovers.
-                continue
             if now - int(row["created_at"]) > config.WITHDRAW_STUCK_TIMEOUT_SECONDS:
                 ledger.refund_withdraw(wd_id, int(row["tg_id"]), total_micro)
         elif bool(receipt.get("status")):
@@ -370,8 +373,8 @@ def _send_usdc_sync(to_address: str, amount_micro: int) -> str:
     """
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
     with _send_lock:
-        nonce = w3.eth.get_transaction_count(HOT_WALLET, "pending")
-        base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
+        nonce = core.get_transaction_count(HOT_WALLET, first=w3)
+        base_fee = core.get_latest_base_fee(first=w3)
         # Priority tip 0.01 gwei (Base's practical floor; 0.001 gwei can be too
         # low and leave a withdrawal stuck until the watcher refunds it). The
         # max fee leaves ~2x headroom over the current base fee so a short fee
@@ -396,7 +399,7 @@ def _send_usdc_sync(to_address: str, amount_micro: int) -> str:
         # late-confirming tx would be double-paid by an immediate refund.
         tx_hash = "0x" + Web3.keccak(signed.raw_transaction).hex()
         try:
-            raw = w3.eth.send_raw_transaction(signed.raw_transaction)
+            raw = core.send_raw_transaction(signed.raw_transaction, first=w3)
         except Exception:
             raise BroadcastUncertainError(tx_hash) from None
         return "0x" + raw.hex()

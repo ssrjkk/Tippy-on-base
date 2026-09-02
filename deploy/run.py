@@ -107,6 +107,12 @@ async def _start_bot_polling() -> None:
         asyncio.create_task(_withdraw_watcher()),
         asyncio.create_task(_market_watcher(tg_bot, ledger)),
         asyncio.create_task(_channel_watcher(tg_bot)),
+        asyncio.create_task(_create2_sweep_watcher()),
+        asyncio.create_task(_housekeeping_watcher(ledger)),
+        asyncio.create_task(_solvency_watcher(tg_bot)),
+        asyncio.create_task(_onchain_watcher(tg_bot)),
+        asyncio.create_task(_x402_reconcile_watcher()),
+        asyncio.create_task(_notification_outbox_worker(tg_bot, ledger)),
     ]
 
     log.info("bot polling starting")
@@ -157,6 +163,82 @@ async def _withdraw_watcher():
         except Exception as e:
             log.warning("withdraw check failed: %s", e)
         await asyncio.sleep(config.POLL_SECONDS)
+
+
+async def _create2_sweep_watcher():
+    """Move USDC from per-user CREATE2 proxies to the hot wallet.
+
+    The proxy only holds funds; until ``forward()`` runs, the deposit scanner
+    (which watches the hot wallet) never sees them. Idle when CREATE2 is
+    disabled or no proxy holds USDC.
+    """
+    from bot import config, create2
+    while True:
+        try:
+            if create2.is_create2_enabled():
+                swept = await create2.sweep_all_proxies()
+                if swept:
+                    log.info("create2 sweep: forwarded for %s", swept)
+        except Exception as e:
+            log.warning("create2 sweep failed: %s", e)
+        await asyncio.sleep(config.POLL_SECONDS)
+
+
+async def _housekeeping_watcher(ledger):
+    """Daily DB housekeeping: prune the reaction-tip message index so tables
+    do not grow forever in active groups (balances live in `users`, so no
+    money-critical data is touched)."""
+    from bot import config
+    while True:
+        try:
+            removed = await ledger.prune_message_index(config.MESSAGE_INDEX_RETENTION_SECONDS)
+            if removed:
+                log.info("pruned %s stale message-index rows", removed)
+        except Exception as e:
+            log.warning("housekeeping failed: %s", e)
+        await asyncio.sleep(86400)
+
+
+async def _x402_reconcile_watcher():
+    from bot import config
+    from web.x402 import reconcile_stale_x402
+    while True:
+        try:
+            n = await reconcile_stale_x402()
+            if n:
+                log.warning("x402 reconcile finalized %d stale payment(s)", n)
+        except Exception as e:
+            log.warning("x402 reconcile failed: %s", e)
+        await asyncio.sleep(config.POLL_SECONDS * 8)
+
+
+async def _notification_outbox_worker(bot, ledger):
+    while True:
+        try:
+            items = await asyncio.to_thread(ledger.dequeue_notifications)
+            for n in items:
+                try:
+                    await bot.send_message(n["chat_id"], n["text"])
+                    await asyncio.to_thread(ledger.ack_notification, n["id"])
+                except Exception:
+                    await asyncio.to_thread(ledger.retry_notification, n["id"], 30)
+        except Exception as e:
+            log.warning("notification outbox worker failed: %s", e)
+        await asyncio.sleep(5)
+
+
+async def _solvency_watcher(bot):
+    """P0 solvency/vault monitor: alert if liabilities exceed on-chain USDC."""
+    from bot.solvency import solvency_watcher
+
+    await solvency_watcher(bot)
+
+
+async def _onchain_watcher(bot):
+    """DM creators of closed on-chain markets; auto-cancel overdue ones."""
+    from bot.handlers.onchain import onchain_watcher
+
+    await onchain_watcher(bot)
 
 
 async def _market_watcher(bot, ledger):

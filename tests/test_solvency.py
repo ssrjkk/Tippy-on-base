@@ -1,7 +1,6 @@
 """Solvency monitor: reserves vs liabilities checks and alerts."""
 
-import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 

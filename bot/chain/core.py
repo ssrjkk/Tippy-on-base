@@ -75,6 +75,7 @@ _cb_open_until: float = 0.0
 
 
 def _cb_record_failure() -> None:
+    global _cb_open_until
     now = time.monotonic()
     _cb_fail_times.append(now)
     # Prune old entries outside the window
@@ -145,6 +146,123 @@ def _contract_read(contract_address: str, abi: list, fn_name: str, *args):
             continue
     _cb_record_failure()
     raise RuntimeError(f"all RPC providers failed for {fn_name}: {last_err}")
+
+
+def _active_then_fallbacks(first=None):
+    """Providers to try in order: the requested `first` (or the active
+    provider), then the configured fallbacks.
+
+    `core.w3` may be rebound by operators/tests to a provider not in
+    _w3_providers; that active one is always tried first so a single rebind
+    (or a mocked provider) still controls the money path. Callers in `base`
+    pass `first` = their own legacy provider (base.w3) so existing fakes that
+    patch that object keep working, with the core RPC pool as a fallback.
+    """
+    active = first or w3
+    seen = {id(active)}
+    yield active
+    if id(w3) not in seen:
+        seen.add(id(w3))
+        yield w3
+    for p in _w3_providers:
+        if id(p) not in seen:
+            seen.add(id(p))
+            yield p
+
+
+def send_raw_transaction(raw: bytes, first=None) -> bytes:
+    """Broadcast a signed raw tx, trying the active provider then fallbacks.
+
+    `raw` is already signed and nonce-locked by the caller. Re-broadcasting
+    the same raw tx to another provider on timeout is safe (same nonce, same
+    hash); at most one lands and a late reply from the first is identical.
+    """
+    _cb_check()
+    last_err = None
+    for provider in _active_then_fallbacks(first):
+        try:
+            result = provider.eth.send_raw_transaction(raw)
+            _cb_reset()
+            return result
+        except Exception as e:
+            last_err = e
+            url = getattr(getattr(provider, "provider", None), "endpoint_uri", "?")
+            log.debug("RPC %s send_raw_transaction failed: %s", url, e)
+            continue
+    _cb_record_failure()
+    raise RuntimeError(f"all RPC providers failed to broadcast tx: {last_err}")
+
+
+def get_transaction_count(address: str, first=None) -> int:
+    """Pending nonce of `address` across providers (failover)."""
+    _cb_check()
+    last_err = None
+    for provider in _active_then_fallbacks(first):
+        try:
+            result = provider.eth.get_transaction_count(Web3.to_checksum_address(address), "pending")
+            _cb_reset()
+            return int(result)
+        except Exception as e:
+            last_err = e
+            continue
+    _cb_record_failure()
+    raise RuntimeError(f"all RPC providers failed to read nonce: {last_err}")
+
+
+def get_latest_base_fee(first=None) -> int:
+    """baseFeePerGas of the latest block across providers (failover)."""
+    _cb_check()
+    last_err = None
+    for provider in _active_then_fallbacks(first):
+        try:
+            result = provider.eth.get_block("latest")["baseFeePerGas"]
+            _cb_reset()
+            return int(result)
+        except Exception as e:
+            last_err = e
+            continue
+    _cb_record_failure()
+    raise RuntimeError(f"all RPC providers failed to read base fee: {last_err}")
+
+
+def get_code(address: str, first=None) -> bytes:
+    """Runtime code of an address across providers (failover)."""
+    _cb_check()
+    last_err = None
+    for provider in _active_then_fallbacks(first):
+        try:
+            result = provider.eth.get_code(Web3.to_checksum_address(address))
+            _cb_reset()
+            return result
+        except Exception as e:
+            last_err = e
+            continue
+    _cb_record_failure()
+    raise RuntimeError(f"all RPC providers failed to read code: {last_err}")
+
+
+def get_transaction_receipt(tx_hash: str, first=None) -> dict | None:
+    """Transaction receipt across providers (failover).
+
+    Returns None when the tx is not yet mined on the first responsive provider
+    (web3 returns None rather than raising for a missing receipt).
+    """
+    _cb_check()
+    for provider in _active_then_fallbacks(first):
+        try:
+            result = provider.eth.get_transaction_receipt(tx_hash)
+            # Receipts are chain-wide: a provider returning None means the tx
+            # is not yet mined (web3 returns None rather than raising). That is
+            # authoritative — there is no point querying another RPC.
+            if result is None:
+                return None
+            _cb_reset()
+            return dict(result)
+        except Exception as e:
+            last_err = e
+            continue
+    _cb_record_failure()
+    raise RuntimeError(f"all RPC providers failed to read receipt: {last_err}")
 
 
 def hot_wallet() -> ChecksumAddress:

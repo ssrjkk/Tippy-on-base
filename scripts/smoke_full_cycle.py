@@ -14,15 +14,20 @@ Environment:
     SMOKE_CHAIN - chain id (default: 84532)
 """
 from __future__ import annotations
-import json, os, sys, time, warnings
+
+import json
+import os
+import sys
+import time
+import warnings
 from pathlib import Path
 
 warnings.filterwarnings("ignore", message=".*MismatchedABI.*")
 
 import solcx
-from web3 import Web3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from web3 import Web3
 
 ROOT = Path(__file__).resolve().parent.parent
 solcx.set_solc_version("0.8.24")
@@ -211,14 +216,14 @@ def main():
     trader_addr = Web3.to_checksum_address(trader.address)
     FUND = 100_000_000
     build_and_send(w3, acct, usdc.functions.mint(deployer, FUND * 2))
-    for attempt in range(10):
+    for _attempt in range(10):
         abi_bal = usdc.functions.balanceOf(deployer).call()
         if abi_bal == FUND * 2:
             break
         time.sleep(2)
     ok(abi_bal == FUND * 2, f"deployer has 2*FUND (got {abi_bal})")
     build_and_send(w3, acct, usdc.functions.transfer(trader_addr, FUND))
-    for attempt in range(10):
+    for _attempt in range(10):
         tb = usdc.functions.balanceOf(trader_addr).call()
         db = usdc.functions.balanceOf(deployer).call()
         if tb == FUND and db == FUND:
@@ -236,7 +241,7 @@ def main():
         "gas": 21000, "maxFeePerGas": w3.eth.gas_price,
         "maxPriorityFeePerGas": w3.eth.gas_price,
     })
-    for attempt in range(10):
+    for _attempt in range(10):
         if w3.eth.get_balance(trader_addr) >= gas_fund_wei:
             break
         time.sleep(2)
@@ -246,7 +251,7 @@ def main():
     say("4", f"createMarket(2, subsidy=$10, closesAt=now+{args.market_close_secs}s)")
     closes_at = int(time.time()) + args.market_close_secs
     build_and_send(w3, acct, usdc.functions.approve(mkt_addr, 10**15))
-    for attempt in range(10):
+    for _attempt in range(10):
         al = usdc.functions.allowance(deployer, mkt_addr).call()
         if al >= 10_000_000:
             break
@@ -278,7 +283,7 @@ def main():
     tb = usdc.functions.balanceOf(trader_addr).call()
     smkt = usdc.functions.balanceOf(mkt_addr).call()
     build_and_send(w3, trader, usdc.functions.approve(mkt_addr, 10**15))
-    for attempt in range(10):
+    for _attempt in range(10):
         tal = usdc.functions.allowance(trader_addr, mkt_addr).call()
         if tal >= 10_000_000:
             break
@@ -306,7 +311,7 @@ def main():
         time.sleep(3)
     say("6b", "ownerResolve(winner=1)")
     build_and_send(w3, acct, mkt.functions.ownerResolve(market_id, 1))
-    for attempt in range(10):
+    for _attempt in range(10):
         mm = market_dict(mkt.functions.markets(market_id).call())
         if mm["resolved"]:
             break
@@ -321,7 +326,7 @@ def main():
     time.sleep(2)
     payout = mkt.events.Redeemed().process_receipt(trac)[0]["args"]["usdcMicro"]
     ok(payout == SHARES, f"payout==shares ({payout}=={SHARES})")
-    for attempt in range(10):
+    for _attempt in range(10):
         burned = mkt.functions.balanceOf(trader_addr, market_id * 256 + 1).call()
         if burned == 0:
             break

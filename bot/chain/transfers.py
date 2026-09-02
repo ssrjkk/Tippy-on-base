@@ -29,15 +29,16 @@ def _build_and_send(build_fn) -> str:
     network.assert_base_chain_sync()
     acct = core.w3.eth.account.from_key(config.HOT_WALLET_KEY)
     with _send_lock:
-        n = core.w3.eth.get_transaction_count(core.HOT_WALLET, "pending")
-        base_fee = int(core.w3.eth.get_block("latest")["baseFeePerGas"])
+        n = core.get_transaction_count(core.HOT_WALLET)
+        base_fee = core.get_latest_base_fee()
         # Priority tip 0.01 gwei (Base's practical floor; lower tips can leave
         # a tx stuck). Max fee ~2x headroom absorbs short fee spikes.
         priority = core.w3.to_wei("0.01", "gwei")
         max_fee = base_fee * 2 + priority
         tx = build_fn(n, max_fee, priority)
         signed = acct.sign_transaction(tx)
-        return "0x" + core.w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+        raw = core.send_raw_transaction(signed.raw_transaction)
+        return "0x" + raw.hex()
 
 
 def _send_eth_sync(to_address: str, amount_wei: int) -> str:

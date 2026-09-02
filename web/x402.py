@@ -251,9 +251,9 @@ async def x402_tip(request: Request) -> JSONResponse:
 
     # Official x402 (X-PAYMENT header, scheme "exact"): verify + settle + credit.
     resource = f'/api/x402/tip?recipient={recipient}&amount={amount_micro / MICRO:g}'
-    invoice = lambda error='payment required': _invoice_response(
-        amount_micro, resource=resource, description=resource, error=error
-    )
+
+    def invoice(error='payment required'):
+        return _invoice_response(amount_micro, resource=resource, description=resource, error=error)
 
     async def settle_and_credit(nonce, settlement_tx, payer, settled_value):
         return await ledger.finalize_x402_credit(
@@ -318,9 +318,9 @@ async def x402_paywall(request: Request) -> JSONResponse:
     price_micro = int(item['price_micro'])
     # Official x402 (X-PAYMENT header, scheme "exact").
     resource = f'/api/x402/paywall?item={raw_item}&amount={amount_micro / MICRO:g}'
-    invoice = lambda error='payment required', amount=price_micro: _invoice_response(
-        amount, resource=resource, description=resource, error=error, item=raw_item
-    )
+
+    def invoice(error='payment required', amount=price_micro):
+        return _invoice_response(amount, resource=resource, description=resource, error=error, item=raw_item)
     if amount_micro < price_micro:
         return _invoice_response(price_micro, item=raw_item)
 

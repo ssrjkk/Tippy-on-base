@@ -149,28 +149,18 @@ def get_deposit_address(tg_id: int) -> str:
 def _build_and_send(build_fn) -> str:
     """Shared signing path for CREATE2 admin txs (proxy deploy / forward sweep).
 
-    Mirrors bot.chain.transfers._build_and_send: chain-id guard first, then a
-    shared send lock + pending-nonce read so concurrent sends can't race.
+    Delegates to bot.chain.transfers._build_and_send so CREATE2 admin txs share
+    the exact nonce lock, fee math and RPC failover as every other hot-wallet
+    send (chain-id guard, single _send_lock, failover across providers).
     Returns the tx hash.
     """
-    from bot.chain import core, network
-    from bot.chain.transfers import _send_lock
+    from bot.chain.transfers import _build_and_send as _chain_build_and_send
 
-    network.assert_base_chain_sync()
-    acct = core.w3.eth.account.from_key(config.HOT_WALLET_KEY)
-    with _send_lock:
-        n = core.w3.eth.get_transaction_count(core.HOT_WALLET, "pending")
-        base_fee = int(core.w3.eth.get_block("latest")["baseFeePerGas"])
-        priority = core.w3.to_wei("0.01", "gwei")
-        max_fee = base_fee * 2 + priority
-        tx = build_fn(n, max_fee, priority)
-        signed = acct.sign_transaction(tx)
-        return "0x" + core.w3.eth.send_raw_transaction(signed.raw_transaction).hex()
+    return _chain_build_and_send(build_fn)
 
 
 def _deploy_proxy_sync(tg_id: int) -> str:
-    from bot.chain import core, network
-    from bot.chain.transfers import _send_lock  # noqa: F401 (reuse same lock)
+    from bot.chain import core
 
     factory_addr = core.Web3.to_checksum_address(FACTORY_ADDRESS)
     factory = core.w3.eth.contract(
@@ -201,7 +191,7 @@ def _sweep_proxy_sync(tg_id: int) -> str | None:
     from bot.chain import core
 
     addr = _compute_address(tg_id)
-    if core.w3.eth.get_code(addr) in (b"", b"\x00"):
+    if core.get_code(addr) in (b"", b"\x00"):
         return None
 
     proxy = core.w3.eth.contract(
@@ -254,7 +244,7 @@ def ensure_proxy_deployed(tg_id: int) -> str | None:
     from bot.chain import core
 
     addr = _compute_address(tg_id)
-    if core.w3.eth.get_code(addr) not in (b"", b"\x00"):
+    if core.get_code(addr) not in (b"", b"\x00"):
         return addr  # already deployed
 
     _deploy_proxy_sync(tg_id)

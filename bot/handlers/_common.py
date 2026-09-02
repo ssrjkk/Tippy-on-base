@@ -11,7 +11,7 @@ from decimal import Decimal
 from aiogram import Router, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .. import base, config, i18n, wallets, create2
+from .. import base, config, i18n, wallets
 from .. import qr as qrlib
 from ..ledger import async_ledger as ledger
 

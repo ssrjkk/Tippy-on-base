@@ -1,6 +1,5 @@
 """Tests for reconcile_stale_x402 — the EIP-3009 reservation sweep."""
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

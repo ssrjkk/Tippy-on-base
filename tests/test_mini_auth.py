@@ -11,7 +11,6 @@ from fastapi import HTTPException
 
 from web.mini import INIT_DATA_TTL, verify_init_data
 
-
 BOT_TOKEN = '0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi'
 
 

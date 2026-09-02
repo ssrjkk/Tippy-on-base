@@ -22,7 +22,7 @@ UNLINKED = "0x" + "c3" * 20
 
 
 @pytest.fixture()
-def l():
+def db():
     ledger = Ledger(TEST_DB_URL)
     ledger._conn.execute("TRUNCATE users, wallet_links, user_wallets, link_nonces RESTART IDENTITY")
     ledger._conn.commit()
@@ -47,14 +47,14 @@ def _setup_users(ledger):
 
 
 @pytest.fixture()
-def resolver(l, monkeypatch):
+def resolver(db, monkeypatch):
     """Patch the chain resolver + the async ledger proxy tip_targets uses."""
     from bot.ledger import AsyncLedger
 
     addresses = {}
     monkeypatch.setattr(tip_targets, "resolve_basename_sync",
                         lambda name: addresses.get(name.strip().lower().lstrip("@")))
-    monkeypatch.setattr(tip_targets, "ledger", AsyncLedger(l))
+    monkeypatch.setattr(tip_targets, "ledger", AsyncLedger(db))
     return addresses
 
 
@@ -64,39 +64,39 @@ def _name(owner_addr):
 
 
 @pytest.mark.asyncio
-async def test_basename_to_linked_wallet(l, resolver):
-    _setup_users(l)
+async def test_basename_to_linked_wallet(db, resolver):
+    _setup_users(db)
     resolver["alice.base.eth"] = ALICE_ADDR
     tg, err = await tip_targets.resolve_tip_target("alice.base.eth")
     assert (tg, err) == (ALICE, None)
 
 
 @pytest.mark.asyncio
-async def test_basename_to_custodial_wallet(l, resolver):
-    _setup_users(l)
+async def test_basename_to_custodial_wallet(db, resolver):
+    _setup_users(db)
     resolver["bob.base.eth"] = BOB_CUSTODIAL
     tg, err = await tip_targets.resolve_tip_target("@bob.base.eth")  # @ stripped
     assert (tg, err) == (BOB, None)
 
 
 @pytest.mark.asyncio
-async def test_basename_unlinked_refused(l, resolver):
-    _setup_users(l)
+async def test_basename_unlinked_refused(db, resolver):
+    _setup_users(db)
     resolver["stranger.base.eth"] = UNLINKED
     tg, err = await tip_targets.resolve_tip_target("stranger.base.eth")
     assert tg is None and err == "basename_unknown"
 
 
 @pytest.mark.asyncio
-async def test_basename_unregistered_refused(l, resolver):
-    _setup_users(l)
+async def test_basename_unregistered_refused(db, resolver):
+    _setup_users(db)
     # resolver returns None for names nobody registered (miss = no address)
     tg, err = await tip_targets.resolve_tip_target("ghost.base.eth")
     assert tg is None and err == "basename_unknown"
 
 
 @pytest.mark.asyncio
-async def test_non_basename_falls_back(l, resolver):
+async def test_non_basename_falls_back(db, resolver):
     """Regular Telegram-style targets return (None, None): the caller falls
     back to find_by_username — basenames never shadow them."""
     tg, err = await tip_targets.resolve_tip_target("alice")
@@ -104,8 +104,8 @@ async def test_non_basename_falls_back(l, resolver):
 
 
 @pytest.mark.asyncio
-async def test_resolution_is_cached(l, resolver, monkeypatch):
-    _setup_users(l)
+async def test_resolution_is_cached(db, resolver, monkeypatch):
+    _setup_users(db)
     tip_targets._cache.clear()  # module-level cache: tests must not leak into it
     calls = []
     import bot.tip_targets as tt
@@ -123,12 +123,12 @@ async def test_resolution_is_cached(l, resolver, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_display_name_reverse_resolution(l, resolver, monkeypatch):
+async def test_display_name_reverse_resolution(db, resolver, monkeypatch):
     """A username-less user with a linked address displays their primary
     basename (reverse resolution, cached)."""
-    _setup_users(l)
-    l._conn.execute("UPDATE users SET username = NULL WHERE tg_id = %s", (ALICE,))
-    l._conn.commit()
+    _setup_users(db)
+    db._conn.execute("UPDATE users SET username = NULL WHERE tg_id = %s", (ALICE,))
+    db._conn.commit()
     import bot.tip_targets as tt
     tip_targets._cache.clear()
     tip_targets._reverse_cache.clear()
@@ -152,10 +152,10 @@ async def test_display_name_reverse_resolution(l, resolver, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_display_name_none_without_addresses(l, monkeypatch):
-    l.ensure_user(BOB, "bob")
-    l._conn.execute("UPDATE users SET username = NULL WHERE tg_id = %s", (BOB,))
-    l._conn.commit()
+async def test_display_name_none_without_addresses(db, monkeypatch):
+    db.ensure_user(BOB, "bob")
+    db._conn.execute("UPDATE users SET username = NULL WHERE tg_id = %s", (BOB,))
+    db._conn.commit()
     import bot.tip_targets as tt
     tip_targets._reverse_cache.clear()
 
