@@ -24,6 +24,20 @@ contract SmartAccount {
     uint256 public nonce;
     bool public initialized;
 
+    struct UserOperation {
+        address sender;
+        uint256 nonce;
+        bytes initCode;
+        bytes callData;
+        uint256 callGasLimit;
+        uint256 verificationGasLimit;
+        uint256 preVerificationGas;
+        uint256 maxFeePerGas;
+        uint256 maxPriorityFeePerGas;
+        bytes paymasterAndData;
+        bytes signature;
+    }
+
     event AccountInitialized(address indexed owner);
     event Executed(address indexed dest, uint256 value, bytes data);
     event OwnerTransferred(address indexed oldOwner, address indexed newOwner);
@@ -31,14 +45,19 @@ contract SmartAccount {
     /// @notice Validate a UserOperation. Called by the EntryPoint before execution.
     /// @dev owner signs hash(sender, nonce, chainId, callData); we verify here.
     function validateUserOp(
-        bytes calldata userOp,
+        UserOperation calldata userOp,
         bytes32 userOpHash,
-        uint256 /*missingAccountFunds*/
+        uint256 missingAccountFunds
     ) external returns (uint256 validationData) {
         require(msg.sender == entryPoint(), "SmartAccount: not EntryPoint");
 
-        // Extract signature from last 65 bytes of userOp.signature
-        bytes calldata sig = userOp[userOp.length - 65:];
+        // Pay the EntryPoint for gas execution cost
+        if (missingAccountFunds > 0) {
+            (bool success, ) = msg.sender.call{value: missingAccountFunds}("");
+            require(success, "SmartAccount: prefund transfer failed");
+        }
+
+        bytes calldata sig = userOp.signature;
         bytes32 hash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
         address signer = _recover(hash, sig);
 

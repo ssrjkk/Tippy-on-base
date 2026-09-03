@@ -50,10 +50,22 @@ _ENTRYPOINT_ABI = json.loads("""[
             {"name":"maxPriorityFeePerGas","type":"uint256"},
             {"name":"paymasterAndData","type":"bytes"},
             {"name":"signature","type":"bytes"}
-        ],"name":"userOp","type":"tuple"},
+        ],"name":"userOp","type":"tuple[]"},
         {"name":"beneficiary","type":"address"}
     ],"name":"handleOps","outputs":[],"stateMutability":"nonpayable","type":"function"},
-    {"inputs":[{"name":"userOp","type":"bytes"}],"name":"getUserOpHash","outputs":[{"name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"components":[
+            {"name":"sender","type":"address"},
+            {"name":"nonce","type":"uint256"},
+            {"name":"initCode","type":"bytes"},
+            {"name":"callData","type":"bytes"},
+            {"name":"callGasLimit","type":"uint256"},
+            {"name":"verificationGasLimit","type":"uint256"},
+            {"name":"preVerificationGas","type":"uint256"},
+            {"name":"maxFeePerGas","type":"uint256"},
+            {"name":"maxPriorityFeePerGas","type":"uint256"},
+            {"name":"paymasterAndData","type":"bytes"},
+            {"name":"signature","type":"bytes"}
+        ],"name":"userOp","type":"tuple"}],"name":"getUserOpHash","outputs":[{"name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},
     {"inputs":[],"name":"getNonce","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
     {"inputs":[
         {"components":[
@@ -92,7 +104,8 @@ _SMART_ACCOUNT_ABI = json.loads("""[
 _SMART_ACCOUNT_FACTORY_ABI = json.loads("""[
     {"inputs":[{"name":"tgId","type":"uint256"},{"name":"owner","type":"address"}],"name":"createAccount","outputs":[{"name":"account","type":"address"}],"stateMutability":"nonpayable","type":"function"},
     {"inputs":[{"name":"tgId","type":"uint256"}],"name":"getAddress","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
-    {"inputs":[{"name":"tgId","type":"uint256"}],"name":"isDeployed","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"}
+    {"inputs":[{"name":"tgId","type":"uint256"}],"name":"isDeployed","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"entryPoint","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"}
 ]""")
 
 _PAYMASTER_ABI = json.loads("""[
