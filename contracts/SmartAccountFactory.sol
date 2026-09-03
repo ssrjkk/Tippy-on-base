@@ -19,11 +19,13 @@ contract SmartAccountFactory {
     /// @notice Init code for deploying a SmartAccount.
     bytes internal _accountBytecode;
 
-    constructor(address entryPoint_) {
+    constructor(address entryPoint_, bytes memory accountBytecode_) {
         require(entryPoint_ != address(0), "Factory: zero entryPoint");
+        require(accountBytecode_.length > 0, "Factory: empty account bytecode");
         entryPoint = entryPoint_;
-        // Get runtime bytecode of a deployed SmartAccount to use as init code
-        // The deployer must pass the runtime bytecode as constructor arg.
+        // Init code = the compiled SmartAccount runtime bytecode, passed by the
+        // deploy script so CREATE2 deploys a fresh copy of the account contract.
+        _accountBytecode = accountBytecode_;
     }
 
     /// @notice Deploy (idempotent) a SmartAccount for `tgId` controlled by `owner`.

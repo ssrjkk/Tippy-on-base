@@ -6,6 +6,7 @@ and the fallback behavior when smart wallet is not configured.
 
 import types
 
+from eth_abi import decode as abi_decode
 from web3 import Web3
 
 from bot import smart_wallet as sw
@@ -116,3 +117,139 @@ def test_is_deployed_false(monkeypatch):
 def test_smart_balance_returns_micro(monkeypatch):
     _monkeypatch_smart_wallet(monkeypatch, usdc_balance=5_000_000)
     assert sw.smart_balance(12345) == 5_000_000
+
+
+# ---------------------------------------------------------------------------
+# Pure encoding / signing (no network)
+# ---------------------------------------------------------------------------
+
+def test_execute_selector_is_correct():
+    # keccak("execute(address,uint256,bytes)")[:4] == 0xb61d27f6
+    assert sw._ENCODE_EXECUTE_SELECTOR == "b61d27f6"
+
+
+def test_encode_execute_computes_function_selector():
+    dest = Web3.to_checksum_address("0x" + "ab" * 20)
+    data = Web3.keccak(text="buy()")[:4]
+    encoded = sw._encode_execute(dest, 0, data)
+    assert encoded[:4].hex() == "b61d27f6", "execute selector mismatch"
+    decoded = abi_decode(["address", "uint256", "bytes"], encoded[4:])
+    assert decoded[0].lower() == dest.lower()
+    assert decoded[1] == 0
+    assert decoded[2] == data
+
+
+def test_encode_execute_batch_selector_is_correct():
+    assert sw._ENCODE_EXECUTE_BATCH_SELECTOR == "7c7652c8"
+
+
+def test_encode_execute_batch_decodes_destinations():
+    usdc = Web3.to_checksum_address("0x" + "cd" * 20)
+    market = Web3.to_checksum_address("0x" + "ef" * 20)
+    approve = Web3.keccak(text="approve()")[:4]
+    trade = Web3.keccak(text="buy()")[:4]
+    encoded = sw._encode_execute_batch(usdc, approve, market, trade)
+    assert encoded[:4].hex() == "7c7652c8", "executeBatch selector mismatch"
+    args = abi_decode(
+        ["address", "bytes", "address", "bytes"], encoded[4:]
+    )
+    assert args[0].lower() == usdc.lower()
+    assert args[1] == approve
+    assert args[2].lower() == market.lower()
+    assert args[3] == trade
+
+
+def test_pack_user_op_roundtrip():
+    op = {
+        "sender": "0x" + "11" * 20,
+        "nonce": 7,
+        "initCode": b"",
+        "callData": b"\xab" * 4,
+        "callGasLimit": 100,
+        "verificationGasLimit": 200,
+        "preVerificationGas": 300,
+        "maxFeePerGas": 4,
+        "maxPriorityFeePerGas": 5,
+        "paymasterAndData": b"\x00" * 20,
+        "signature": b"\x99" * 65,
+    }
+    packed = sw._pack_user_op(op)
+    assert packed == (
+        op["sender"], op["nonce"], op["initCode"], op["callData"],
+        op["callGasLimit"], op["verificationGasLimit"],
+        op["preVerificationGas"], op["maxFeePerGas"],
+        op["maxPriorityFeePerGas"], op["paymasterAndData"],
+        op["signature"],
+    )
+
+
+def test_build_paymaster_data_layout():
+    pm = "0x" + "22" * 20
+    tg_id = 123456789
+    sig = b"\x01" * 65
+    sw.config.SMART_WALLET_PAYMASTER_ADDRESS = pm
+    data = sw._build_paymaster_data(tg_id, sig)
+    # 20 (paymaster) + 32 (tg_id) + 65 (sig) = 117 bytes
+    assert len(data) == 20 + 32 + 65
+    assert data[:20] == bytes.fromhex(pm[2:])
+    assert int.from_bytes(data[20:52], "big") == tg_id
+    assert data[52:] == sig
+
+
+def test_eth_account_signing_primitive():
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
+    key = "0x" + "ab" * 32
+    acct = Account.from_key(key)
+    msg = Web3.keccak(text="chainid bullshark") + b"!" * 4
+    # Same signing/verification the UserOp + paymaster flow relies on:
+    # Account.sign_message(encode_defunct(hash)) uses the EIP-191 personal-message
+    # prefix, matching SmartAccount.validateUserOp's ecrecover over the ring
+    # keccak256("\x19Ethereum Signed Message:\n32" || hash).
+    signed = Account.sign_message(encode_defunct(primitive=msg), key)
+    recovered = Account.recover_message(encode_defunct(primitive=msg), signature=signed.signature)
+    assert recovered.lower() == acct.address.lower()
+
+
+def test_sign_paymaster_is_eip191(monkeypatch):
+    # _sign_paymaster must produce a recoverable signature without any network.
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
+    key = "0x" + "cd" * 32
+    acct = Account.from_key(key)
+    user_op_hash = Web3.keccak(text="userop hash")[:32]
+    sig = sw._sign_paymaster(user_op_hash, 123, key)
+    assert len(sig) == 65
+    recovered = Account.recover_message(
+        encode_defunct(primitive=user_op_hash), signature=sig
+    )
+    assert recovered.lower() == acct.address.lower()
+
+
+def test_sign_user_op_uses_mocked_entrypoint_hash(monkeypatch):
+    # The entrypoint stub returns b"\x00"*32 for getUserOpHash; _sign_user_op
+    # must sign that hash and return a 65-byte EIP-191 signature.
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
+    _monkeypatch_smart_wallet(monkeypatch)
+    key = "0x" + "ef" * 32
+    acct = Account.from_key(key)
+    op = {
+        "sender": "0x" + "11" * 20,
+        "nonce": 0,
+        "initCode": b"",
+        "callData": b"\xab" * 4,
+        "callGasLimit": 1,
+        "verificationGasLimit": 2,
+        "preVerificationGas": 3,
+        "maxFeePerGas": 4,
+        "maxPriorityFeePerGas": 5,
+        "paymasterAndData": b"",
+        "signature": b"",
+    }
+    sig = sw._sign_user_op(op, key)
+    assert len(sig) == 65
+    recovered = Account.recover_message(
+        encode_defunct(primitive=b"\x00" * 32), signature=sig
+    )
+    assert recovered.lower() == acct.address.lower()

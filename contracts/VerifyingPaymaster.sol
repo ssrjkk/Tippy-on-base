@@ -72,19 +72,31 @@ contract VerifyingPaymaster {
     ) external returns (bytes memory context, uint256 validationData) {
         require(msg.sender == entryPoint(), "Paymaster: not EntryPoint");
 
-        // Verify relayer signature: owner signed userOpHash
-        bytes calldata sig = userOp.paymasterAndData[64:];  // after validityData + tgId
+        // Verify relayer signature: owner signed userOpHash.
+        // paymasterAndData layout: address(20) ++ tgId(32) ++ relayerSig(65).
+        bytes calldata pmd = userOp.paymasterAndData;
+        bytes calldata sig = pmd[64:];
         bytes32 hash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
-        address signer = _recover(hash, sig);
-        require(signer == owner, "Paymaster: bad relayer sig");
+        require(_recover(hash, sig) == owner, "Paymaster: bad relayer sig");
 
-        // Decode tg_id from paymasterAndData
+        // Decode tg_id from paymasterAndData (bytes 20..52).
         uint256 tgId;
         assembly {
-            tgId := calldataload(add(userOp.paymasterAndData.offset, 32))
+            tgId := calldataload(add(pmd.offset, 32))
         }
 
-        // Check daily limits
+        // Enforce per-user and global daily gas budgets (accumulating).
+        uint256 estimatedGas = (userOp.verificationGasLimit + userOp.callGasLimit
+                                + userOp.preVerificationGas) * userOp.maxFeePerGas;
+        _recordUsage(tgId, estimatedGas);
+
+        // context = tgId + estimatedGas (passed to postTransaction).
+        context = abi.encode(tgId, estimatedGas);
+        validationData = 0; // valid
+    }
+
+    /// @dev Roll the UTC-day counters and accumulate the gas budget.
+    function _recordUsage(uint256 tgId, uint256 estimatedGas) internal {
         uint256 today = block.timestamp / 1 days;
         if (userGasDay[tgId] != today) {
             userGasDay[tgId] = today;
@@ -94,16 +106,12 @@ contract VerifyingPaymaster {
             globalGasDay = today;
             globalGasUsed = 0;
         }
-
-        uint256 estimatedGas = (userOp.verificationGasLimit + userOp.callGasLimit + userOp.preVerificationGas)
-                               * (userOp.maxFeePerGas);
-
-        require(userGasUsed[tgId] + estimatedGas <= MAX_GAS_PER_USER_PER_DAY, "Paymaster: user daily limit");
-        require(globalGasUsed + estimatedGas <= MAX_GAS_GLOBAL_PER_DAY, "Paymaster: global daily limit");
-
-        // context = tgId encoded (passed to postTransaction)
-        context = abi.encode(tgId, estimatedGas);
-        validationData = 0; // valid
+        require(userGasUsed[tgId] + estimatedGas <= MAX_GAS_PER_USER_PER_DAY,
+                "Paymaster: user daily limit");
+        require(globalGasUsed + estimatedGas <= MAX_GAS_GLOBAL_PER_DAY,
+                "Paymaster: global daily limit");
+        userGasUsed[tgId] += estimatedGas;
+        globalGasUsed += estimatedGas;
     }
 
     /// @notice Called by EntryPoint after execution to charge the user.

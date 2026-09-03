@@ -21,7 +21,9 @@ import asyncio
 import json
 import logging
 
+from eth_abi import encode as abi_encode
 from eth_account import Account
+from eth_account.messages import encode_defunct
 from web3 import Web3
 
 from . import config
@@ -106,7 +108,11 @@ _ERC20_ABI = json.loads("""[
 
 # Per-operation calldata prefix for the SmartAccount.execute() selector.
 # keccak256("execute(address,uint256,bytes)")[:4]
-_EXECUTE_SELECTOR = bytes.fromhex("b61d27f6")
+_ENCODE_EXECUTE_SELECTOR = "b61d27f6"
+_EXECUTE_SELECTOR = bytes.fromhex(_ENCODE_EXECUTE_SELECTOR)
+# keccak256("executeBatch(address,bytes,address,bytes)")[:4]
+_ENCODE_EXECUTE_BATCH_SELECTOR = "7c7652c8"
+_EXECUTE_BATCH_SELECTOR = bytes.fromhex(_ENCODE_EXECUTE_BATCH_SELECTOR)
 
 
 def _get_w3() -> Web3:
@@ -184,9 +190,11 @@ def create_account_sync(tg_id: int) -> str:
     w3 = _get_w3()
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
     f = _factory()
-    entrypoint_addr = config.SMART_WALLET_ENTRYPOINT
+    # The SmartAccount owner is the relayer (bot hot wallet) that signs
+    # UserOperations and executes handleOps. NOT the EntryPoint.
+    owner_addr = Web3.to_checksum_address(acct.address)
 
-    tx = f.functions.createAccount(tg_id, Web3.to_checksum_address(entrypoint_addr)).build_transaction({
+    tx = f.functions.createAccount(tg_id, owner_addr).build_transaction({
         "from": acct.address,
         "nonce": w3.eth.get_transaction_count(acct.address, "pending"),
         "gas": 300_000,
@@ -247,7 +255,7 @@ def _build_user_op(
 
 def _encode_execute(dest: str, value: int, data: bytes) -> bytes:
     """Encode SmartAccount.execute(dest, value, data)."""
-    return _EXECUTE_SELECTOR + Web3.codec.encode(
+    return _EXECUTE_SELECTOR + abi_encode(
         ["address", "uint256", "bytes"],
         [Web3.to_checksum_address(dest), value, data],
     )
@@ -255,7 +263,7 @@ def _encode_execute(dest: str, value: int, data: bytes) -> bytes:
 
 def _encode_execute_batch(dest1: str, data1: bytes, dest2: str, data2: bytes) -> bytes:
     """Encode SmartAccount.executeBatch(dest1, data1, dest2, data2)."""
-    return bytes.fromhex("3c15f096") + Web3.codec.encode(
+    return _EXECUTE_BATCH_SELECTOR + abi_encode(
         ["address", "bytes", "address", "bytes"],
         [
             Web3.to_checksum_address(dest1), data1,
@@ -274,8 +282,11 @@ def _sign_user_op(user_op: dict, key_hex: str) -> bytes:
     user_op_hash = ep.functions.getUserOpHash(
         _pack_user_op(user_op)
     ).call()
-    # Sign as Ethereum message
-    signed = Account.signHash(user_op_hash, key_hex)
+    # Sign as an EIP-191 "Ethereum Signed Message" so SmartAccount.validateUserOp
+    # (which prefixes with \x19Ethereum Signed Message:\n32) recovers the owner.
+    signed = Account.sign_message(
+        encode_defunct(primitive=user_op_hash), key_hex
+    )
     return signed.signature
 
 
@@ -318,7 +329,9 @@ def _user_op_hash_input(user_op: dict) -> tuple:
 
 def _sign_paymaster(user_op_hash: bytes, tg_id: int, key_hex: str) -> bytes:
     """Sign userOpHash for the paymaster (relayer key)."""
-    signed = Account.signHash(user_op_hash, key_hex)
+    signed = Account.sign_message(
+        encode_defunct(primitive=user_op_hash), key_hex
+    )
     return signed.signature
 
 
@@ -354,23 +367,20 @@ def approve_and_trade_sync(
     market_addr = Web3.to_checksum_address(market_address)
     relayer_key = config.SMART_WALLET_RELAYER_KEY or config.HOT_WALLET_KEY
 
-    # Build approve calldata
+    # Build approve calldata (USDC.approve(market, amount))
     approve_data = _usdc().functions.approve(
         market_addr, approve_amount
     ).build_transaction({"from": smart_addr})["data"]
 
-    # Build trade calldata (execute on market)
-    trade_calldata = _encode_execute(market_addr, 0, trade_data)
-
-    # Build batch: approve + trade
+    # Build batch: approve(market) then trade(market) — both are calls made
+    # BY the SmartAccount, dispatched through executeBatch.
     batch_data = _encode_execute_batch(
         usdc_addr, approve_data,
-        smart_addr, trade_calldata,
+        market_addr, trade_data,
     )
 
-    # Get nonce
-    ep = _entrypoint()
-    nonce = ep.functions.getNonce().call()  # TODO: use sender nonce
+    # Nonce: the SmartAccount's own sequential nonce (storage, starts at 0).
+    nonce = _smart_account(smart_addr).functions.nonce().call()
 
     # Build paymaster data
     # For now, empty paymaster (direct execution without paymaster sponsorship)
@@ -389,6 +399,7 @@ def approve_and_trade_sync(
     user_op["signature"] = _sign_user_op(user_op, relayer_key)
 
     # Send via bundler (or direct handleOps for now)
+    ep = _entrypoint()
     tx = ep.functions.handleOps(
         [_pack_user_op(user_op)],
         acct.address,
@@ -432,6 +443,6 @@ def smart_balance(tg_id: int) -> int:
 
 
 def smart_nonce(tg_id: int) -> int:
-    """Current nonce of the SmartAccount (via EntryPoint)."""
-    ep = _entrypoint()
-    return ep.functions.getNonce().call()  # TODO: use sender-specific nonce
+    """Current on-chain nonce of the SmartAccount for tg_id."""
+    smart_addr = predict_address(tg_id)
+    return _smart_account(smart_addr).functions.nonce().call()
