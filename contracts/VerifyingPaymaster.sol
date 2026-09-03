@@ -67,22 +67,28 @@ contract VerifyingPaymaster {
     /// @notice Validate the UserOperation. Called by EntryPoint.
     function validatePaymasterUserOp(
         UserOperation calldata userOp,
-        bytes32 userOpHash,
+        bytes32 /*userOpHash*/,
         uint256 /*maxCost*/
     ) external returns (bytes memory context, uint256 validationData) {
         require(msg.sender == entryPoint(), "Paymaster: not EntryPoint");
 
-        // Verify relayer signature: owner signed userOpHash.
-        // paymasterAndData layout: address(20) ++ tgId(32) ++ relayerSig(65).
+        // Verify relayer signature over a hash that EXCLUDES paymasterAndData,
+        // breaking the chicken-and-egg: the relayer can sign before paymasterAndData is set.
+        // hash = keccak256(sender, nonce, initCode, callData, gas params — all except paymasterAndData + signature).
+        bytes32 rawHash = keccak256(abi.encode(
+            userOp.sender, userOp.nonce, userOp.initCode, userOp.callData,
+            userOp.callGasLimit, userOp.verificationGasLimit, userOp.preVerificationGas,
+            userOp.maxFeePerGas, userOp.maxPriorityFeePerGas
+        ));
+        bytes32 hash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", rawHash));
         bytes calldata pmd = userOp.paymasterAndData;
-        bytes calldata sig = pmd[64:];
-        bytes32 hash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", userOpHash));
+        bytes calldata sig = pmd[52:];  // after paymaster(20) + tgId(32)
         require(_recover(hash, sig) == owner, "Paymaster: bad relayer sig");
 
         // Decode tg_id from paymasterAndData (bytes 20..52).
         uint256 tgId;
         assembly {
-            tgId := calldataload(add(pmd.offset, 32))
+            tgId := calldataload(add(pmd.offset, 20))
         }
 
         // Enforce per-user and global daily gas budgets (accumulating).
@@ -114,18 +120,15 @@ contract VerifyingPaymaster {
         globalGasUsed += estimatedGas;
     }
 
-    /// @notice Called by EntryPoint after execution to charge the user.
-    function postTransaction(
-        bytes calldata /*context*/,
-        address /*sender*/,
-        bytes calldata /*callData*/,
-        uint256 /*actualGasCost*/,
-        uint256 /*actualUserOpGasPrice*/,
-        PaymasterPostTransactionMode /*mode*/
+    enum PostOpMode { OP_SUCCEEDED, OP_REVERTED, POST_OP_REVERTED }
+
+    /// @notice Called by EntryPoint after execution. Must match IPaymaster.postOp.
+    function postOp(
+        PostOpMode, /*mode*/
+        bytes calldata, /*context*/
+        uint256 /*actualGasCost*/
     ) external {
         require(msg.sender == entryPoint(), "Paymaster: not EntryPoint");
-        // Gas accounting happens here if needed.
-        // Actual USDC charge could be done via a pull from the SmartAccount.
     }
 
     function entryPoint() public pure returns (address) {
@@ -144,5 +147,4 @@ contract VerifyingPaymaster {
         return ecrecover(hash, v, r, s);
     }
 
-    enum PaymasterPostTransactionMode { NONE, SPONSOR, POST_OP }
 }

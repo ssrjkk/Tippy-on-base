@@ -211,17 +211,37 @@ def test_eth_account_signing_primitive():
     assert recovered.lower() == acct.address.lower()
 
 
-def test_sign_paymaster_is_eip191(monkeypatch):
+def test_sign_paymaster_is_eip191():
     # _sign_paymaster must produce a recoverable signature without any network.
     from eth_account import Account
-    from eth_account.messages import encode_defunct
     key = "0x" + "cd" * 32
     acct = Account.from_key(key)
-    user_op_hash = Web3.keccak(text="userop hash")[:32]
-    sig = sw._sign_paymaster(user_op_hash, 123, key)
+    user_op = {
+        "sender": "0x" + "11" * 20,
+        "nonce": 0,
+        "initCode": b"",
+        "callData": b"\xab" * 4,
+        "callGasLimit": 200_000,
+        "verificationGasLimit": 150_000,
+        "preVerificationGas": 50_000,
+        "maxFeePerGas": 10_000_000,
+        "maxPriorityFeePerGas": 1_000_000,
+    }
+    sig = sw._sign_paymaster(user_op, key)
     assert len(sig) == 65
+    # Recover using the rawHash that _sign_paymaster computes internally.
+    from eth_abi import encode as abi_encode
+    raw_hash = Web3.keccak(abi_encode(
+        ["address", "uint256", "bytes", "bytes", "uint256", "uint256", "uint256", "uint256", "uint256"],
+        [
+            user_op["sender"], user_op["nonce"], user_op["initCode"], user_op["callData"],
+            user_op["callGasLimit"], user_op["verificationGasLimit"], user_op["preVerificationGas"],
+            user_op["maxFeePerGas"], user_op["maxPriorityFeePerGas"],
+        ],
+    ))
+    from eth_account.messages import encode_defunct
     recovered = Account.recover_message(
-        encode_defunct(primitive=user_op_hash), signature=sig
+        encode_defunct(primitive=raw_hash), signature=sig
     )
     assert recovered.lower() == acct.address.lower()
 

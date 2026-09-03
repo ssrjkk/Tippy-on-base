@@ -81,7 +81,9 @@ _ENTRYPOINT_ABI = json.loads("""[
             {"name":"paymasterAndData","type":"bytes"},
             {"name":"signature","type":"bytes"}
         ],"name":"userOp","type":"tuple"}
-    ],"name":"simulateValidation","outputs":[],"stateMutability":"nonpayable","type":"function"}
+    ],"name":"simulateValidation","outputs":[],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[{"name":"account","type":"address"}],"name":"depositTo","outputs":[],"stateMutability":"payable","type":"function"},
+    {"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
 ]""")
 
 _SMART_ACCOUNT_ABI = json.loads("""[
@@ -256,7 +258,7 @@ def _build_user_op(
     paymaster_and_data: bytes,
     *,
     call_gas_limit: int = 200_000,
-    verification_gas_limit: int = 100_000,
+    verification_gas_limit: int = 150_000,
     pre_verification_gas: int = 50_000,
 ) -> dict:
     """Build a UserOperation dict."""
@@ -355,10 +357,30 @@ def _user_op_hash_input(user_op: dict) -> tuple:
 # Paymaster signature
 # ---------------------------------------------------------------------------
 
-def _sign_paymaster(user_op_hash: bytes, tg_id: int, key_hex: str) -> bytes:
-    """Sign userOpHash for the paymaster (relayer key)."""
+def _sign_paymaster(user_op: dict, key_hex: str) -> bytes:
+    """Sign the paymaster hash for a UserOperation.
+
+    The hash excludes paymasterAndData (breaking the chicken-and-egg):
+    rawHash = keccak256(sender, nonce, initCode, callData, gas params)
+    Then EIP-191 prefixed for ecrecover compatibility.
+    """
+    from web3 import Web3 as _W3
+    raw_hash = Web3.keccak(abi_encode(
+        ["address", "uint256", "bytes", "bytes", "uint256", "uint256", "uint256", "uint256", "uint256"],
+        [
+            user_op["sender"],
+            user_op["nonce"],
+            user_op["initCode"],
+            user_op["callData"],
+            user_op["callGasLimit"],
+            user_op["verificationGasLimit"],
+            user_op["preVerificationGas"],
+            user_op["maxFeePerGas"],
+            user_op["maxPriorityFeePerGas"],
+        ],
+    ))
     signed = Account.sign_message(
-        encode_defunct(primitive=user_op_hash), key_hex
+        encode_defunct(primitive=raw_hash), key_hex
     )
     return signed.signature
 
@@ -410,18 +432,22 @@ def approve_and_trade_sync(
     # Nonce: the SmartAccount's own sequential nonce (storage, starts at 0).
     nonce = _smart_account(smart_addr).functions.nonce().call()
 
-    # Build paymaster data
-    # For now, empty paymaster (direct execution without paymaster sponsorship)
-    paymaster_data = b""
-
+    # Build paymaster data: paymaster addr(20) + tgId(32) + relayer sig(65).
+    # The relayer signs a hash of the UserOp fields EXCLUDING paymasterAndData,
+    # breaking the chicken-and-egg (signature depends on hash, hash depends on paymasterAndData).
+    # First, build the UserOp WITHOUT paymaster to compute the signable hash.
     user_op = _build_user_op(
         sender=smart_addr,
         call_data=batch_data,
-        paymaster_and_data=paymaster_data,
-        call_gas_limit=400_000,
+        paymaster_and_data=b"",
+        call_gas_limit=200_000,
         verification_gas_limit=150_000,
     )
     user_op["nonce"] = nonce
+    # Sign the paymaster hash (excludes paymasterAndData).
+    relayer_sig = _sign_paymaster(user_op, relayer_key)
+    paymaster_data = _build_paymaster_data(tg_id, relayer_sig)
+    user_op["paymasterAndData"] = paymaster_data
 
     # Sign with relayer key
     user_op["signature"] = _sign_user_op(user_op, relayer_key)
@@ -473,6 +499,21 @@ def smart_balance(tg_id: int) -> int:
 
 
 def smart_nonce(tg_id: int) -> int:
-    """Current on-chain nonce of the SmartAccount for tg_id."""
+    """Current EntryPoint nonce of the SmartAccount for tg_id.
+
+    Uses EntryPoint.getNonce(sender, 0) — the canonical sequential nonce
+    managed by the EntryPoint. The SmartAccount's own storage ``nonce`` is
+    never incremented and must NOT be used.
+    """
     smart_addr = predict_address(tg_id)
-    return _smart_account(smart_addr).functions.nonce().call()
+    w3 = _get_w3()
+    ep_abi = [{"inputs": [{"name": "sender", "type": "address"},
+                          {"name": "key", "type": "uint192"}],
+               "name": "getNonce",
+               "outputs": [{"name": "", "type": "uint256"}],
+               "stateMutability": "view", "type": "function"}]
+    ep = w3.eth.contract(
+        address=Web3.to_checksum_address(config.SMART_WALLET_ENTRYPOINT),
+        abi=ep_abi,
+    )
+    return ep.functions.getNonce(Web3.to_checksum_address(smart_addr), 0).call()
