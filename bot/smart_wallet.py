@@ -194,12 +194,27 @@ def create_account_sync(tg_id: int) -> str:
     # UserOperations and executes handleOps. NOT the EntryPoint.
     owner_addr = Web3.to_checksum_address(acct.address)
 
+    base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
+    priority = w3.to_wei("0.01", "gwei")
+    max_fee = base_fee * 2 + priority
+
+    # CREATE2 of the 3.4 KB account needs real gas (code deposit alone ~685k);
+    # the hardcoded 300k limit was causing out-of-gas -> create2==0 -> revert.
+    # Use estimate_gas with a generous timeout; fall back to a safe fixed limit
+    # (contract size is deterministic).
+    try:
+        gas_est = f.functions.createAccount(tg_id, owner_addr).estimate_gas({
+            "from": acct.address,
+        })
+        gas_limit = int(gas_est * 1.2)
+    except Exception:
+        gas_limit = 1_000_000
     tx = f.functions.createAccount(tg_id, owner_addr).build_transaction({
         "from": acct.address,
         "nonce": w3.eth.get_transaction_count(acct.address, "pending"),
-        "gas": 300_000,
-        "maxFeePerGas": w3.eth.gas_price,
-        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+        "gas": gas_limit,
+        "maxFeePerGas": max_fee,
+        "maxPriorityFeePerGas": priority,
         "chainId": w3.eth.chain_id,
     })
     signed = acct.sign_transaction(tx)
@@ -400,6 +415,8 @@ def approve_and_trade_sync(
 
     # Send via bundler (or direct handleOps for now)
     ep = _entrypoint()
+    base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
+    priority = w3.to_wei("0.01", "gwei")
     tx = ep.functions.handleOps(
         [_pack_user_op(user_op)],
         acct.address,
@@ -407,8 +424,8 @@ def approve_and_trade_sync(
         "from": acct.address,
         "nonce": w3.eth.get_transaction_count(acct.address, "pending"),
         "gas": 1_000_000,
-        "maxFeePerGas": w3.eth.gas_price * 2,
-        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+        "maxFeePerGas": base_fee * 2 + priority,
+        "maxPriorityFeePerGas": priority,
         "chainId": w3.eth.chain_id,
     })
     signed = acct.sign_transaction(tx)
