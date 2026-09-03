@@ -207,7 +207,11 @@ CREATE TABLE IF NOT EXISTS users (
                     tg_id       BIGINT PRIMARY KEY,
                     username    TEXT,
                     balance     BIGINT NOT NULL DEFAULT 0,  -- USDC micro-units (1e6)
-                    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+                    created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+                    -- P2: Smart Wallet (ERC-4337)
+                    smart_address  TEXT,      -- deterministic SmartAccount address
+                    smart_deployed BOOLEAN DEFAULT false,  -- deployed on-chain?
+                    smart_created_at BIGINT   -- epoch when smart wallet was created
                 );
                 CREATE TABLE IF NOT EXISTS tx_log (
                     id        BIGSERIAL PRIMARY KEY,
@@ -457,6 +461,10 @@ CREATE TABLE IF NOT EXISTS create2_proxies (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_create2_proxies_addr ON create2_proxies (LOWER(proxy_address));
+-- P2: Smart Wallet (ERC-4337) columns
+ALTER TABLE users ADD COLUMN IF NOT EXISTS smart_address TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS smart_deployed BOOLEAN DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS smart_created_at BIGINT;
 """
 
 class Ledger:
@@ -3105,6 +3113,46 @@ class Ledger:
                 (int(_time.time()) + delay, notif_id),
             )
             self._conn.commit()
+
+    # ---- P2: Smart Wallet (ERC-4337) ----
+
+    def get_smart_wallet(self, tg_id: int) -> dict | None:
+        """Get the SmartAccount info for a user, or None."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT tg_id, smart_address, smart_deployed, smart_created_at "
+                "FROM users WHERE tg_id = %s AND smart_address IS NOT NULL",
+                (tg_id,),
+            ).fetchone()
+
+    def set_smart_wallet(self, tg_id: int, address: str) -> None:
+        """Record the SmartAccount address for a user."""
+        with self._lock:
+            import time as _time
+            self._conn.execute(
+                "UPDATE users SET smart_address = %s, smart_deployed = true, "
+                "smart_created_at = %s WHERE tg_id = %s",
+                (address, int(_time.time()), tg_id),
+            )
+            self._conn.commit()
+
+    def mark_smart_wallet_deployed(self, tg_id: int) -> None:
+        """Mark the SmartAccount as deployed on-chain."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET smart_deployed = true WHERE tg_id = %s",
+                (tg_id,),
+            )
+            self._conn.commit()
+
+    def has_smart_wallet(self, tg_id: int) -> bool:
+        """Check if user has a SmartAccount address recorded."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM users WHERE tg_id = %s AND smart_address IS NOT NULL",
+                (tg_id,),
+            ).fetchone()
+            return row is not None
 
 
 ledger = Ledger()

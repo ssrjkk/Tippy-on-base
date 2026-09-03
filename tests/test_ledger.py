@@ -976,3 +976,36 @@ def test_concurrent_buy_shares_no_insolvency(ledger):
 
     # Funding theorem: escrow >= max shares for any option
     assert escrow >= total_shares
+
+
+# ---------- P2: Smart Wallet ----------
+
+
+def test_smart_wallet_lifecycle(ledger):
+    fund(ledger, ALICE, 10_000_000)
+    assert not ledger.has_smart_wallet(ALICE)
+    assert ledger.get_smart_wallet(ALICE) is None
+
+    addr = "0x" + "ab" * 20
+    ledger.set_smart_wallet(ALICE, addr)
+    assert ledger.has_smart_wallet(ALICE)
+    row = ledger.get_smart_wallet(ALICE)
+    assert row["smart_address"].lower() == addr.lower()
+    assert row["smart_deployed"] is True
+    assert row["smart_created_at"] is not None
+
+    # mark_smart_wallet_deployed is idempotent
+    ledger.mark_smart_wallet_deployed(ALICE)
+    assert ledger.get_smart_wallet(ALICE)["smart_deployed"] is True
+
+    # another user still has no smart wallet
+    assert not ledger.has_smart_wallet(BOB)
+
+
+def test_smart_wallet_deployed_flag(ledger):
+    fund(ledger, ALICE, 5_000_000)
+    assert not ledger.has_smart_wallet(ALICE)
+
+    addr = "0x" + "cd" * 20
+    ledger.set_smart_wallet(ALICE, addr)
+    assert ledger.get_smart_wallet(ALICE)["smart_deployed"] is True

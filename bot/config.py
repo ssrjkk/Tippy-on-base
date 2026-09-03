@@ -282,6 +282,37 @@ GAS_DRIP_THRESHOLD_ETH: Decimal = Decimal(os.environ.get("GAS_DRIP_THRESHOLD_ETH
 # ALL user wallets (blocks drip-farming with many fresh wallets).
 GAS_DRIP_DAILY_MAX: int = int(os.environ.get("GAS_DRIP_DAILY_MAX", "50"))
 # Daily cap on TOTAL on-chain market subsidies (/oc_create) across ALL
+
+# ---------------------------------------------------------------------------
+# P2: Smart Wallet (ERC-4337) — gasless on-chain trading from Mini App
+# ---------------------------------------------------------------------------
+# EntryPoint v0.6 on Base mainnet. Required for SmartAccount + Paymaster.
+SMART_WALLET_ENTRYPOINT: str = os.environ.get(
+    "SMART_WALLET_ENTRYPOINT", "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+).strip()
+# Factory contract (deploys deterministic SmartAccounts via CREATE2 + tg_id).
+SMART_WALLET_FACTORY_ADDRESS: str | None = (
+    os.environ.get("SMART_WALLET_FACTORY_ADDRESS", "").strip() or None
+)
+# Paymaster contract (sponsors gas; validates relayer signature).
+SMART_WALLET_PAYMASTER_ADDRESS: str | None = (
+    os.environ.get("SMART_WALLET_PAYMASTER_ADDRESS", "").strip() or None
+)
+# Relayer key for signing UserOperations (paymaster validates this signature).
+# Defaults to HOT_WALLET_KEY if not set (same signer, simpler setup).
+SMART_WALLET_RELAYER_KEY: str | None = (
+    os.environ.get("SMART_WALLET_RELAYER_KEY", "").strip() or None
+)
+# Per-user daily gas limit in USD for paymaster anti-abuse.
+SMART_WALLET_GAS_LIMIT_USD: Decimal = Decimal(
+    os.environ.get("SMART_WALLET_GAS_LIMIT_USD", "0.50")
+)
+# Global daily gas budget in USD for paymaster.
+SMART_WALLET_GAS_GLOBAL_USD: Decimal = Decimal(
+    os.environ.get("SMART_WALLET_GAS_GLOBAL_USD", "5.00")
+)
+# Enable smart wallet for new users (false = keep raw-EOA model).
+SMART_WALLET_ENABLED: bool = os.environ.get("SMART_WALLET_ENABLED", "0") == "1"
 # creators — protects the treasury from market-creation spam.
 MARKET_SUBSIDY_DAILY_MAX_USDC: Decimal = Decimal(os.environ.get("MARKET_SUBSIDY_DAILY_MAX_USDC", "2000"))
 
