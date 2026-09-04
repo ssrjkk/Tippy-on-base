@@ -4,7 +4,12 @@
 Этот документ — **архитектура продукта и план построения**: как три кита (чаевые, Cally-рынки, AI-агент)
 складываются в единую экономику на Base, где какие кодовые швы, и что строить первым.
 
-Дата: 2026-09-02. Статус кодовой базы: 669/669 pytest, ruff зелёный, forge 40/40.
+Дата: 2026-09-04. Статус кодовой базы: 669/669 pytest, ruff зелёный, forge 40/40.
+
+> **Обновление статуса P2 (2026-09-04):** Smart Wallet (ERC-4337) + Paymaster развёрнуты
+> на Base Sepolia и **доказано работают**: CREATE2-аккаунты, direct handleOps и
+> **gasless UserOperations со спонсорством VerifyingPaymaster** (status=1, gas=198k).
+> Роуты P2 из §4.2 перешли из «планов» в «в работе/сделано» — см. §4.2 и §8.
 
 ---
 
@@ -86,11 +91,15 @@
 3. **Оракул/резолв**: сейчас `ownerResolve` + 2h dispute. Для масштаба добавить **timelock-friendly**
    multi-source oracle (Chainlink/Alchemy cross-check) с тем же правилом «dispute → final за owner».
 
-### 4.2 P2 — дистрибуция через Base App (главный unlock)
-1. **Торговля из Mini App** (BACKLOG #10): сейчас display-only. Реализация — **Smart Wallet
-   (Base Accounts)** вместо приватного ключа: `/oc_buy` из ленты, paymaster gasless. Это убирает
-   онбординг-трение (нет `/withdraw`-фандинга).
-2. **Paymaster gasless** (BACKLOG #11) — чаевые/голоса без ETH у пользователя.
+### 4.2 P2 — дистрибуция через Base App (главный unlock) — статус: 2026-09-04
+1. **Торговля из Mini App** (BACKLOG #10): **DONE (core)**. Smart Wallet (Base Accounts / ERC-4337)
+   вместо приватного ключа: `SmartAccount` (CREATE2), `SmartAccountFactory`, `EntryPoint v0.6`.
+   Развёрнуто на Sepolia; CREATE2-деплой и direct handleOps доказаны on-chain.
+2. **Paymaster gasless** (BACKLOG #11) — чаевые/голоса без ETH у пользователя: **DONE (proof)**.
+   `VerifyingPaymaster` спонсирует газ; `postOp(PostOpMode, bytes, uint256)` под EP v0.6,
+   `verificationGasLimit≥150k`, deposit-фандинг на EntryPoint. Gasless handleOps показывает status=1.
+   Осталось: интегрировать `approve_and_trade_sync` с реальным USDC approve+trade UserOp, выкатить
+   в Mini App endpoints.
 3. **Basenames** в `/tip @name.base.eth` — платёжный резолв (chat_id ↔ basename ↔ wallet).
    Backlog уже делает `display_name_for`; расширить до полноценного платёжного резолва.
 4. **Кросс-дистрибуция**: Mini App sharing/deep-link на рынок/чат — виральность внутри Base App ленты.
@@ -145,3 +154,30 @@
 
 Рекомендуемый порядок реализации: **4.1.1 → 4.1.2 → 4.2.1 → 4.3.1**,
 дальше — итеративно по §4.2/§4.3.
+
+---
+
+## 8. Приложение: Smart Wallet (ERC-4337) — что развёрнуто (Sepolia)
+
+Контракты и состояния (последний деплой, commit `7273d52`):
+
+| Компонент | Адрес (Sepolia) | Примечание |
+|---|---|---|
+| EntryPoint v0.6 | `0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789` | стандартный |
+| SmartAccountFactory | `0x500C2Ae2c1b3C44a462B32ACc5fBB6eaee0bf1B8` | CREATE2 |
+| SmartAccount (тест) | `0x9522ACB7d1Bf3b69F0F339E8890EE798A7E1b9CD` | tg_id=987654321123 |
+| VerifyingPaymaster | `0x624C979c615C6096A0bf12b8BDeEF2288e8bD555` | deposit ~0.02 ETH |
+
+Ключевые решения, найденные на практике:
+
+- **`postOp` сигнатура**: EP v0.6 вызывает `IPaymaster.postOp(PostOpMode, bytes, uint256)`,
+  а не `postTransaction(...)`. Селекторная невязка = мгновенный revert (AA33). Исправлено.
+- **`verificationGasLimit ≥ 150k`**: холодные SSTOREs в `_recordUsage` требуют ~98k газа.
+  При VG=100k paymaster получает слишком мало → OOG. С VG=150k + deposit 0.015 ETH — проходит.
+- **`nonce`**: читается через `EntryPoint.getNonce(sender, 0)`, а не из storage аккаунта.
+- **Хеширование**: `Account.sign_message(encode_defunct(primitive=hash))`,
+  `signed.raw_transaction` (web3 v7.8.0).
+- **Гарантированный prefund** = `(callGas + VG*3 + preVerif) * gasPrice`.
+
+Модуль: `bot/smart_wallet.py` (UserOp building/signing/paymaster data, create/approve+trade),
+конфиг в `bot/config.py` (`SMART_WALLET_*`), тесты в `tests/test_smart_wallet.py` (14 шт).

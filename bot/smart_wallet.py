@@ -364,7 +364,6 @@ def _sign_paymaster(user_op: dict, key_hex: str) -> bytes:
     rawHash = keccak256(sender, nonce, initCode, callData, gas params)
     Then EIP-191 prefixed for ecrecover compatibility.
     """
-    from web3 import Web3 as _W3
     raw_hash = Web3.keccak(abi_encode(
         ["address", "uint256", "bytes", "bytes", "uint256", "uint256", "uint256", "uint256", "uint256"],
         [

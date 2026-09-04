@@ -120,6 +120,42 @@ async def mini_state(request: Request) -> dict:
     onchain = await om.market_views(8)
     return {'tg_id': tg_id, 'username': await ledger.username_of(tg_id), 'balance_usdc': float(await ledger.balance(tg_id)), 'deposit_address': str(base.hot_wallet()), 'linked_address': await ledger.linked_address(tg_id), 'lang': lang, 'markets': markets, 'bets': bets, 'onchain_markets': onchain, 'history': history, 'top': top}
 
+def _smart_wallet_enabled() -> bool:
+    """True when the ERC-4337 stack is fully configured (factory + paymaster)."""
+    return (
+        config.SMART_WALLET_ENABLED
+        and bool(config.SMART_WALLET_FACTORY_ADDRESS)
+        and bool(config.SMART_WALLET_PAYMASTER_ADDRESS)
+    )
+
+@router.get('/api/mini/smartwallet', tags=['wallet'])
+async def mini_smartwallet(request: Request) -> dict:
+    """P2: the user's deterministic SmartAccount (ERC-4337) and on-chain USDC.
+
+    Returns the counterfactual address, whether it is deployed, the on-chain
+    USDC balance (0 when not deployed), and the paymaster sponsorship flag.
+    Gated: only when SMART_WALLET_ENABLED and factory+paymaster are configured;
+    otherwise a 503 so the Mini App can hide the section.
+    """
+    tg_id = await _user(request)
+    if not _smart_wallet_enabled():
+        raise HTTPException(503, 'smart wallet not enabled')
+    from bot import smart_wallet as sw
+
+    address = await asyncio.to_thread(sw.predict_address, tg_id)
+    deployed = await asyncio.to_thread(sw.is_deployed, tg_id)
+    balance_micro = await asyncio.to_thread(sw.smart_balance, tg_id) if deployed else 0
+    nonce = await asyncio.to_thread(sw.smart_nonce, tg_id) if deployed else 0
+    return {
+        'enabled': True,
+        'address': address,
+        'deployed': deployed,
+        'balance_usdc': round(balance_micro / MICRO, 2),
+        'nonce': nonce,
+        'paymaster_sponsored': True,
+        'deposit_address': address,
+    }
+
 class TipBody(BaseModel):
     to: str
     amount: float = Field(allow_inf_nan=False)

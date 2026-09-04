@@ -15,8 +15,9 @@
 </script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#0A0B0D;--card:#14161A;--card2:#1C1F26;--accent:#0052FF;--accent2:#1a6aff;--success:#16a34a;--danger:#ef4444;--text:#fff;--text2:#9aa0a6;--text3:#6b7280;--border:#2a2d35;--radius:12px;--safe-b:env(safe-area-inset-bottom,0px)}
-html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;background:var(--bg);color:var(--text);overflow:hidden;-webkit-tap-highlight-color:transparent}
+:root,[data-theme="light"]{--bg:#f8f9fb;--card:#ffffff;--card2:#f4f5f7;--accent:#0052ff;--accent2:#1859ff;--success:#16a34a;--danger:#ef4444;--text:#0a0b0d;--text2:#6b7280;--text3:#9ca3af;--border:#e2e4e8;--radius:12px;--safe-b:env(safe-area-inset-bottom,0px)}
+[data-theme="dark"]{--bg:#0A0B0D;--card:#14161A;--card2:#1C1F26;--accent:#0052ff;--accent2:#1a6aff;--success:#16a34a;--danger:#ef4444;--text:#fff;--text2:#9aa0a6;--text3:#6b7280;--border:#2a2d35}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;background:var(--bg);color:var(--text);overflow:hidden;-webkit-tap-highlight-color:transparent;transition:background .3s,color .3s}
 a{color:var(--accent);text-decoration:none}
 button{font-family:inherit;cursor:pointer;border:none;outline:none}
 input,textarea{font-family:inherit;outline:none}
@@ -25,9 +26,16 @@ input,textarea{font-family:inherit;outline:none}
 #app{max-width:480px;margin:0 auto;height:100%;position:relative;display:flex;flex-direction:column;overflow:hidden}
 
 /* Header */
-.header{position:sticky;top:0;z-index:100;background:rgba(10,11,13,.92);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);min-height:56px}
+.header{position:sticky;top:0;z-index:100;background:var(--bg);opacity:.96;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);min-height:56px}
 .header-logo{font-size:22px;font-weight:700;letter-spacing:-.5px}
 .header-logo span{color:var(--accent)}
+.header-right{display:flex;align-items:center;gap:8px}
+.theme-toggle{width:36px;height:36px;border-radius:50%;background:var(--card2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;transition:all .2s;color:var(--text2)}
+.theme-toggle:active{transform:scale(.92);border-color:var(--accent)}
+[data-theme="dark"] .theme-toggle .icon-sun{display:inline}
+[data-theme="dark"] .theme-toggle .icon-moon{display:none}
+.theme-toggle .icon-sun{display:none}
+.theme-toggle .icon-moon{display:inline}
 .balance-chip{background:var(--card2);border:1px solid var(--border);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;transition:all .2s}
 .balance-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
 
@@ -38,7 +46,7 @@ input,textarea{font-family:inherit;outline:none}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 
 /* Tab Bar */
-.tab-bar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:rgba(10,11,13,.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--border);display:flex;z-index:100;padding-bottom:var(--safe-b)}
+.tab-bar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--bg);opacity:.97;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-top:1px solid var(--border);display:flex;z-index:100;padding-bottom:var(--safe-b)}
 .tab-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:10px 4px 8px;font-size:10px;color:var(--text3);transition:color .2s;position:relative}
 .tab-item.active{color:var(--accent)}
 .tab-item .tab-icon{font-size:22px;line-height:1}
@@ -134,7 +142,7 @@ input,textarea{font-family:inherit;outline:none}
 
 /* Detail View */
 .detail-view{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:150;overflow-y:auto;max-width:480px;margin:0 auto}
-.detail-header{position:sticky;top:0;z-index:10;background:rgba(10,11,13,.95);backdrop-filter:blur(12px);padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}
+.detail-header{position:sticky;top:0;z-index:10;background:var(--bg);opacity:.97;backdrop-filter:blur(12px);padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}
 .detail-back{width:32px;height:32px;border-radius:8px;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer}
 .detail-title{font-size:16px;font-weight:600;flex:1}
 .detail-body{padding:16px}
@@ -198,9 +206,15 @@ input,textarea{font-family:inherit;outline:none}
   <!-- Header -->
   <div class="header">
     <div class="header-logo">Tippy<span>.</span></div>
-    <div class="balance-chip" id="balanceChip" onclick="switchTab(0)">
-      <span class="dot"></span>
-      <span id="balanceDisplay">--</span>
+    <div class="header-right">
+      <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+        <span class="icon-moon">🌙</span>
+        <span class="icon-sun">☀️</span>
+      </button>
+      <div class="balance-chip" id="balanceChip" onclick="switchTab(0)">
+        <span class="dot"></span>
+        <span id="balanceDisplay">--</span>
+      </div>
     </div>
   </div>
 
@@ -1034,6 +1048,21 @@ function pickChip(el, inputId, val) {
   el.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
   el.classList.add('active');
   document.getElementById(inputId).value = val;
+}
+
+// ─── Theme ───
+(function() {
+  var saved = localStorage.getItem('theme');
+  if (saved === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else if (saved === 'light') document.documentElement.removeAttribute('data-theme');
+  else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+})();
+function toggleTheme() {
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  if (isDark) { document.documentElement.removeAttribute('data-theme'); localStorage.setItem('theme', 'light'); }
+  else { document.documentElement.setAttribute('data-theme', 'dark'); localStorage.setItem('theme', 'dark'); }
 }
 
 // ─── Start ───

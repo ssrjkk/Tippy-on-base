@@ -1,7 +1,7 @@
 # Tippy - Community Economy in USDC on Base
 
 [![CI](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml/badge.svg)](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml)
-![Tests](https://img.shields.io/badge/tests-422%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-436%20passed-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.12+-blue)
 ![Network](https://img.shields.io/badge/network-Base-0052FF)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -91,9 +91,19 @@ accounting backed by public proof-of-reserves.
 - Live stats, volume chart, markets with odds/backers, leaderboards, user profiles
 - **Proof of Reserves** `/api/solvency`: bot liabilities vs on-chain USDC
   (read from the TipBotVault contract when deployed, else the hot wallet)
-- Base design system UI (Base Black `#0A0B0D`, Primary Blue `#0052FF`)
+- **Base design system UI** — light (default) + dark theme with a toggle
+  (Base White/Black #F8F9FB / #0A0B0D, Primary Blue #0052FF)
 - Public JSON API: `/api/stats`, `/api/markets`, `/api/predictions`,
   `/api/prediction/{id}`, `/api/leaderboard`, `/api/health`, `/qr`, rate-limited per IP
+
+### 🪄 Smart Wallet (ERC-4337) — gasless, non-custodial
+- **Per-user Smart Accounts** via CREATE2 (`SmartAccountFactory`) — deterministic
+  counterfactual addresses; no ETH needed from the user
+- **VerifyingPaymaster sponsors gas** — users tip/trade without ever holding ETH
+  (Base Sepolia proven: direct `handleOps` and gasless paymaster UserOps, status=1)
+- `bot/smart_wallet.py` builds + signs UserOperations (EIP-191) and drives
+  `approveAndTrade` from the wallet's own USDC
+- Details: `docs/ECOSYSTEM_DESIGN.md` §8
 
 ### ⛓ On-chain treasury (TipBotVault)
 - Users deposit USDC into the vault contract — visible to anyone on Base
@@ -156,19 +166,23 @@ bot/
 ├─ base.py        web3 layer: USDC transfers, deposit scanning, tx decoding
 ├─ ai.py          OpenAI-compatible client (stdlib urllib, no new deps)
 ├─ qr.py          local QR generation
+├─ smart_wallet.py  ERC-4337: UserOp build/sign, paymaster data, approve+trade sync
 └─ config.py      env-driven configuration
 web/
 ├─ server.py      FastAPI: public API, proof-of-reserves, x402 endpoints
-└─ static/        Base-design dashboard
+└─ static/        Base-design dashboard (light + dark theme)
 contracts/TipBotVault.sol    on-chain treasury (proof of reserves)
-tests/           422 tests: real Postgres, real dispatcher, real crypto, local EVM
+contracts/SmartAccount.sol   ERC-4337 account (CREATE2)
+contracts/SmartAccountFactory.sol  deterministic account factory
+contracts/VerifyingPaymaster.sol   gas-sponsoring paymaster
+tests/           436+ tests: real Postgres, real dispatcher, real crypto, local EVM
 ```
 
 ## Testing
 
 ```bash
 docker compose up -d db       # PostgreSQL for tests (port 5433)
-python -m pytest tests -q     # 422 passed
+python -m pytest tests -q     # 436+ passed
 ```
 
 What is tested *for real* (not mocked): money conservation across every flow
@@ -197,6 +211,7 @@ worst-case payout.
 ## Roadmap
 
 - Per-user deposit addresses (CREATE2 vaults) ✅
+- ~~Smart Wallet (ERC-4337) + gasless paymaster~~ ✅ core shipped + Sepolia-proven (P2)
 - Withdrawal batching for gas savings
 - Order-book style CLOB on top of the AMM
 - ~~On-chain market escrow (trustless resolution via UMA-style oracle)~~ ✅ shipped as **Cally** (OutcomeMarket ERC-1155)

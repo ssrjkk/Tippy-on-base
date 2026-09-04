@@ -72,6 +72,23 @@ Key tables:
 - **Deposit scanner** — polls `eth_getLogs` for USDC `Transfer` events
   to the hot wallet or vault address. Credits internal ledger.
 
+## Smart Wallet (ERC-4337) — P2
+
+Gasless, non-custodial per-user accounts on Base via account abstraction.
+User operations are sponsored by a VerifyingPaymaster so users don't need
+ETH. Deployed & proven on Base Sepolia (see `docs/ECOSYSTEM_DESIGN.md` §8).
+
+- **SmartAccount** (CREATE2, deterministic) — each Telegram user gets a
+  counterfactual address; no creation until first fund. Implements
+  `IAccount.executeUserOp` + `UserOperation calldata` struct.
+- **SmartAccountFactory** — `createAccount(owner, salt)` via CREATE2 with
+  deployer/owner enforcement.
+- **EntryPoint v0.6** — standard ERC-4337 singleton.
+- **VerifyingPaymaster** — sponsors gas; daily limits, `_recordUsage`,
+  correct `postOp(PostOpMode, bytes, uint256)` for EP v0.6.
+- **bot/smart_wallet.py** — UserOp build + EIP-191 signing, paymaster data,
+  `create_account` / `approve_and_trade_sync`. Config `SMART_WALLET_*`.
+
 ## Security model
 
 - Funds are custodial by design (hot wallet holds USDC)
