@@ -84,6 +84,9 @@ input,textarea{font-family:inherit;outline:none}
 .chips{display:flex;gap:8px;margin:8px 0}
 .chip{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;color:var(--text);cursor:pointer;transition:all .15s;min-width:48px;text-align:center}
 .chip:active,.chip.active{border-color:var(--accent);background:rgba(0,82,255,.12);color:var(--accent)}
+.chip-btn{background:var(--card2);border:1px solid var(--border);border-radius:16px;padding:4px 12px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;transition:all .15s}
+.chip-btn:active{opacity:.7}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 
 /* Input */
 .input{width:100%;background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:14px;color:var(--text);transition:border-color .2s}
@@ -244,6 +247,22 @@ input,textarea{font-family:inherit;outline:none}
         </button>
       </div>
 
+      <div class="card" id="smartWalletCard" style="display:none">
+        <div class="card-header">
+          <div class="card-title" data-i18n="smart_wallet">Smart Wallet</div>
+          <button class="chip-btn" onclick="copyAddr(document.getElementById('swAddress').dataset.addr)" style="font-size:12px" id="swCopy">💳 <span data-i18n="copy">Copy</span></button>
+        </div>
+        <div style="font-size:13px;color:var(--text2);margin-bottom:8px">
+          <span id="swDeployed">—</span>
+        </div>
+        <div class="mono" style="font-size:12px;color:var(--text);word-break:break-all" id="swAddress" data-addr="">—</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+          <span style="font-size:13px;color:var(--text2)"><span data-i18n="balance">Balance</span> (USDC)</span>
+          <span class="big-number" style="font-size:18px"><span id="swBalance">--</span></span>
+        </div>
+        <div class="hint" id="swDepositHint" style="margin-top:8px">—</div>
+      </div>
+
       <div class="section-title" data-i18n="history">History</div>
       <div id="historyList"></div>
     </div>
@@ -359,9 +378,9 @@ input,textarea{font-family:inherit;outline:none}
 
 <script>
 const I18N = {
-  ru: { wallet: "Кошелёк", balance: "Баланс", tip: "Чаевые", deposit: "Пополнить", withdraw: "Вывести", markets: "Рынки", bets: "Ставки", more: "Ещё", send: "Отправить", buy: "Купить", create: "Создать", history: "История", top: "Топ", about: "О боте", lang: "Язык", question: "Вопрос", options: "Варианты", amount: "Сумма", username: "Никнейм", address: "Адрес", copied: "Скопировано!", copy: "Копировать", fill_fields: "Заполни все поля", creating: "Создаём...", no_markets: "Рынков пока нет", no_bets: "Ставок пока нет", no_history: "История пуста", deposit_title: "Пополнение USDC", deposit_note: "Отправь USDC на этот адрес (сеть Base)", linked: "Кошелёк привязан, депозиты автоматические", send_tip: "Отправить чаевые", create_market: "Создать рынок", create_bet: "Создать ставку", hours: "Дедлайн (часы, опционально)", onchain: "Cally · ончейн-рынки", onchain_hint: "Торгуй в чате бота: /oc_buy {id} <вариант> <сумма>", your_shares: "Твои доли", you_won: "Ты выиграл! Забери выигрыш из контракта", oc_redeem_hint: "Забери выигрыш: /oc_redeem {id}", onchain_load_fail: "Рынок не загрузился" },
-  en: { wallet: "Wallet", balance: "Balance", tip: "Tips", deposit: "Deposit", withdraw: "Withdraw", markets: "Markets", bets: "Bets", more: "More", send: "Send", buy: "Buy", create: "Create", history: "History", top: "Top", about: "About", lang: "Language", question: "Question", options: "Options", amount: "Amount", username: "Username", address: "Address", copied: "Copied!", copy: "Copy", fill_fields: "Fill all fields", creating: "Creating...", no_markets: "No markets yet", no_bets: "No bets yet", no_history: "No history", deposit_title: "Deposit USDC", deposit_note: "Send USDC to this address (Base network)", linked: "Wallet linked, deposits are automatic", send_tip: "Send tip", create_market: "Create market", create_bet: "Create bet", hours: "Deadline (hours, optional)", onchain: "Cally · on-chain", onchain_hint: "Trade in the bot chat: /oc_buy {id} <option> <amount>", your_shares: "Your shares", you_won: "You won! Claim from the contract", oc_redeem_hint: "Claim your winnings: /oc_redeem {id}", onchain_load_fail: "Failed to load market" },
-  zh: { wallet: "钱包", balance: "余额", tip: "打赏", deposit: "充值", withdraw: "提现", markets: "市场", bets: "投注", more: "更多", send: "发送", buy: "买入", create: "创建", history: "历史", top: "排行", about: "关于", lang: "语言", question: "问题", options: "选项", amount: "金额", username: "用户名", address: "地址", copied: "已复制!", copy: "复制", fill_fields: "请填写所有字段", creating: "创建中...", no_markets: "暂无市场", no_bets: "暂无投注", no_history: "暂无记录", deposit_title: "充值 USDC", deposit_note: "将 USDC 发送到此地址（Base 网络）", linked: "钱包已绑定，充值自动到账", send_tip: "发送打赏", create_market: "创建市场", create_bet: "创建投注", hours: "截止时间（小时，可选）", onchain: "Cally · 链上", onchain_hint: "在机器人聊天中交易：/oc_buy {id} <选项> <金额>", your_shares: "你的份额", you_won: "你赢了！从合约领取", oc_redeem_hint: "领取收益：/oc_redeem {id}", onchain_load_fail: "市场加载失败" }
+  ru: { wallet: "Кошелёк", balance: "Баланс", tip: "Чаевые", deposit: "Пополнить", withdraw: "Вывести", markets: "Рынки", bets: "Ставки", more: "Ещё", send: "Отправить", buy: "Купить", create: "Создать", history: "История", top: "Топ", about: "О боте", lang: "Язык", question: "Вопрос", options: "Варианты", amount: "Сумма", username: "Никнейм", address: "Адрес", copied: "Скопировано!", copy: "Копировать", fill_fields: "Заполни все поля", creating: "Создаём...", no_markets: "Рынков пока нет", no_bets: "Ставок пока нет", no_history: "История пуста", deposit_title: "Пополнение USDC", deposit_note: "Отправь USDC на этот адрес (сеть Base)", linked: "Кошелёк привязан, депозиты автоматические", send_tip: "Отправить чаевые", create_market: "Создать рынок", create_bet: "Создать ставку", hours: "Дедлайн (часы, опционально)", onchain: "Cally · ончейн-рынки", onchain_hint: "Торгуй в чате бота: /oc_buy {id} <вариант> <сумма>", your_shares: "Твои доли", you_won: "Ты выиграл! Забери выигрыш из контракта", oc_redeem_hint: "Забери выигрыш: /oc_redeem {id}", onchain_load_fail: "Рынок не загрузился", smart_wallet: "Смарт-кошелёк", smart_deployed: "Ончейн SmartAccount (без газа, спонсируется)", smart_not_deployed: "SmartAccount не развёрнут - пополните USDC для активации", smart_deposit_hint: "Пополните USDC на Base по этому адресу для безгазовой торговли", smart_enabled: "Безгазовая торговля ВКЛ" },
+  en: { wallet: "Wallet", balance: "Balance", tip: "Tips", deposit: "Deposit", withdraw: "Withdraw", markets: "Markets", bets: "Bets", more: "More", send: "Send", buy: "Buy", create: "Create", history: "History", top: "Top", about: "About", lang: "Language", question: "Question", options: "Options", amount: "Amount", username: "Username", address: "Address", copied: "Copied!", copy: "Copy", fill_fields: "Fill all fields", creating: "Creating...", no_markets: "No markets yet", no_bets: "No bets yet", no_history: "No history", deposit_title: "Deposit USDC", deposit_note: "Send USDC to this address (Base network)", linked: "Wallet linked, deposits are automatic", send_tip: "Send tip", create_market: "Create market", create_bet: "Create bet", hours: "Deadline (hours, optional)", onchain: "Cally · on-chain", onchain_hint: "Trade in the bot chat: /oc_buy {id} <option> <amount>", your_shares: "Your shares", you_won: "You won! Claim from the contract", oc_redeem_hint: "Claim your winnings: /oc_redeem {id}", onchain_load_fail: "Failed to load market", smart_wallet: "Smart Wallet", smart_deployed: "On-chain SmartAccount (gasless, sponsored)", smart_not_deployed: "SmartAccount not deployed - deposit USDC to activate", smart_deposit_hint: "Deposit USDC on Base to this address to trade gasless", smart_enabled: "Gasless trading is ON" },
+  zh: { wallet: "钱包", balance: "余额", tip: "打赏", deposit: "充值", withdraw: "提现", markets: "市场", bets: "投注", more: "更多", send: "发送", buy: "买入", create: "创建", history: "历史", top: "排行", about: "关于", lang: "语言", question: "问题", options: "选项", amount: "金额", username: "用户名", address: "地址", copied: "已复制!", copy: "复制", fill_fields: "请填写所有字段", creating: "创建中...", no_markets: "暂无市场", no_bets: "暂无投注", no_history: "暂无记录", deposit_title: "充值 USDC", deposit_note: "将 USDC 发送到此地址（Base 网络）", linked: "钱包已绑定，充值自动到账", send_tip: "发送打赏", create_market: "创建市场", create_bet: "创建投注", hours: "截止时间（小时，可选）", onchain: "Cally · 链上", onchain_hint: "在机器人聊天中交易：/oc_buy {id} <选项> <金额>", your_shares: "你的份额", you_won: "你赢了！从合约领取", oc_redeem_hint: "领取收益：/oc_redeem {id}", onchain_load_fail: "市场加载失败", smart_wallet: "智能钱包", smart_deployed: "链上智能账户 (免 gas、赞助)", smart_not_deployed: "智能账户未部署 - 存入 USDC 激活", smart_deposit_hint: "在 Base 向此地址存入 USDC 即可免 gas 交易", smart_enabled: "免 gas 交易已开启" }
 };
 
 const OPT_COLORS = ['#0052FF','#7c3aed','#f59e0b','#ef4444'];
@@ -467,6 +486,7 @@ async function loadState() {
       const d = await r.json();
       Object.assign(STATE, d);
       renderAll();
+      loadSmartWallet();
     } else {
       toast('Failed to load state', 'error');
     }
@@ -490,6 +510,28 @@ function renderBalance() {
   const bal = Number(STATE.balance_usdc || 0).toFixed(2);
   document.getElementById('balanceDisplay').textContent = bal + ' USDC';
   document.getElementById('bigBalance').textContent = bal;
+}
+
+async function loadSmartWallet() {
+  const card = document.getElementById('smartWalletCard');
+  if (!card) return;
+  try {
+    const r = await fetch('/api/mini/smartwallet', { credentials: 'same-origin' });
+    if (r.status === 503 || !r.ok) {
+      card.style.display = 'none';
+      return;
+    }
+    const d = await r.json();
+    card.style.display = 'block';
+    const addrEl = document.getElementById('swAddress');
+    addrEl.textContent = d.address;
+    addrEl.dataset.addr = d.address;
+    document.getElementById('swBalance').textContent = Number(d.balance_usdc || 0).toFixed(2);
+    document.getElementById('swDeployed').textContent = d.deployed ? t('smart_deployed') : t('smart_not_deployed');
+    document.getElementById('swDepositHint').textContent = d.deployed ? t('smart_enabled') : t('smart_deposit_hint');
+  } catch(e) {
+    card.style.display = 'none';
+  }
 }
 
 function renderHistory() {

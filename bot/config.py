@@ -78,9 +78,17 @@ WEBHOOK_SECRET: str | None = os.environ.get("WEBHOOK_SECRET", "").strip() or Non
 # WebApp buttons. Kept separate from WEBHOOK_URL so the bot can run in long
 # polling mode while still advertising a public https Mini App URL (e.g. a
 # cloudflared tunnel or a fixed domain). Empty -> falls back to WEBHOOK_URL,
-# then a (broken) http://HOST:PORT that logs a warning. The launch script
-# auto-populates this from the cloudflared tunnel URL.
+# then RENDER_EXTERNAL_URL (the public https URL Render auto-assigns to the
+# service, e.g. https://<app>.onrender.com), then a (broken) http://HOST:PORT
+# that logs a warning. The launch script auto-populates this from the
+# cloudflared tunnel URL.
 MINI_APP_URL: str | None = os.environ.get("MINI_APP_URL", "").strip() or None
+
+# Render.com auto-sets this to the service's public https URL. Used as a
+# fallback for MINI_APP_URL so a Docker-on-Render deploy "just works" with
+# Telegram Mini App buttons without a manually configured domain.
+RENDER_EXTERNAL_URL: str | None = os.environ.get(
+    "RENDER_EXTERNAL_URL", "").strip() or None
 
 # Bot username without leading "@" (used for web links, optional)
 BOT_USERNAME: str = os.environ.get("BOT_USERNAME", "")

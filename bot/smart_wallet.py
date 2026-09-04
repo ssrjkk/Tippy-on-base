@@ -427,6 +427,8 @@ def approve_and_trade_sync(
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
 
     smart_addr = predict_address(tg_id)
+    if not is_deployed(tg_id):
+        raise RuntimeError(f"SmartAccount for tg_id={tg_id} not deployed ({smart_addr})")
     usdc_addr = Web3.to_checksum_address(config.USDC_ADDRESS)
     market_addr = Web3.to_checksum_address(market_address)
     relayer_key = config.SMART_WALLET_RELAYER_KEY or config.HOT_WALLET_KEY

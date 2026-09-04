@@ -13,7 +13,13 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -548,6 +554,11 @@ async def onchain_market_page(market_id: int) -> FileResponse:
 @app.get('/me')
 async def me_page() -> FileResponse:
     return FileResponse(STATIC / 'me.html')
+
+@app.get('/', include_in_schema=False)
+async def root():
+    """Landing: 200 for Render's default health check; links to the Mini App."""
+    return RedirectResponse('/app')
 
 @app.get('/app', include_in_schema=False)
 async def mini_app():

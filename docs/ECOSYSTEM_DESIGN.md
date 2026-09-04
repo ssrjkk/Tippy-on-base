@@ -179,5 +179,35 @@
   `signed.raw_transaction` (web3 v7.8.0).
 - **Гарантированный prefund** = `(callGas + VG*3 + preVerif) * gasPrice`.
 
-Модуль: `bot/smart_wallet.py` (UserOp building/signing/paymaster data, create/approve+trade),
-конфиг в `bot/config.py` (`SMART_WALLET_*`), тесты в `tests/test_smart_wallet.py` (14 шт).
+Модуль: `bot/smart_wallet.py` (UserOp building/signing/paymaster data, create/approve+trade/smart_buy),
+конфиг в `bot/config.py` (`SMART_WALLET_*`), тесты в `tests/test_smart_wallet.py` (16 шт).
+
+### 8.1 Одобрение + трейдинг (gasless `approve + trade`)
+
+`smart_buy_sync`/`smart_buy` (для `OutcomeMarket.buy`), а также общий `approve_and_trade_sync`
+выполняют газлессные **approve USDC + вызов контракта** одним спонсируемым UserOp через
+`executeBatch` (2 вызова — approve, затем trade). Особенности:
+
+- **nonce** — строго `EntryPoint.getNonce(sender, 0)` (последовательный nonce EP). Storage-nonce
+  SmartAccount никогда не инкрементится и привёл бы к падению non-sequence-проверки.
+- **`approve` по точному капу** (`maxCost`) — одобряется ровно slippage-лимит, чтобы не оставлять
+  избыточных allowance.
+- **guard на деплой**: `approve_and_trade_sync` падает с `RuntimeError`, если SmartAccount не
+  задеплоен (не тратить газ бесполезного UserOp).
+- **prefund** гарантируется формулой выше (EP списывает с депозита paymaster, не с пользователя).
+
+### 8.2 Mini App — карточка Smart Wallet
+
+`web/static/app.html` (вкладка Balance) показывает `GET /api/mini/smartwallet`:
+адрес SmartAccount (копирование), статус деплоя, ончейн-USDC баланс, флаг paymaster-спонсирования.
+Карточка скрыта при 503 (стек не включён: `SMART_WALLET_ENABLED` и/или factory/paymaster не заданы).
+i18n: ru/en/zh ключи `smart_*`.
+
+### 8.3 Скрипты
+
+- `scripts/deploy_smart_wallet.py` — деплой paymaster+factory; добавлены `--owner <адрес>`
+  (owner paymaster = relayer-ключ, по умолчанию деплойер) и `--fund-paymaster <ETH>`
+  (пополнение депозита paymaster на EntryPoint — обязательно на mainnet для спонсирования газа).
+- `scripts/smoke_smart_buy.py` — поэтапный live-смоук: read-only состояние → `--deploy-market` →
+  `--create-market` → `--fund <USDC>` → `--buy <mid> <outcome> <shares> <max_usdc>`.
+  Все broadcast-шаги явные; без флагов — только read-only.

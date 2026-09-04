@@ -82,6 +82,24 @@ python -c "from bot import config; print(config.BOT_USERNAME, config.BASE_RPC_UR
   для Telegram**, только для дашборда.
 - Желательно: домен для дашборда (можно бесплатный subdomain у хостера).
 
+### 1.1a. Быстрый старт на Render.com (Docker) — без своего домена
+
+Проект деплоится как **Web Service через `Dockerfile`** (бот в long-polling +
+веб-сервер в одном процессе, см. `deploy/entrypoint.sh`). Для Telegram Mini App
+нужен публичный **https** URL — его даёт сам Render:
+
+- Render автоматически задаёт переменную `RENDER_EXTERNAL_URL` = `https://<app>.onrender.com`.
+  Код это подхватывает сам: `public_base_url()` (в `web/mini.py`) отдаёт
+  `MINI_APP_URL` → `WEBHOOK_URL` → `RENDER_EXTERNAL_URL` → (и только потом) ломаный
+  `http://HOST:PORT`. Поэтому **отдельно домен вбивать не нужно** — Mini App и
+  встроенные x402/клоночные ссылки заработают сразу после старта.
+- Root `/` отдаёт `302 → /app` (новая маршрутка в `web/server.py`), чтобы дефолтный
+  healthcheck Render (GET `/`) получал 200, а не 404.
+- В дашборде Render задай секреты: `BOT_TOKEN`, `HOT_WALLET_KEY`, `WALLET_ENC_KEY`,
+  `DATABASE_URL` (внешний Postgres), плюс `SMART_WALLET_*`/`EXPECTED_CHAIN_ID` по нужде.
+- `deploy/launch.py` с `cloudflared` — это **локальный dev-лаунчер** (Windows-бинарник),
+  для Render не используется.
+
 ### 1.2. Установка Docker
 
 ```bash
