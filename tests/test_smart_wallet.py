@@ -273,3 +273,78 @@ def test_sign_user_op_uses_mocked_entrypoint_hash(monkeypatch):
         encode_defunct(primitive=b"\x00" * 32), signature=sig
     )
     assert recovered.lower() == acct.address.lower()
+
+
+# ---------------------------------------------------------------------------
+# OutcomeMarket buy (gasless approve + buy UserOp)
+# ---------------------------------------------------------------------------
+
+def _pytest_market_contract(w3, market_address):
+    """A contract stub whose buy() build_transaction returns real ABI bytes
+    (built offline via eth_abi — no provider/network needed)."""
+    from eth_abi import encode as abi_encode
+
+    selector = Web3.keccak(text="buy(uint256,uint256,uint256,uint256)")[:4]
+    body = abi_encode(
+        ["uint256", "uint256", "uint256", "uint256"],
+        [100, 1, 2, 3],
+    )
+
+    class _Fn:
+        def build_transaction(self, *a, **k):
+            return {"data": selector + body}
+        def call(self, *a, **k):
+            return 0
+
+    class _Market:
+        functions = type("F", (), {"buy": (lambda *a, **k: _Fn())})()
+
+    return _Market()
+
+
+def test_smart_buy_sync_passes_approve_and_buy_data(monkeypatch):
+    _monkeypatch_smart_wallet(monkeypatch)
+    monkeypatch.setattr(sw.config, "OUTCOME_MARKET_ADDRESS", "0x" + "99" * 20)
+    monkeypatch.setattr(sw, "_market_contract", _pytest_market_contract)
+
+    captured = {}
+    def fake_att(tg_id, market_address, approve_amount, trade_data):
+        captured.update(
+            tg_id=tg_id, market_address=market_address,
+            approve_amount=approve_amount, trade_data=trade_data,
+        )
+        return "0x" + "aa" * 32
+
+    monkeypatch.setattr(sw, "approve_and_trade_sync", fake_att)
+
+    tx = sw.smart_buy_sync(12345, 42, 1, 1000, 5_000_000)
+    assert tx == "0x" + "aa" * 32
+    assert captured["tg_id"] == 12345
+    assert captured["market_address"].lower() == "0x" + "99" * 20
+    # Approve amount == the slippage cap (not the shares count or cost).
+    assert captured["approve_amount"] == 5_000_000
+    # trade_data is the buy(uint256,uint256,uint256,uint256) selector.
+    assert captured["trade_data"][:4] == Web3.keccak(
+        text="buy(uint256,uint256,uint256,uint256)"
+    )[:4]
+
+
+def test_smart_nonce_uses_entrypoint_not_storage(monkeypatch):
+    """smart_nonce() must read EntryPoint.getNonce(sender,0), never the
+    SmartAccount's own storage nonce (never incremented -> would break the
+    EntryPoint sequential-nonce check on a real chain)."""
+    # Any contract lookup that is NOT the factory returns a getNonce result;
+    # this proves smart_nonce reads EntryPoint.getNonce (not account storage).
+    def fake_contract(address=None, abi=None):
+        if abi is sw._SMART_ACCOUNT_FACTORY_ABI:
+            return _make_contract({"getAddress": "0x" + "11" * 20})
+        return _make_contract({"getNonce": 1234})
+
+    fake_w3 = types.SimpleNamespace(
+        eth=types.SimpleNamespace(
+            contract=fake_contract,
+            to_checksum_address=lambda a: a,
+        ),
+    )
+    monkeypatch.setattr(sw, "_get_w3", lambda: fake_w3)
+    assert sw.smart_nonce(12345) == 1234

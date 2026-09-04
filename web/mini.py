@@ -156,6 +156,40 @@ async def mini_smartwallet(request: Request) -> dict:
         'deposit_address': address,
     }
 
+class SmartBuyBody(BaseModel):
+    market_id: int
+    outcome: int
+    shares: int = Field(gt=0)
+    max_cost_usdc: float = Field(gt=0)
+
+@router.post('/api/mini/smartbuy', tags=['wallet'])
+async def mini_smartbuy(body: SmartBuyBody, request: Request) -> dict:
+    """P2: gasless on-chain buy from the user's SmartAccount.
+
+    Builds a single sponsored UserOp that does USDC.approve(market) +
+    market.buy(...) via executeBatch, sponsored by the VerifyingPaymaster.
+    Requires the smart wallet stack enabled AND the user's SmartAccount
+    deployed (it must already hold USDC).
+    """
+    tg_id = await _user(request)
+    if not _smart_wallet_enabled():
+        raise HTTPException(503, 'smart wallet not enabled')
+    from bot import smart_wallet as sw
+
+    if not await asyncio.to_thread(sw.is_deployed, tg_id):
+        raise HTTPException(400, 'smart account not deployed — deposit USDC first')
+
+    # The account must actually hold enough USDC to cover the spend.
+    balance_micro = await asyncio.to_thread(sw.smart_balance, tg_id)
+    max_cost_micro = round(body.max_cost_usdc * MICRO)
+    if balance_micro < max_cost_micro:
+        raise HTTPException(400, 'insufficient smart-wallet USDC balance')
+
+    tx_hash = await sw.smart_buy(
+        tg_id, body.market_id, body.outcome, body.shares, max_cost_micro
+    )
+    return {'ok': True, 'tx_hash': tx_hash}
+
 class TipBody(BaseModel):
     to: str
     amount: float = Field(allow_inf_nan=False)

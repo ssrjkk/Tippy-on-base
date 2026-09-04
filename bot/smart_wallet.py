@@ -121,6 +121,21 @@ _ERC20_ABI = json.loads("""[
     {"inputs":[{"name":"from","type":"address"},{"name":"to","type":"address"},{"name":"amount","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}
 ]""")
 
+# Minimal OutcomeMarket ABI (functions a smart account calls via execute()).
+_OUTCOME_MARKET_ABI = json.loads("""[
+    {"inputs":[
+        {"name":"marketId","type":"uint256"},
+        {"name":"outcome","type":"uint256"},
+        {"name":"shares","type":"uint256"},
+        {"name":"maxCostMicro","type":"uint256"}
+    ],"name":"buy","outputs":[{"name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},
+    {"inputs":[
+        {"name":"marketId","type":"uint256"},
+        {"name":"outcome","type":"uint256"},
+        {"name":"shares","type":"uint256"}
+    ],"name":"quoteBuy","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+]""")
+
 # Per-operation calldata prefix for the SmartAccount.execute() selector.
 # keccak256("execute(address,uint256,bytes)")[:4]
 _ENCODE_EXECUTE_SELECTOR = "b61d27f6"
@@ -428,8 +443,11 @@ def approve_and_trade_sync(
         market_addr, trade_data,
     )
 
-    # Nonce: the SmartAccount's own sequential nonce (storage, starts at 0).
-    nonce = _smart_account(smart_addr).functions.nonce().call()
+    # Nonce MUST come from the EntryPoint (getNonce(sender,0) — the canonical
+    # sequential nonce it manages). The SmartAccount's own storage `nonce`,
+    # though present, is NEVER incremented and using it would fail the
+    # EntryPoint's non-sequence check and break the UserOp/paymaster hash.
+    nonce = smart_nonce(tg_id)
 
     # Build paymaster data: paymaster addr(20) + tgId(32) + relayer sig(65).
     # The relayer signs a hash of the UserOp fields EXCLUDING paymasterAndData,
@@ -484,6 +502,69 @@ async def approve_and_trade(
     """Async wrapper."""
     return await asyncio.to_thread(
         approve_and_trade_sync, tg_id, market_address, approve_amount, trade_data
+    )
+
+
+# ---------------------------------------------------------------------------
+# OutcomeMarket buy (gasless approve + buy UserOp)
+# ---------------------------------------------------------------------------
+
+def _market_contract(w3: Web3, market_address: str):
+    return w3.eth.contract(
+        address=Web3.to_checksum_address(market_address),
+        abi=_OUTCOME_MARKET_ABI,
+    )
+
+
+def smart_buy_sync(
+    tg_id: int,
+    market_id: int,
+    outcome: int,
+    shares: int,
+    max_cost_micro: int,
+) -> str:
+    """Buy `shares` on an on-chain OutcomeMarket from the user's SmartAccount.
+
+    One gasless UserOp executes two calls through ``executeBatch``:
+      1. USDC.approve(market, maxCost)  — permit the market to pull funds
+      2. market.buy(marketId, outcome, shares, maxCost) — purchase shares
+
+    The whole thing is sponsored by the VerifyingPaymaster, so the user needs
+    no ETH. Returns the ``handleOps`` tx hash.
+
+    NOTE: assumes the SmartAccount is already deployed and funded with USDC.
+    """
+    market_address = config.OUTCOME_MARKET_ADDRESS
+    if not market_address:
+        raise RuntimeError("OUTCOME_MARKET_ADDRESS not configured")
+
+    w3 = _get_w3()
+    market = _market_contract(w3, market_address)
+
+    # Encode the buy so the SmartAccount can execute it (dispatch through own
+    # execute -> the market pulls USDC that the batch already approved).
+    buy_data = market.functions.buy(
+        market_id, outcome, shares, max_cost_micro
+    ).build_transaction({"from": Web3.to_checksum_address(predict_address(tg_id))})["data"]
+
+    return approve_and_trade_sync(
+        tg_id,
+        market_address,
+        max_cost_micro,   # approve exactly the slippage cap we will pay
+        buy_data,
+    )
+
+
+async def smart_buy(
+    tg_id: int,
+    market_id: int,
+    outcome: int,
+    shares: int,
+    max_cost_micro: int,
+) -> str:
+    """Async wrapper for smart_buy_sync."""
+    return await asyncio.to_thread(
+        smart_buy_sync, tg_id, market_id, outcome, shares, max_cost_micro
     )
 
 
