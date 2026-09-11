@@ -35,6 +35,8 @@ async def create_market(
 
     Returns: {"market_id": int, "options": list[str], "subsidy_usdc": float}
     """
+    if subsidy_usdc <= 0:
+        return {"error": f"subsidy must be positive (got {subsidy_usdc})"}
     err = caps.check_action(subsidy_usdc)
     if err:
         return {"error": err}

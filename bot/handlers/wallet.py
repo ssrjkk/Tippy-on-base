@@ -1,4 +1,5 @@
 ﻿"""Wallet handlers: balance, deposit, link, confirm, import/export, withdraw."""
+import html
 import logging
 import time
 from decimal import Decimal
@@ -20,7 +21,7 @@ async def _notify_aml(bot, tg_id: int, warnings: list[str]) -> None:
         return
     text = (
         f"🚩 <b>AML flag</b> (user <code>{tg_id}</code>):\n"
-        + "\n".join(f"• {w}" for w in warnings)
+        + "\n".join(f"• {html.escape(w)}" for w in warnings)
     )
     await bot.send_message(chat_id, text, parse_mode="HTML")
 

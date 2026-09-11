@@ -143,7 +143,7 @@ trail with a warning (never silently).
 
 1. Generate new key: `python -c "import secrets; print(secrets.token_hex(32))"`
 2. Update `.env` with new value
-3. Restart the affected service (`docker compose restart bot` / `web`)
+3. Restart the affected service (`docker compose restart app`)
 4. Verify health: `/api/health` returns 200
 5. **Do not delete old `.env`** — keep a sealed copy for rollback
 

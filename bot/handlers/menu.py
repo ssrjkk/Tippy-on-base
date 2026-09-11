@@ -85,7 +85,7 @@ async def cmd_start(message: types.Message, command: CommandObject) -> None:
         lang = await _lang(message.from_user.id)
         bal = await common.ledger.balance(message.from_user.id)
         bal_s = f'{bal:.6f}'.rstrip('0').rstrip('.')
-        welcome = f"{i18n.t(lang, 'start_hi', name=name)}\n\n{i18n.t(lang, 'start_intro')}\n\n💰 {i18n.t(lang, 'menu_balance', bal=bal_s)}\n\n{i18n.t(lang, 'start_try')}"
+        welcome = f"{i18n.t(lang, 'start_hi', name=common._h(name))}\n\n{i18n.t(lang, 'start_intro')}\n\n💰 {i18n.t(lang, 'menu_balance', bal=bal_s)}\n\n{i18n.t(lang, 'start_try')}"
         await message.answer(welcome, reply_markup=common._menu_kb(lang))
         return
     lang = await _lang(message.from_user.id)
@@ -101,7 +101,7 @@ async def _donate_landing(message: types.Message, target_id: int) -> None:
     creator = await common.ledger.username_of(target_id) or await tip_targets.display_name_for(target_id) or f'id{target_id}'
     addr = common.base.hot_wallet()
     lang = await _lang(message.from_user.id)
-    caption = i18n.t(lang, 'donate_support', user=creator, addr=addr)
+    caption = i18n.t(lang, 'donate_support', user=common._h(creator), addr=addr)
     qr = await common._qr_bytes(addr)
     if qr:
         await message.answer_photo(BufferedInputFile(qr, filename='qr.png'), caption=caption, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=i18n.t(lang, 'btn_donate_page'), callback_data='donate')]]))

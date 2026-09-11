@@ -78,7 +78,10 @@ def check_action(cost_usdc: float) -> str | None:
             return f"Circuit breaker active, cooldown {remaining}s remaining"
 
         # Per-tx cap — checked first: a single oversized action is invalid
-        # regardless of how much daily budget remains.
+        # regardless of how much daily budget remains. Zero is allowed for
+        # actions that do not spend (e.g. creating a paywall signal).
+        if cost_usdc < 0:
+            return f"Action cost must be non-negative (got ${cost_usdc:.2f})"
         if cost_usdc > config.PER_TX_CAP_USDC:
             return f"Per-tx cap ${config.PER_TX_CAP_USDC} exceeded (requested ${cost_usdc:.2f})"
 

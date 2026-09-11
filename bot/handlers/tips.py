@@ -50,7 +50,7 @@ async def cmd_rain(message: types.Message) -> None:
     names = []
     for tid in chosen[:8]:
         uname = await common.ledger.username_of(tid) or f'id{tid}'
-        names.append(f'@{uname}')
+        names.append(f'@{common._h(uname)}')
     tail = i18n.t(lang, 'rain_and_more', n=len(chosen) - 8) if len(chosen) > 8 else ''
     names_str = ', '.join(names)
     await message.answer(i18n.t(lang, 'rain_recipients', names=names_str, tail=tail))
@@ -85,7 +85,7 @@ async def cmd_tip(message: types.Message) -> None:
         bn_id, bn_err = await tip_targets.resolve_tip_target(target)
         if bn_err == 'basename_unknown':
             await message.answer(i18n.t(lang, 'tip_basename_unknown',
-                                        name=target.lstrip('@').lower()))
+                                        name=common._h(target.lstrip('@').lower())))
             return
         if bn_id is not None:
             to_id = bn_id
@@ -99,7 +99,7 @@ async def cmd_tip(message: types.Message) -> None:
             if to_id is None:
                 to_id = await _resolve_in_chat(message, username)
             if to_id is None:
-                await message.answer(i18n.t(lang, 'tip_user_not_found', user=username))
+                await message.answer(i18n.t(lang, 'tip_user_not_found', user=common._h(username)))
                 return
             to_name = username
     else:
@@ -116,10 +116,11 @@ async def cmd_tip(message: types.Message) -> None:
         await message.answer(i18n.t(lang, 'tip_no_balance'))
         return
     sender_name = message.from_user.username or f'id{message.from_user.id}'
-    mention = f"<a href='tg://user?id={to_id}'>@{to_name or to_id}</a>"
+    safe_to = common._h(to_name or str(to_id))
+    mention = f"<a href='tg://user?id={to_id}'>@{safe_to}</a>"
     bal = await common.ledger.balance(message.from_user.id)
     bal_str = f'{bal:.4f}'.rstrip('0').rstrip('.')
-    await message.answer(i18n.t(lang, 'tip_sent', sender=sender_name, mention=mention, amount=common._fmt(amount_micro), bal=bal_str))
+    await message.answer(i18n.t(lang, 'tip_sent', sender=common._h(sender_name), mention=mention, amount=common._fmt(amount_micro), bal=bal_str))
     await _notify_tip_received(message, to_id, amount_micro, sender_name)
 
 async def _notify_tip_received(message: types.Message, to_id: int, amount_micro: int, sender: str) -> None:
@@ -127,7 +128,7 @@ async def _notify_tip_received(message: types.Message, to_id: int, amount_micro:
         return
     try:
         lang = await common.user_lang(to_id)
-        await message.bot.send_message(to_id, i18n.t(lang, 'tip_received', amount=common._fmt(amount_micro), sender=sender))
+        await message.bot.send_message(to_id, i18n.t(lang, 'tip_received', amount=common._fmt(amount_micro), sender=common._h(sender)))
     except Exception:
         log.warning("tip notification to user %d failed", to_id, exc_info=True)
 

@@ -384,7 +384,7 @@ async def cmd_oc_redeem(message: types.Message) -> None:
     try:
         payout = await om.redeem(mid, key)
     except Exception as e:
-        await status.edit_text(i18n.t(lang, 'oc_tx_failed', err=str(e)[:200]))
+        await status.edit_text(i18n.t(lang, 'oc_tx_failed', err=esc(str(e)[:200])))
         return
     await status.edit_text(i18n.t(lang, 'oc_redeemed', amount=common._fmt(payout), addr=addr))
 

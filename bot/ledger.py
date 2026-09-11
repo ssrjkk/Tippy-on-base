@@ -1420,6 +1420,8 @@ class Ledger:
         # back here so the shared connection never carries a stale write into
         # the next unrelated ledger call; callers that roll back after a
         # failed debit are unaffected (rollback is idempotent).
+        if amount_micro < 0:
+            raise ValueError(f"debit amount must be non-negative (got {amount_micro})")
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE users SET balance = balance - %s WHERE tg_id = %s AND balance >= %s",
@@ -2226,6 +2228,8 @@ class Ledger:
 
         Returns the market id, or 'balance' if the creator can't fund it.
         """
+        if subsidy_micro < 0:
+            raise ValueError(f"market subsidy must be non-negative (got {subsidy_micro})")
         n = len(options)
         with localcontext() as ctx:
             ctx.prec = _LMSR_PREC

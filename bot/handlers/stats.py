@@ -37,7 +37,7 @@ async def _top_text() -> str:
             # (Base identity) instead of a bare id.
             uname = await tip_targets.display_name_for(int(row['tg_id'])) or f"id{row['tg_id']}"
         medal = '🥇' if i == 1 else '🥈' if i == 2 else '🥉' if i == 3 else '▫️'
-        lines.append(f"{medal} <b>@{uname}</b> — {common._fmt(row['total'])} USDC")
+        lines.append(f"{medal} <b>@{common._h(uname)}</b> — {common._fmt(row['total'])} USDC")
     return i18n.t('ru', 'top_title') + '\n\n' + '\n'.join(lines)
 
 async def _history_text(tg_id: int, limit: int=15) -> str:
@@ -52,7 +52,7 @@ async def _history_text(tg_id: int, limit: int=15) -> str:
         if r['kind'] == 'tip':
             cid = int(r['counterparty']) if r['counterparty'].isdigit() else None
             cname = await common.ledger.username_of(cid) if cid else None
-            who = f'@{cname}' if cname else r['counterparty'] or '?'
+            who = f'@{common._h(cname)}' if cname else r['counterparty'] or '?'
             lines.append(f'{emoji} {amt} → {who}')
         elif r['kind'] == 'deposit':
             lines.append(f"{emoji} +{amt} <code>{common._esc(r['counterparty'])}</code>")

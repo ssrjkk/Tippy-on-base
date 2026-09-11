@@ -309,7 +309,7 @@ async def cb_mk_resolve(cb: types.CallbackQuery) -> None:
     await _notify_market_result(cb.message, mid, payouts)
     new_m = await common.ledger.get_market(mid)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=i18n.t(lang, 'btn_all_markets_v2'), callback_data='markets_amm')]])
-    await common._edit_menu(cb, i18n.t(lang, 'market_closed_header', id=mid) + f'\n{msg}\n\n' + await _market_card(new_m, user.id), kb)
+    await common._edit_menu(cb, i18n.t(lang, 'market_closed_header', id=mid) + f'\n{common._h(msg)}\n\n' + await _market_card(new_m, user.id), kb)
     await cb.answer()
 
 @common.router.callback_query(F.data.startswith('mkcancel:'))

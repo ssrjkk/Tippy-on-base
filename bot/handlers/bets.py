@@ -252,7 +252,7 @@ async def cb_res(cb: types.CallbackQuery) -> None:
         return
     await _notify_bet_result(cb.message, bet_id)
     new_view = await common.ledger.market_view(bet_id)
-    text = i18n.t(lang, 'bet_resolved_header', id=bet_id) + f'\n{msg}\n\n' + await _market_detail_text(new_view, user.id)
+    text = i18n.t(lang, 'bet_resolved_header', id=bet_id) + f'\n{common._h(msg)}\n\n' + await _market_detail_text(new_view, user.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=i18n.t(lang, 'btn_all_markets'), callback_data='bets')]])
     await common._edit_menu(cb, text, kb)
     await cb.answer()
@@ -336,7 +336,7 @@ async def cmd_resolve(message: types.Message) -> None:
     if not ok:
         await message.answer(f'❌ {msg}')
         return
-    await message.answer(i18n.t(lang, 'bet_resolved_header', id=bet_id) + f'\n{msg}\n\n' + i18n.t(lang, 'bet_payouts_sent'))
+    await message.answer(i18n.t(lang, 'bet_resolved_header', id=bet_id) + f'\n{common._h(msg)}\n\n' + i18n.t(lang, 'bet_payouts_sent'))
     await _notify_bet_result(message, bet_id)
 
 async def _notify_bet_result(message: types.Message, bet_id: int) -> None:

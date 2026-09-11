@@ -151,11 +151,11 @@ docker compose up -d --build
 Проверка по шагам:
 
 ```bash
-# 1. все сервисы запущены (db + bot + web + backup)
-docker compose ps          # db: Up (healthy), web: Up (healthy)
+# 1. все сервисы запущены (db + app + cloudflared + backup)
+docker compose ps          # db: Up (healthy), app: Up (healthy)
 
 # 2. логи бота — должен появиться "hot wallet: 0x862b..." и polling
-docker compose logs -f bot
+docker compose logs -f app
 
 # 3. здоровье дашборда (на сервере)
 curl -s http://localhost:8000/api/health
@@ -272,7 +272,7 @@ tipbot.example.com {
 }
 ```
 
-Перезапуск: `docker compose restart bot web` — при старте `bot` сам вызывает
+Перезапуск: `docker compose restart app cloudflared` — при старте `app` сам вызывает
 `setWebhook` (в логах: `webhook registered: https://tipbot.example.com`).
 Проверка: `curl -s https://api.telegram.org/bot<TOKEN>/getWebhookInfo` →
 `url` = твой домен, `last_error_date` пуст.
@@ -299,7 +299,7 @@ tipbot.example.com {
 | 7 | `/settings` → выключи «Уведомления о депозитах» | следующие депозиты без DM |
 | 8 | `/withdraw <твой адрес> 1` | tx появляется на basescan.org; через минуту USDC на твоём кошельке |
 | 9 | Открой `https://<домен>/api/solvency` | обязательства ≤ резервов (vault или hot wallet; сходятся с шагом 8) |
-| 10 | Проверь логи: `docker compose logs bot` | «deposit» и «withdraw» без ошибок |
+| 10 | Проверь логи: `docker compose logs app` | «deposit» и «withdraw» без ошибок |
 
 Если на шаге 3 DM не пришёл за минуту — см. «Траблшутинг» ниже.
 
@@ -383,8 +383,7 @@ Mini app = наш дашборд `/app` внутри ленты Base App. Что
 ### Логи
 
 ```bash
-docker compose logs -f bot      # бот
-docker compose logs -f web      # дашборд
+docker compose logs -f app      # бот + дашборд в одном сервисе
 ```
 
 ### Обновление
@@ -415,7 +414,7 @@ docker compose exec db pg_dump -U tipbot -d tipbot | gzip > tipbot-$(date +%F).s
 
 ```bash
 docker compose exec -T db psql -U tipbot -d tipbot < tipbot-2026-08-19.sql
-docker compose restart bot web
+docker compose restart app cloudflared
 ```
 
 Копии лежат в volume `backups_data` (`docker compose exec backup ls /backups`).
@@ -436,10 +435,10 @@ docker compose restart bot web
 | Контейнер bot не стартует | пустой `BOT_TOKEN` / нет `.env` | заполни `.env`, `docker compose up -d` |
 | `KeyError: 'BOT_TOKEN'` в логах | `.env` не подхватился | проверь `docker compose config` |
 | Депозит не зачисляется | RPC публичный/rate-limited | поставь Alchemy/Infura в `BASE_RPC_URL` |
-| `deposit_lag` растёт | сканер отстаёт от head | см. `docker compose logs bot`; проверь RPC |
+| `deposit_lag` растёт | сканер отстаёт от head | см. `docker compose logs app`; проверь RPC |
 | Вывод «Ошибка отправки» + рефанд | нет ETH на hot wallet | пополни кошелёк, повтори |
 | Дашборд не открывается снаружи | порт закрыт | `sudo ufw allow 8000/tcp` или Caddy (3.2) |
-| healthcheck Failed | `/api/health` недоступен внутри | `docker compose logs web` |
+| healthcheck Failed | `/api/health` недоступен внутри | `docker compose logs app` |
 | Часы сервера ушли | подписи nonce «устарели» | `timedatectl set-ntp true` |
 
 ---
