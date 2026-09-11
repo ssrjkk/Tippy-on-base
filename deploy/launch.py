@@ -144,6 +144,27 @@ def _check(url: str, path: str = "/app", timeout: int = 8) -> bool:
         return False
 
 
+# Crash-loop protection: a child that dies immediately after start (bad config,
+# missing secrets, RPC misconfig) must not be respawned every loop iteration
+# forever — that hammers the box and fills the logs. Each child gets an
+# exponential backoff that resets once it has stayed alive a full interval.
+_BACKOFF_BASE_SECONDS = 5
+_BACKOFF_MAX_SECONDS = 300
+_BACKOFF_RESET_AFTER = 300
+
+
+def restart_child(name: str, cmd: list[str], out, err, state: dict) -> subprocess.Popen:
+    now = time.time()
+    if now - state["since"] > _BACKOFF_RESET_AFTER:
+        state["count"] = 0
+    wait = min(_BACKOFF_BASE_SECONDS * (2 ** state["count"]), _BACKOFF_MAX_SECONDS)
+    state["count"] += 1
+    state["since"] = now
+    log.warning("%s exited; respawn #%d with %.0fs backoff", name, state["count"], wait)
+    time.sleep(wait)
+    return subprocess.Popen(cmd, env=dict(os.environ), stdout=out, stderr=err)
+
+
 def main() -> int:
     py = sys.executable
     provided = os.environ.get("MINI_APP_URL")
@@ -173,7 +194,8 @@ def main() -> int:
 
     def start_children():
         web = subprocess.Popen(
-            [py, "-m", "uvicorn", "web.server:app", "--host", HOST, "--port", str(PORT)],
+            [py, "-m", "uvicorn", "web.server:app", "--host", HOST, "--port", str(PORT),
+             "--no-proxy-headers"],
             env=dict(os.environ), stdout=web_log, stderr=web_err,
         )
         bot = subprocess.Popen(
@@ -217,18 +239,20 @@ def main() -> int:
         pass
 
     fails = 0
+    bot_state = {"count": 0, "since": time.time()}
+    web_state = {"count": 0, "since": time.time()}
     while not stop["v"]:
-        # Restart children that crashed on their own.
+        # Restart children that crashed on their own, with crash-loop backoff.
         if bot.poll() is not None:
-            log.warning("bot exited with %s; restarting", bot.returncode)
-            bot = subprocess.Popen([py, "-m", "bot.main"], env=dict(os.environ),
-                                   stdout=bot_log, stderr=bot_err)
+            bot = restart_child("bot", [py, "-m", "bot.main"], bot_log, bot_err, bot_state)
             children[1] = bot
         if web.poll() is not None:
-            log.warning("web exited with %s; restarting", web.returncode)
-            web = subprocess.Popen([py, "-m", "uvicorn", "web.server:app",
-                                    "--host", HOST, "--port", str(PORT)],
-                                   env=dict(os.environ), stdout=web_log, stderr=web_err)
+            web = restart_child(
+                "web",
+                [py, "-m", "uvicorn", "web.server:app", "--host", HOST, "--port", str(PORT),
+                 "--no-proxy-headers"],
+                web_log, web_err, web_state,
+            )
             children[0] = web
 
         if cfd is not None:

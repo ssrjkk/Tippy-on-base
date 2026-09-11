@@ -40,13 +40,14 @@ class _PinnedHostResolver(AbstractResolver):
     async def resolve(self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_UNSPEC):
         if host == API_HOST:
             return [
-                (
-                    socket.AF_INET,
-                    socket.SOCK_STREAM,
-                    6,
-                    "",
-                    (self._ip, port),
-                )
+                {
+                    "hostname": host,
+                    "host": self._ip,
+                    "port": port,
+                    "family": socket.AF_INET,
+                    "proto": 6,
+                    "flags": 0,
+                }
             ]
         fallback = await self._get_fallback()
         return await fallback.resolve(host, port, family)

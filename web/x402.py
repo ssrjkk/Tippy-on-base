@@ -30,9 +30,56 @@ from web import x402_spec
 log = logging.getLogger('web.x402')
 
 MICRO = 10 ** config.USDC_DECIMALS
-MAX_TIP_USDC = 1000
 PAYMENT_TTL_SECONDS = 300
 _TX_HASH_RE = re.compile('^0x[0-9a-f]{64}$')
+
+
+def _invoice_key() -> str:
+    """Signing key the per-invoice pay addresses are derived from.
+
+    Empty -> derive from HOT_WALLET_KEY, so each derived address' private key
+    can be recomputed for the sweep (a per-invoice address is an EOA: keccak
+    of the seed + bind)."""
+    return (config.X402_INVOICE_KEY or config.HOT_WALLET_KEY).strip()
+
+
+def _invoice_key_valid() -> bool:
+    try:
+        base.w3.eth.account.from_key(_invoice_key())
+        return True
+    except Exception:
+        return False
+
+
+def _derive_invoice_address(invoice_id: str) -> str:
+    """Deterministically derive a unique EOA pay address for an invoice.
+
+    address = keccak(_invoice_seed() + b':x402-invoice:' + invoice_id)[12:]
+    The private key is recoverable from the seed, so the sweep can move funds
+    off it. Same invoice_id -> same address (idempotent invoice issuance)."""
+    from eth_account import Account
+    from web3 import Web3
+
+    seed = _invoice_seed()
+    digest = Web3.keccak(seed + b':x402-invoice:' + invoice_id.encode('ascii'))
+    return Account.from_key(digest).address
+
+
+def _invoice_seed() -> bytes:
+    key = _invoice_key()
+    return bytes.fromhex(key[2:])
+
+
+def _invoice_private_key(invoice_id: str) -> str:
+    """Recover the private key of an invoice's derived pay address.
+
+    Only used by the sweep (and internal tests); the client-facing code never
+    needs it."""
+    from web3 import Web3
+
+    seed = _invoice_seed()
+    digest = Web3.keccak(seed + b':x402-invoice:' + invoice_id.encode('ascii'))
+    return '0x' + digest.hex()
 
 
 def _x402_receive_address() -> str | None:
@@ -46,16 +93,65 @@ def _x402_receive_address() -> str | None:
     return None
 
 
-def _invoice_headers(amount_micro: int) -> dict:
-    receive = _x402_receive_address() or hot_wallet()
-    return {'x-402-recipient': receive, 'x-402-amount': str(amount_micro), 'x-402-expires-at': str(int(time.time()) + PAYMENT_TTL_SECONDS), 'x-402-idempotency-key': str(uuid.uuid4())}
+def _invoice_headers(amount_micro: int, pay_addr: str | None = None, invoice_id: str = '') -> dict:
+    receive = pay_addr or (_x402_receive_address() or hot_wallet())
+    headers = {
+        'x-402-recipient': receive,
+        'x-402-amount': str(amount_micro),
+        'x-402-expires-at': str(int(time.time()) + PAYMENT_TTL_SECONDS),
+        'x-402-idempotency-key': str(uuid.uuid4()),
+    }
+    if invoice_id:
+        headers['x-402-invoice-id'] = invoice_id
+    return headers
 
-def _verify_payment(tx_hash: str, expected_micro: int) -> dict | None:
-    """Read the USDC Transfer to our x402 receive address from the tx receipt.
+
+def _invoice_id(recipient_tg: int, amount_micro: int, kind: str, ref_id: str) -> str:
+    """Deterministic canonical invoice id for (recipient, amount, kind, ref).
+
+    The per-invoice pay address is derived from this: same redemption -> same
+    invoice -> same address, so a client that re-asks for an invoice it was
+    already issued lands on the same address (idempotent)."""
+    from web3 import Web3
+
+    bound = f'{recipient_tg}:{amount_micro}:{kind}:{ref_id}'
+    return '0x' + Web3.keccak(text=bound).hex()
+
+
+async def _resolve_invoice(recipient_tg: int, amount_micro: int, kind: str, ref_id: str,
+                           invoice_id: str | None) -> tuple[str, str] | None:
+    """Resolve the per-invoice pay address for this redemption.
+
+    The invoice is deterministic from its canonical id; its address is a
+    derived EOA bound to exactly those values, so a payment to that address is
+    only ever redeemable for this recipient at this amount. Returns
+    (invoice_id, pay_addr) or None if the requested invoice_id's binding does
+    not match the caller's parameters (a redirected/bound-mismatched payment)."""
+    if invoice_id:
+        # A paying client echoes the canonical invoice id. It MUST match the
+        # current redemption's binding — otherwise the payer is trying to
+        # redeem funds that were minted for a DIFFERENT invoice (frontrun).
+        expect = _invoice_id(recipient_tg, amount_micro, kind, ref_id)
+        if invoice_id.lower() != expect.lower():
+            return None
+    else:
+        expect = _invoice_id(recipient_tg, amount_micro, kind, ref_id)
+    iid = invoice_id or expect
+    addr = _derive_invoice_address(iid)
+    await ledger.create_x402_invoice(iid, addr, recipient_tg, amount_micro,
+                                     kind, ref_id, pay_to=_x402_receive_address() or '')
+    return iid, addr
+
+
+def _verify_payment(tx_hash: str, expected_micro: int, pay_to: str) -> dict | None:
+    """Read the USDC Transfer to the exact per-invoice pay address from the tx.
 
     Returns {"sender", "amount_micro"} or None when the payment is missing,
-    reverted, too small, sent to the deposit hot wallet (not x402), or the
-    RPC is unreachable.
+    reverted, too small, not made to `pay_to`, or the RPC is unreachable.
+
+    `pay_to` is the unique derived address of THIS invoice; a payment made to
+    any other address (the deposit hot wallet, the shared receive address, or
+    a different invoice's address) never settles here.
     """
     try:
         receipt = base.w3.eth.get_transaction_receipt(tx_hash)
@@ -63,14 +159,14 @@ def _verify_payment(tx_hash: str, expected_micro: int) -> dict | None:
         return None
     if not receipt or not bool(receipt.get('status')):
         return None
-    pay_to = (_x402_receive_address() or hot_wallet()).lower()
+    pay_to = pay_to.lower()
     total = 0
     sender = None
-    for log in receipt.get('logs', []):
-        if str(log.get('address', '')).lower() != config.USDC_ADDRESS.lower():
+    for entry in receipt.get('logs', []):
+        if str(entry.get('address', '')).lower() != config.USDC_ADDRESS.lower():
             continue
         try:
-            ev = base.usdc.events.Transfer().process_log(log)
+            ev = base.usdc.events.Transfer().process_log(entry)
         except Exception:
             continue
         args = ev['args']
@@ -80,13 +176,13 @@ def _verify_payment(tx_hash: str, expected_micro: int) -> dict | None:
                 sender = args['from']
     if total != expected_micro or sender is None:
         if total > 0:
-            # Real money hit the receive address but does not settle this
-            # invoice (wrong amount, or split across senders). Without a
-            # trace it would be stuck forever with no reconciliation hint.
+            # Real money hit this invoice's pay address but does not settle it
+            # (wrong amount, or split across senders). Without a trace it would
+            # be stuck forever with no reconciliation hint.
             log.warning(
-                'x402 unmatched payment: tx=%s expected=%s got=%s sender=%s '
-                '(funds are in the receive address — reconcile manually)',
-                tx_hash, expected_micro, total, sender,
+                'x402 unmatched payment: tx=%s expected=%s got=%s sender=%s pay_to=%s '
+                '(funds are in the invoice address — reconcile manually)',
+                tx_hash, expected_micro, total, sender, pay_to,
             )
         return None
     return {'sender': sender, 'amount_micro': total}
@@ -95,36 +191,56 @@ def _parse_amount(raw_amount: str) -> int | None:
     """Parse a USDC amount from the query string into micro-units or None.
 
     Decimal (not float): no binary rounding surprises; fractional micros are
-    rounded up like everywhere else in the bot (_to_micro).
+    rounded up like everywhere else in the bot (_to_micro). Capped by the SAME
+    config.MAX_TIP_USDC the Telegram handlers use (an operator lowering the
+    cap must not be silently bypassed on the HTTP path), and floored so a
+    payment too small to cover its own settlement gas is never quoted.
     """
     try:
         amount = Decimal(raw_amount)
     except InvalidOperation:
         return None
-    if not amount.is_finite() or amount <= 0 or amount > MAX_TIP_USDC:
+    if not amount.is_finite() or amount <= 0 or amount > config.MAX_TIP_USDC:
         return None
-    return int((amount * MICRO).to_integral_value(rounding=ROUND_CEILING))
+    micro = int((amount * MICRO).to_integral_value(rounding=ROUND_CEILING))
+    if micro < int(getattr(config, "X402_MIN_USDC", Decimal("0.01")) * MICRO):
+        return None
+    return micro
 
-def _invoice_response(amount_micro: int, resource: str = '', description: str = '', error: str = 'payment required', **extra) -> JSONResponse:
-    body = {'detail': error, 'amount_usdc': round(amount_micro / MICRO, 2), 'pay_to': str(_x402_receive_address() or hot_wallet()), 'expires_in_seconds': PAYMENT_TTL_SECONDS, **extra}
+def _invoice_response(amount_micro: int, resource: str = '', description: str = '', error: str = 'payment required',
+                      pay_addr: str | None = None, invoice_id: str = '', **extra) -> JSONResponse:
+    receive = pay_addr or (_x402_receive_address() or hot_wallet())
+    body = {'detail': error, 'amount_usdc': round(amount_micro / MICRO, 2), 'pay_to': str(receive), 'expires_in_seconds': PAYMENT_TTL_SECONDS, **extra}
+    if invoice_id:
+        body['x-402-invoice-id'] = invoice_id
     if resource:
         # Official x402 shape (v1, scheme "exact") alongside the legacy keys:
         # x402-spec agents read accepts[], first-generation clients keep
         # reading detail/pay_to.
-        body.update(x402_spec.invoice_body(amount_micro, resource, description or resource, error=error))
-    return JSONResponse(status_code=402, headers=_invoice_headers(amount_micro), content=body)
+        body.update(x402_spec.invoice_body(amount_micro, resource, description or resource,
+                                           error=error, pay_to=receive))
+    return JSONResponse(status_code=402, headers=_invoice_headers(amount_micro, receive, invoice_id), content=body)
 
-def _payment_rejected_response(amount_micro: int, resource: str = '', reason: str = 'payment not found or too small') -> JSONResponse:
+def _payment_rejected_response(amount_micro: int, resource: str = '', reason: str = 'payment not found or too small',
+                               pay_addr: str | None = None, invoice_id: str = '') -> JSONResponse:
+    receive = pay_addr or (_x402_receive_address() or hot_wallet())
     body = {'detail': reason, 'expected_amount_usdc': round(amount_micro / MICRO, 2)}
+    if invoice_id:
+        body['x-402-invoice-id'] = invoice_id
     if resource:
-        body.update(x402_spec.invoice_body(amount_micro, resource, resource, error=reason))
-    return JSONResponse(status_code=402, headers=_invoice_headers(amount_micro), content=body)
+        body.update(x402_spec.invoice_body(amount_micro, resource, resource, error=reason, pay_to=receive))
+    return JSONResponse(status_code=402, headers=_invoice_headers(amount_micro, receive, invoice_id), content=body)
 
-async def _run_spec_payment(request, tg_id: int, amount_micro: int, resource: str, settle_and_credit):
+async def _run_spec_payment(request, tg_id: int, amount_micro: int, resource: str,
+                            settle_and_credit, pay_to: str, invoice_id: str = ''):
     """Official x402 flow (X-PAYMENT header, scheme "exact", EIP-3009).
 
-    settle_and_credit(nonce, settlement_tx, payer) -> bool runs the
-    endpoint-specific crediting after a successful on-chain settlement.
+    settle_and_credit(nonce, settlement_tx, payer, settled_value) -> bool runs
+    the endpoint-specific crediting after a successful on-chain settlement.
+
+    `pay_to` is the per-invoice unique pay address the authorization must be
+    payable to — the EIP-3009 signature is only accepted for THIS invoice's
+    address, so a settlement can never be redirected to another recipient.
 
     Returns (status_code, body, headers) or None when no X-PAYMENT header
     is present (the legacy tx-hash flow then applies)."""
@@ -140,16 +256,19 @@ async def _run_spec_payment(request, tg_id: int, amount_micro: int, resource: st
     nonce = 'auth:' + auth['nonce'].hex()
     if await ledger.x402_paid(nonce):
         return 409, {'detail': 'payment already processed'}, {}
-    reserved = await ledger.reserve_x402_auth(nonce, tg_id, amount_micro, auth['from'])
-    if not reserved:
-        return 409, {'detail': 'payment already processed'}, {}
-    receive = str(_x402_receive_address() or '')
+    receive = str(pay_to or '')
+    # Verify the signature BEFORE reserving: a garbage/malformed X-PAYMENT
+    # must never create a DB row (each reserved row later costs an on-chain
+    # authorizationState call during the reconcile sweep — an unauthenticated
+    # endpoint must not let anyone spray that state).
     try:
         sender = x402_spec.verify_eip3009(auth, signature, receive, amount_micro)
     except ValueError as e:
-        await ledger.release_x402_auth(nonce)
-        body = x402_spec.invoice_body(amount_micro, resource, resource, error=str(e))
+        body = x402_spec.invoice_body(amount_micro, resource, resource, error=str(e), pay_to=receive)
         return 402, body, {}
+    reserved = await ledger.reserve_x402_auth(nonce, tg_id, amount_micro, sender, pay_to)
+    if not reserved:
+        return 409, {'detail': 'payment already processed'}, {}
     try:
         settlement = await asyncio.to_thread(
             x402_spec.settle_eip3009, auth, signature, receive
@@ -162,13 +281,14 @@ async def _run_spec_payment(request, tg_id: int, amount_micro: int, resource: st
         body = x402_spec.invoice_body(
             amount_micro, resource, resource,
             error=f'settlement uncertain (tx {e.tx_hash}) — this payment must not be retried',
+            pay_to=receive,
         )
         return 402, body, {}
     except Exception as e:
         # Confirmed revert: no money moved, the on-chain nonce was NOT burned.
         await ledger.release_x402_auth(nonce)
         log.warning('x402 settlement failed: %s', e)
-        body = x402_spec.invoice_body(amount_micro, resource, resource, error=f'settlement failed: {e}')
+        body = x402_spec.invoice_body(amount_micro, resource, resource, error=f'settlement failed: {e}', pay_to=receive)
         return 402, body, {}
     settlement_tx = settlement['tx']
     settled_value = settlement['value']
@@ -207,7 +327,7 @@ async def reconcile_stale_x402(older_than_seconds: int = 600) -> int:
         except (ValueError, IndexError):
             await ledger.release_x402_auth(row['tx_hash'])
             continue
-        receive = str(_x402_receive_address() or '')
+        receive = str(row.get('pay_to') or _x402_receive_address() or '')
         if not receive:
             continue
         burned = await asyncio.to_thread(x402_spec.authorization_burned, payer, nonce)
@@ -225,12 +345,32 @@ async def reconcile_stale_x402(older_than_seconds: int = 600) -> int:
             # keep the row; a wider scan can be run manually.
             log.warning('x402 reconcile: nonce burned but tx not found for %s', row['tx_hash'])
             continue
-        # The row key is the STRING 'auth:<hex>' — tx_hash is TEXT; passing
-        # raw bytes here would compare text = bytea and match nothing.
-        ok = await ledger.finalize_x402_credit(
-            row['tx_hash'], found['tx'], int(row['recipient_tg']), found['value'], payer
-        )
+        # Route the finalize by the invoice bound to this unique pay address:
+        # a paywall reservation must ALSO drop a paywall_purchases row (and
+        # credit the owner); a tip reservation just credits the recipient.
+        # Credit is capped at the QUOTED amount (like the endpoint path): an
+        # overpay in a stale-then-reconciled settlement must not over-credit.
+        inv = await ledger.x402_invoice_by_addr(receive)
+        owed = int(row['amount_micro'])
+        credit_value = min(int(found['value']), owed)
+        if inv and inv.get('kind') == 'paywall' and inv.get('ref_id') is not None:
+            ok = await ledger.finalize_x402_paywall(
+                row['tx_hash'], found['tx'], int(row['recipient_tg']), int(inv['ref_id']),
+                credit_value, payer, receive,
+            )
+        else:
+            # The row key is the STRING 'auth:<hex>' — tx_hash is TEXT; passing
+            # raw bytes here would compare text = bytea and match nothing.
+            ok = await ledger.finalize_x402_credit(
+                row['tx_hash'], found['tx'], int(row['recipient_tg']), credit_value, payer, receive
+            )
         if ok:
+            if inv:
+                # The endpoint credit path normally flips credited=true, which
+                # arms the sweep for this derived address. This reservation was
+                # reconciled WITHOUT that path, so flip it here or the USDC in
+                # the pay address is never consolidated.
+                await ledger.mark_x402_invoice_credited(inv['invoice_id'])
             finalized += 1
             log.info('x402 reconcile: finalized %s -> %s (%s micro)', row['tx_hash'], found['tx'], found['value'])
     return finalized
@@ -249,18 +389,46 @@ async def x402_tip(request: Request) -> JSONResponse:
     if tg_id is None:
         return JSONResponse(status_code=404, content={'detail': 'unknown recipient'})
 
-    # Official x402 (X-PAYMENT header, scheme "exact"): verify + settle + credit.
     resource = f'/api/x402/tip?recipient={recipient}&amount={amount_micro / MICRO:g}'
 
+    # The per-invoice unique pay address: minted for (recipient, amount, kind)
+    # and echoed back to the client. A payment to this address can only ever be
+    # redeemed for this exact tip, so a submitter can never redirect it.
+    resolved = await _resolve_invoice(tg_id, amount_micro, 'tip', '',
+                                      (request.headers.get('x-402-invoice-id') or '').strip() or None)
+    if resolved is None:
+        # A client tried to redeem against an invoice id that does not match
+        # this recipient+amount — funds minted for a different invoice (the
+        # frontrun this per-invoice design closes). Refuse WITHOUT an invoice:
+        # an invoice here would point the payer at the shared unbound receive
+        # address and money sent there would be unredeemable (bound to no
+        # invoice, never verified, never swept).
+        return JSONResponse(status_code=400,
+                             content={'detail': 'invoice id does not match this request'})
+    invoice_id, pay_addr = resolved
+
+    # Official x402 (X-PAYMENT header, scheme "exact"): verify + settle + credit.
     def invoice(error='payment required'):
-        return _invoice_response(amount_micro, resource=resource, description=resource, error=error)
+        return _invoice_response(amount_micro, resource=resource, description=resource,
+                                 error=error, pay_addr=pay_addr, invoice_id=invoice_id)
 
     async def settle_and_credit(nonce, settlement_tx, payer, settled_value):
-        return await ledger.finalize_x402_credit(
-            nonce, settlement_tx, tg_id, settled_value, payer
+        # EIP-3009 signs for the AMOUNT THE CLIENT CHOSE, which may exceed the
+        # quoted invoice price. Credit the QUOTE only: an overpay stays in the
+        # receive pool instead of over-crediting the recipient just because a
+        # hand-rolled client authorized too much.
+        credit_amount = min(int(settled_value), amount_micro)
+        if credit_amount != int(settled_value):
+            log.warning('x402 overpay capped at invoice price: expected=%s settled=%s tx=%s', amount_micro, settled_value, settlement_tx)
+        ok = await ledger.finalize_x402_credit(
+            nonce, settlement_tx, tg_id, credit_amount, payer, pay_addr
         )
+        if ok:
+            await ledger.mark_x402_invoice_credited(invoice_id)
+        return ok
 
-    spec = await _run_spec_payment(request, tg_id, amount_micro, resource, settle_and_credit)
+    spec = await _run_spec_payment(request, tg_id, amount_micro, resource,
+                                   settle_and_credit, pay_addr, invoice_id)
     if spec is not None:
         status, body, headers = spec
         headers.setdefault('X-CONTENT-TYPE-OPTIONS', 'nosniff')
@@ -275,27 +443,30 @@ async def x402_tip(request: Request) -> JSONResponse:
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
     if await ledger.pending_deposit_exists(tx_hash):
         return JSONResponse(status_code=400, content={'detail': 'transaction is a deposit, not an x402 payment'})
-    verified = _verify_payment(tx_hash, amount_micro)
+    verified = _verify_payment(tx_hash, amount_micro, pay_addr)
     if verified is None:
         # Reject payments sent to the deposit hot wallet — those are regular
-        # deposits, not x402 payments. This closes the redirect/race drain.
+        # deposits, not x402 payments. Redirection to the shared receive
+        # address is refused automatically: _verify_payment only accepts the
+        # per-invoice address.
         hot = hot_wallet().lower()
         try:
             receipt = base.w3.eth.get_transaction_receipt(tx_hash)
-            for log in (receipt or {}).get('logs', []):
-                if str(log.get('address', '')).lower() == config.USDC_ADDRESS.lower():
+            for entry in (receipt or {}).get('logs', []):
+                if str(entry.get('address', '')).lower() == config.USDC_ADDRESS.lower():
                     try:
-                        ev = base.usdc.events.Transfer().process_log(log)
+                        ev = base.usdc.events.Transfer().process_log(entry)
                         if ev['args']['to'].lower() == hot:
                             return JSONResponse(status_code=400, content={'detail': 'tx is a deposit to the hot wallet, not an x402 payment'})
                     except Exception:
                         pass
         except Exception:
             pass
-        return _payment_rejected_response(amount_micro, resource=resource)
-    credited = await ledger.credit_x402(tg_id, tx_hash, amount_micro, verified['sender'])
+        return _payment_rejected_response(amount_micro, resource=resource, pay_addr=pay_addr, invoice_id=invoice_id)
+    credited = await ledger.credit_x402(tg_id, tx_hash, amount_micro, verified['sender'], pay_addr)
     if not credited:
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
+    await ledger.mark_x402_invoice_credited(invoice_id)
     return JSONResponse(status_code=200, content={'status': 'ok', 'tip': {'recipient': recipient, 'amount_usdc': round(verified['amount_micro'] / MICRO, 2), 'sender': verified['sender'], 'tx_hash': tx_hash}})
 
 async def x402_paywall(request: Request) -> JSONResponse:
@@ -319,17 +490,39 @@ async def x402_paywall(request: Request) -> JSONResponse:
     # Official x402 (X-PAYMENT header, scheme "exact").
     resource = f'/api/x402/paywall?item={raw_item}&amount={amount_micro / MICRO:g}'
 
-    def invoice(error='payment required', amount=price_micro):
-        return _invoice_response(amount, resource=resource, description=resource, error=error, item=raw_item)
     if amount_micro < price_micro:
-        return _invoice_response(price_micro, item=raw_item)
+        return _invoice_response(price_micro, resource=resource, item=raw_item)
+
+    resolved = await _resolve_invoice(owner_tg, price_micro, 'paywall', raw_item,
+                                      (request.headers.get('x-402-invoice-id') or '').strip() or None)
+    if resolved is None:
+        # Mismatched invoice id (see x402_tip): refuse WITHOUT an invoice so
+        # no payment is ever directed at the shared unbound receive address.
+        return JSONResponse(status_code=400,
+                             content={'detail': 'invoice id does not match this request'})
+    invoice_id, pay_addr = resolved
+
+    def invoice(error='payment required', amount=price_micro):
+        return _invoice_response(amount, resource=resource, description=resource,
+                                 error=error, item=raw_item, pay_addr=pay_addr, invoice_id=invoice_id)
 
     async def settle_and_credit(nonce, settlement_tx, payer, settled_value):
-        return await ledger.finalize_x402_paywall(
-            nonce, settlement_tx, owner_tg, int(raw_item), settled_value, payer
+        # EIP-3009 signs for the AMOUNT THE CLIENT CHOSE, which may exceed the
+        # quoted invoice price. Credit the QUOTE only: an overpay stays in the
+        # receive pool instead of over-crediting the owner just because a
+        # hand-rolled client authorized too much.
+        credit_amount = min(int(settled_value), price_micro)
+        if credit_amount != int(settled_value):
+            log.warning('x402 paywall overpay capped at invoice price: expected=%s settled=%s tx=%s', price_micro, settled_value, settlement_tx)
+        ok = await ledger.finalize_x402_paywall(
+            nonce, settlement_tx, owner_tg, int(raw_item), credit_amount, payer, pay_addr
         )
+        if ok:
+            await ledger.mark_x402_invoice_credited(invoice_id)
+        return ok
 
-    spec = await _run_spec_payment(request, owner_tg, price_micro, resource, settle_and_credit)
+    spec = await _run_spec_payment(request, owner_tg, price_micro, resource,
+                                   settle_and_credit, pay_addr, invoice_id)
     if spec is not None:
         status, body, headers = spec
         if status == 200:
@@ -349,12 +542,13 @@ async def x402_paywall(request: Request) -> JSONResponse:
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
     if await ledger.pending_deposit_exists(tx_hash):
         return JSONResponse(status_code=400, content={'detail': 'transaction is a deposit, not an x402 payment'})
-    verified = _verify_payment(tx_hash, price_micro)
+    verified = _verify_payment(tx_hash, price_micro, pay_addr)
     if verified is None:
-        return _payment_rejected_response(price_micro, resource=resource)
-    res = await ledger.x402_paywall_purchase(owner_tg, int(raw_item), tx_hash, price_micro, verified['sender'])
+        return _payment_rejected_response(price_micro, resource=resource, pay_addr=pay_addr, invoice_id=invoice_id)
+    res = await ledger.x402_paywall_purchase(owner_tg, int(raw_item), tx_hash, price_micro, verified['sender'], pay_addr)
     if res == 'replay':
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
+    await ledger.mark_x402_invoice_credited(invoice_id)
     return JSONResponse(status_code=200, content={'status': 'ok', 'item': {'id': int(raw_item), 'title': item['title'], 'amount_usdc': round(verified['amount_micro'] / MICRO, 2), 'sender': verified['sender'], 'tx_hash': tx_hash}, 'content': item['content']})
 
 async def _resolve_recipient(recipient: str) -> int | None:

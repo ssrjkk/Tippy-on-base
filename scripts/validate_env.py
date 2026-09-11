@@ -122,6 +122,21 @@ gd = os.environ.get("GAS_DRIP_DAILY_MAX", "").strip()
 if gd and not gd.isdigit():
     ERRORS.append("GAS_DRIP_DAILY_MAX must be a non-negative integer (drips per UTC day)")
 
+# --- Relayer private keys + limits (into bot/chain/relayers.py) ---
+relayer_keys = [k for k in os.environ.get("RELAYER_PRIVATE_KEYS", "").split(",") if k.strip()]
+for rk in relayer_keys:
+    if not re.fullmatch(r"0x[0-9a-fA-F]{64}", rk.strip()):
+        ERRORS.append(f"RELAYER_PRIVATE_KEYS contains an invalid key: {rk.strip()[:16]}… (must be 0x + 64 hex chars)")
+rl = os.environ.get("RELAYER_DAILY_LIMIT", "").strip()
+if rl and not rl.isdigit():
+    ERRORS.append("RELAYER_DAILY_LIMIT must be a non-negative integer (USDC micro-units per day)")
+rg = os.environ.get("RELAYER_FEE_GAS_GWEI", "").strip()
+if rg:
+    try:
+        float(rg)
+    except ValueError:
+        ERRORS.append("RELAYER_FEE_GAS_GWEI must be numeric (gas price in Gwei)")
+
 # --- Report ---
 if ERRORS:
     print(f"\n{'='*50}")

@@ -241,28 +241,66 @@ def get_code(address: str, first=None) -> bytes:
     raise RuntimeError(f"all RPC providers failed to read code: {last_err}")
 
 
-def get_transaction_receipt(tx_hash: str, first=None) -> dict | None:
-    """Transaction receipt across providers (failover).
+def get_transaction(tx_hash: str, first=None) -> dict | None:
+    """Transaction across providers (failover), including pending (unmined) ones.
 
-    Returns None when the tx is not yet mined on the first responsive provider
-    (web3 returns None rather than raising for a missing receipt).
+    None when NO provider knows the tx — it was never broadcast to a node we
+    can see, or was dropped from the mempool (expired gas price, replaced).
+    Unlike get_transaction_receipt this also recognises transactions still in
+    the mempool: the refund sweep needs that, because a missing *receipt* does
+    not mean the tx won't confirm later.
+
+    A None from ONE provider is NOT authoritative — that node may be out of
+    sync or have evicted the tx from its local mempool while another still
+    holds it. All providers are consulted before concluding 'dropped', and any
+    RPC failure makes the result ambiguous (raise), so the refund logic never
+    double-pays a live-but-invisible tx.
     """
     _cb_check()
+    last_err = None
     for provider in _active_then_fallbacks(first):
         try:
-            result = provider.eth.get_transaction_receipt(tx_hash)
-            # Receipts are chain-wide: a provider returning None means the tx
-            # is not yet mined (web3 returns None rather than raising). That is
-            # authoritative — there is no point querying another RPC.
-            if result is None:
-                return None
-            _cb_reset()
-            return dict(result)
+            result = provider.eth.get_transaction(tx_hash)
         except Exception as e:
             last_err = e
             continue
-    _cb_record_failure()
-    raise RuntimeError(f"all RPC providers failed to read receipt: {last_err}")
+        if result is not None:
+            _cb_reset()
+            return dict(result)
+    if last_err is not None:
+        # Some nodes errored, none reported the tx: it may still be pending on
+        # a node we could not read. Ambiguous — surface the failure so callers
+        # keep the row pending instead of refunding.
+        _cb_record_failure()
+        raise RuntimeError(f"could not confirm tx state across providers: {last_err}")
+    return None
+
+
+def get_transaction_receipt(tx_hash: str, first=None) -> dict | None:
+    """Transaction receipt across providers (failover).
+
+    Returns None when the tx is not mined on ANY responsive provider. A None
+    from one provider is not authoritative (a lagging node may not have the
+    block yet); every provider is consulted before concluding 'unmined'.
+    """
+    _cb_check()
+    last_err = None
+    for provider in _active_then_fallbacks(first):
+        try:
+            result = provider.eth.get_transaction_receipt(tx_hash)
+        except Exception as e:
+            last_err = e
+            continue
+        if result is not None:
+            _cb_reset()
+            return dict(result)
+    if last_err is not None:
+        # Some nodes errored, none returned a receipt: the conclusion would be
+        # 'unmined', but the RPC failure makes that unreliable. Raise so the
+        # caller treats the outcome as unknown rather than unmined.
+        _cb_record_failure()
+        raise RuntimeError(f"could not read receipt across providers: {last_err}")
+    return None
 
 
 def hot_wallet() -> ChecksumAddress:

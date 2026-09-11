@@ -201,6 +201,72 @@ def test_record_withdraw_fee_logs(ledger):
     assert kinds == ["fee", "withdraw", "deposit"]
 
 
+def test_place_bet_caps_at_max_bet(ledger):
+    fund(ledger, ALICE, 1_000_000_000)
+    bid = ledger.create_bet(ALICE, "Кап?", ["А", "Б"])
+    # The ledger-level cap must hold for BOTH entry paths (text command AND
+    # forged callback_data that never asks the config again).
+    over = int(Decimal(config.MAX_BET_USDC) * 10**6) + 1
+    assert ledger.place_bet(bid, ALICE, 0, over) == "cap"
+    assert ledger.balance(ALICE) == Decimal("1000.000000")  # nothing debited
+    ok = int(Decimal(config.MAX_BET_USDC) * 10**6)
+    assert ledger.place_bet(bid, ALICE, 0, ok) == "ok"
+
+
+def test_reserve_withdraw_blocked_destinations(ledger, monkeypatch):
+    fund(ledger, ALICE, 10_000_000)
+    from bot.base import hot_wallet
+    monkeypatch.setattr(config, "VAULT_ADDRESS", "0x" + "a" * 40)
+    monkeypatch.setattr(config, "X402_RECEIVE_ADDRESS", "0x" + "c" * 40)
+    for dest in (
+        "0x" + "0" * 40,                    # burn / zero address
+        str(hot_wallet()).lower(),          # self-send to the hot wallet
+        "0x" + "a" * 40,                    # vault contract
+        "0x" + "c" * 40,                    # x402 receive pool
+    ):
+        assert ledger.reserve_withdraw(ALICE, dest, 1_000_000, 0) is None
+        assert ledger.balance(ALICE) == Decimal("10.000000")
+    # Refusal is flagged for AML review, then a legit withdrawal still works.
+    flag = ledger._conn.execute(
+        "SELECT COUNT(*) AS c FROM suspicious_activity WHERE tg_id = %s AND kind = 'withdraw_blocked'",
+        (ALICE,),
+    ).fetchone()
+    assert int(flag["c"]) == 4
+    assert ledger.reserve_withdraw(ALICE, "0x" + "b" * 40, 1_000_000, 0) is not None
+
+
+def test_reserve_withdraw_daily_limit_atomic(ledger):
+    fund(ledger, ALICE, 100_000_000)
+    for _ in range(config.MAX_WITHDRAWS_PER_DAY):
+        assert ledger.reserve_withdraw(ALICE, "0x" + "b" * 40, 1_000_000, 0) is not None
+    # The check lives INSIDE the reserved lock, so the reserve call itself is
+    # the gate (a second concurrent /withdraw cannot double-cross it).
+    assert ledger.reserve_withdraw(ALICE, "0x" + "b" * 40, 1_000_000, 0) is None
+    assert ledger.balance(ALICE) == Decimal("95.000000")
+
+
+def test_mark_withdraw_done_preserves_existing_hash(ledger):
+    fund(ledger, ALICE, 10_000_000)
+    wd_id = ledger.reserve_withdraw(ALICE, "0x" + "b" * 40, 5_000_000, 50_000)
+    ledger.mark_withdraw_done(wd_id, "0x" + "f" * 64)
+    # An empty placeholder must never wipe the real on-chain hash.
+    ledger.mark_withdraw_done(wd_id, "")
+    row = ledger._conn.execute(
+        "SELECT tx_hash FROM tx_log WHERE id = %s", (wd_id,),
+    ).fetchone()
+    assert row["tx_hash"] == "0x" + "f" * 64
+
+
+def test_subsidy_release_restores_daily_cap(ledger):
+    cap = int(Decimal(config.MARKET_SUBSIDY_DAILY_MAX_USDC) * 10**6)
+    assert ledger.try_book_subsidy(100_000, cap) is True
+    # Pushing past the cap is refused...
+    assert ledger.try_book_subsidy(cap - 100_000 + 1, cap) is False
+    # ...a reverted on-chain createMarket gives the daily budget back.
+    ledger.release_subsidy(100_000)
+    assert ledger.try_book_subsidy(cap - 100_000, cap) is True
+
+
 def test_liabilities_and_pending_deposits(ledger):
     assert ledger.total_liabilities() == 0
     assert ledger.pending_deposit_total() == 0
@@ -266,6 +332,31 @@ def test_claim_for_sender_autoclaims_all(ledger):
     assert ledger.balance(ALICE) == Decimal("1.000000")
     # Nothing left to claim.
     assert ledger.claim_for_sender(BOB, "0xowner") == []
+
+
+def test_claim_for_sender_respects_maturity_block(ledger):
+    """Deposits may only be credited once the confirming block has been reached.
+    A too-recent deposit stays pending (visible to x402, never credited to the
+    user) until a later sweep with a higher cutoff claims it."""
+    ledger.record_pending("0x" + "6" * 64, "0xowner", 11_000_000, block=490)
+    ledger.record_pending("0x" + "7" * 64, "0xowner", 22_000_000, block=500)
+    # Legacy rows (block NULL) are treated as pre-confirmed.
+    ledger.record_pending("0x" + "8" * 64, "0xowner", 33_000_000)
+    nonce = ledger.new_link_nonce(ALICE, "0xowner")
+    assert ledger.confirm_link(ALICE, "0xowner", nonce)
+
+    # Sweep at head=500 with CONFIRM=10 -> only blocks <= 490 are mature.
+    claimed = ledger.claim_for_sender(ALICE, "0xOWNER", maturity_block=490)
+    assert {c["tx_hash"] for c in claimed} == {"0x" + "6" * 64, "0x" + "8" * 64}
+    assert ledger.balance(ALICE) == Decimal("44.000000")  # 11M + 33M
+
+    # The too-recent deposit (block 500) is still pending, not double-claimed.
+    assert ledger.claim_for_sender(ALICE, "0xowner", maturity_block=490) == []
+
+    # A later sweep (head advanced to 510) matures block-500 deposit.
+    later = ledger.claim_for_sender(ALICE, "0xowner", maturity_block=500)
+    assert {c["tx_hash"] for c in later} == {"0x" + "7" * 64}
+    assert ledger.balance(ALICE) == Decimal("66.000000")
 
 
 def test_history_records_kinds(ledger):
@@ -675,6 +766,17 @@ def test_x402_counts_into_volume_and_stats(ledger):
     assert ledger.user_stats(ALICE)[1] == 7_000_000  # tips_received
 
 
+def test_credit_negative_amount_rejected(ledger):
+    """A negative credit would mint balance out of thin air (a drained hot
+    wallet for the exchange rate). The ledger must refuse it outright."""
+    ledger.ensure_user(ALICE, "alice")
+    from pytest import raises
+    with raises(ValueError):
+        ledger.credit(ALICE, -1, "tx")
+    assert ledger.user_view(ALICE)["balance_micro"] == 0
+    assert ledger.balance(ALICE) == 0
+
+
 # ---------- paywall (paid content) ----------
 
 
@@ -919,8 +1021,18 @@ def test_reconnect_after_server_side_drop(ledger):
         from tests.conftest import TEST_ADMIN_URL
 
     pid = ledger._conn.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
+    # Terminate the backend only while the connection is IDLE (no open
+    # transaction). Reconnecting mid-transaction is deliberately unsupported:
+    # re-running a statement there could silently drop earlier uncommitted
+    # writes of the same transaction (e.g. a debit without its credit).
+    ledger._conn.commit()
     with psycopg.connect(TEST_ADMIN_URL, autocommit=True) as admin:
         admin.execute("SELECT pg_terminate_backend(%s)", (pid,))
+    # poison the client-side state so a reconnect is exercised, not a fresh call
+    try:
+        ledger._conn.execute("SELECT 1")
+    except Exception:
+        pass
     fund(ledger, BOB, 5_000_000)
     assert ledger.balance(BOB) == Decimal("5.000000")
 

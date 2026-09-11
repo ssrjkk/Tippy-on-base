@@ -57,15 +57,16 @@ async def sell_signal(
     try:
         item_id = await ledger.create_paywall(tg_id, title, price_micro, content)
         if item_id is None:
+            caps.release_action(0.0)
             caps.record_error()
             return {"error": "paywall cap reached"}
-        caps.record_action(0.0)
         return {
             "item_id": item_id,
             "price_usdc": price_usdc,
             "title": title,
         }
     except Exception as e:
+        caps.release_action(0.0)
         caps.record_error()
         return {"error": str(e)}
 

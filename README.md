@@ -1,7 +1,7 @@
 # Tippy - Community Economy in USDC on Base
 
 [![CI](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml/badge.svg)](https://github.com/ssrjkk/Tippy-on-base/actions/workflows/ci.yml)
-![Tests](https://img.shields.io/badge/tests-436%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-750%20passed-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.12+-blue)
 ![Network](https://img.shields.io/badge/network-Base-0052FF)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -87,6 +87,15 @@ accounting backed by public proof-of-reserves.
 - **x402 HTTP payments**: `POST /api/x402/tip` and `POST /api/x402/paywall` —
   AI agents pay on-chain via the 402 handshake (invoice → pay → replay-proof credit)
 
+### 🤖 Autonomous agent (fail-closed)
+- Perceives crypto news → LLM filters noise → creates markets, bets, sells
+  analysis as paywall posts — **every action EAS-attested on Base**
+- Spend is capped in code (never in the prompt): daily + per-tx caps, actions
+  per hour, circuit breaker with cooldown; caps are validated at startup and
+  the agent refuses to run on a misconfigured set
+- LLM failure = no action (fail-closed); the agent can never trade on its own
+  markets (DB-level guard)
+
 ### 🖥 Web dashboard (public transparency)
 - Live stats, volume chart, markets with odds/backers, leaderboards, user profiles
 - **Proof of Reserves** `/api/solvency`: bot liabilities vs on-chain USDC
@@ -149,8 +158,8 @@ Full production walkthrough: **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 | `/oc_create` · `/oc_buy` · `/oc_sell` · `/oc_redeem` · `/oc_pos` | **On-chain** markets (OutcomeMarket.sol, ERC-1155) |
 | `/bet create Q \| A \| B [24h]` · `/bets` · `/resolve` · `/cancel` | Parimutuel polls |
 | `/ask <question>` | AI assistant |
-| `/deposit` / `/claim <tx>` / `/link` / `/confirm` | Fund your account |
-| `/withdraw <addr> <amt>` | On-chain withdrawal (1% fee) |
+| `/deposit` / `/claim <tx>` / `/link` / `/confirm` | Fund your account (private chat only) |
+| `/withdraw <addr> <amt>` | On-chain payout — 1% fee, min 1 USDC, ≤5/day (atomic DB cap), private chat only |
 | `/tx <hash>` | Decode a Base transaction |
 | `/rain 10 [N]` | Group giveaway |
 | `/paywall ...` | Paid posts and channels |
@@ -161,28 +170,32 @@ Full production walkthrough: **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 ```
 bot/
 ├─ main.py        entrypoint, background watchers (deposits, withdrawals, deadlines)
-├─ handlers/      aiogram handlers by domain (_common, menu, wallet, tips, bets, markets, stats, paywall, ai)
+├─ handlers/      aiogram handlers by domain (_common, menu, wallet, tips, bets, markets, stats, paywall, onchain, ai)
 ├─ ledger.py      PostgreSQL accounting + LMSR AMM engine (Decimal-exact)
 ├─ base.py        web3 layer: USDC transfers, deposit scanning, tx decoding
+├─ chain/         relayer pool (persisted daily caps) + tx status helpers
 ├─ ai.py          OpenAI-compatible client (stdlib urllib, no new deps)
 ├─ qr.py          local QR generation
 ├─ smart_wallet.py  ERC-4337: UserOp build/sign, paymaster data, approve+trade sync
 └─ config.py      env-driven configuration
+agent/            autonomous market-maker: news → LLM → markets, EAS attestations
 web/
 ├─ server.py      FastAPI: public API, proof-of-reserves, x402 endpoints
-└─ static/        Base-design dashboard (light + dark theme)
+├─ x402.py        x402 handshake: invoice → verify → replay-proof credit
+└─ static/        Base-design dashboard + Mini App (CSP nonce, no inline JS)
 contracts/TipBotVault.sol    on-chain treasury (proof of reserves)
+contracts/OutcomeMarket.sol on-chain markets (ERC-1155 shares, LMSR on-chain)
 contracts/SmartAccount.sol   ERC-4337 account (CREATE2)
 contracts/SmartAccountFactory.sol  deterministic account factory
 contracts/VerifyingPaymaster.sol   gas-sponsoring paymaster
-tests/           436+ tests: real Postgres, real dispatcher, real crypto, local EVM
+tests/           750+ tests: real Postgres, real dispatcher, real crypto, local EVM
 ```
 
 ## Testing
 
 ```bash
 docker compose up -d db       # PostgreSQL for tests (port 5433)
-python -m pytest tests -q     # 436+ passed
+python -m pytest tests -q     # 750+ passed
 ```
 
 What is tested *for real* (not mocked): money conservation across every flow
@@ -207,12 +220,23 @@ worst-case payout.
 - Prediction markets rely on the creator resolving honestly; deadline + grace
   auto-refund bounds the damage of abandoned markets
 - Anti-spam cooldowns, per-day withdrawal limits, gas-griefing protection
+- Sensitive commands (`/withdraw`, `/deposit`, `/claim`, `/link`, `/confirm`,
+  `/export`, `/import`, `/paywall subscribe`) answer only in private chats;
+  the daily withdrawal cap is enforced atomically in the database
+- All bot output is HTML-escaped (no Markdown injection from user titles);
+  the dashboard serves a strict CSP (nonce-based scripts) with zero inline
+  event handlers; web login nonces are single-use with a TTL and pruned
+- Multi-relayer withdrawals keep per-relayer daily caps in a persisted state
+  file (a restart cannot reset the budget); relayer keys and caps are
+  validated by `python scripts/validate_env.py`
+- The autonomous agent is fail-closed: LLM errors mean no action, caps are
+  validated at startup, and the DB blocks trading on its own markets
 
 ## Roadmap
 
 - Per-user deposit addresses (CREATE2 vaults) ✅
 - ~~Smart Wallet (ERC-4337) + gasless paymaster~~ ✅ core shipped + Sepolia-proven (P2)
-- Withdrawal batching for gas savings
+- ~~Withdrawal batching for gas savings~~ ✅ shipped (queued payouts flushed as a batch; multi-relayer pool with persisted daily caps)
 - Order-book style CLOB on top of the AMM
 - ~~On-chain market escrow (trustless resolution via UMA-style oracle)~~ ✅ shipped as **Cally** (OutcomeMarket ERC-1155)
 

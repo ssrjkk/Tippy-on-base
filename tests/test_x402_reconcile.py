@@ -14,11 +14,13 @@ def _receive(monkeypatch):
     )
 
 
-def _row(tx_hash, payer="0x" + "bb" * 20, tg=777):
+def _row(tx_hash, payer="0x" + "bb" * 20, tg=777, pay_to="0x" + "aa" * 20, amount_micro=4_000_000):
     return {
         "tx_hash": tx_hash,
         "sender": payer,
         "recipient_tg": str(tg),
+        "pay_to": pay_to,
+        "amount_micro": amount_micro,
     }
 
 
@@ -35,6 +37,7 @@ async def test_finalize_after_nonce_burned():
         mock_ledger.x402_auth_reservations = AsyncMock(
             return_value=[_row(tx_key)]
         )
+        mock_ledger.x402_invoice_by_addr = AsyncMock(return_value=None)
         mock_ledger.finalize_x402_credit = AsyncMock(return_value=True)
         mock_ledger.release_x402_auth = AsyncMock()
 
@@ -47,8 +50,11 @@ async def test_finalize_after_nonce_burned():
         result = await reconcile_stale_x402()
 
         assert result == 1
+        # The on-chain settlement settled 5 USDC but the QUOTE was 4: the
+        # credit must be capped at the quote (excess stays in the receive pool).
         mock_ledger.finalize_x402_credit.assert_awaited_once_with(
-            tx_key, settlement_tx, 777, 5_000_000, "0x" + "bb" * 20
+            tx_key, settlement_tx, 777, 4_000_000, "0x" + "bb" * 20,
+            "0x" + "aa" * 20,
         )
         mock_ledger.release_x402_auth.assert_not_awaited()
 
@@ -146,6 +152,7 @@ async def test_already_settled_noop():
         mock_ledger.x402_auth_reservations = AsyncMock(
             return_value=[_row(tx_key)]
         )
+        mock_ledger.x402_invoice_by_addr = AsyncMock(return_value=None)
         mock_ledger.finalize_x402_credit = AsyncMock(return_value=False)
         mock_ledger.release_x402_auth = AsyncMock()
 

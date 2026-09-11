@@ -91,3 +91,33 @@ async def test_no_channels_configured(mock_bot, ledger, monkeypatch):
     kicked = await channel_subs.kick_expired_channel_subscriptions(mock_bot)
     assert kicked == 0
     mock_bot.ban_chat_member.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_extends_instead_of_resetting(ledger, monkeypatch):
+    """subscribe_channel chips are additive even mid-subscription.
+
+    Regression for the read-then-write race: the extension is computed inside
+    the Postgres upsert (GREATEST(coalesce(expires_at,0), now)+period), so a
+    second payment during an active sub must extend, not reset, the deadline —
+    otherwise a user who pays twice mid-subscription loses paid-up time and a
+    concurrent renewal could be double-billed for one slot.
+    """
+    tg_id = 5003
+    chat_id = -100103
+    ledger.ensure_user(OWNER, "owner")
+    ledger.ensure_user(tg_id, "alice")
+    ledger.credit(tg_id, 100_000_000, "test")
+    ledger.set_paywall_channel(chat_id, OWNER, 100)
+
+    ledger.subscribe_channel(chat_id, tg_id)
+    first_end = ledger._conn.execute(
+        "SELECT expires_at FROM paywall_subscriptions WHERE chat_id = %s AND tg_id = %s",
+        (chat_id, tg_id),
+    ).fetchone()["expires_at"]
+    ledger.subscribe_channel(chat_id, tg_id)
+    second_end = ledger._conn.execute(
+        "SELECT expires_at FROM paywall_subscriptions WHERE chat_id = %s AND tg_id = %s",
+        (chat_id, tg_id),
+    ).fetchone()["expires_at"]
+    assert second_end >= first_end + 100 - 1  # strictly extended by ~ FULL period

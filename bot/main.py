@@ -142,18 +142,44 @@ async def create2_sweep_watcher() -> None:
             log.warning('create2 sweep failed: %s', e)
         await asyncio.sleep(config.POLL_SECONDS)
 
+async def x402_sweep_watcher() -> None:
+    """Consolidate USDC from per-invoice pay addresses to the x402 receive pool.
+
+    Each x402 invoice derives a unique EOA that holds USDC after payment. This
+    watcher moves those funds to the shared X402_RECEIVE_ADDRESS so they are
+    visible to the same reconciliation logic the existing x402 flow uses.
+    Idle when x402 is disabled or no invoice address holds USDC.
+    """
+    from bot.x402_sweep import sweep_all_invoices
+    while True:
+        try:
+            if config.X402_ENABLED and config.X402_RECEIVE_ADDRESS:
+                swept = await sweep_all_invoices()
+                if swept:
+                    log.info('x402 sweep: consolidated %d invoice(s)', swept)
+        except Exception as e:
+            log.warning('x402 sweep failed: %s', e)
+        await asyncio.sleep(config.POLL_SECONDS)
+
 async def housekeeping_watcher() -> None:
-    """Daily DB housekeeping: prune the reaction-tip message index so tables
-    do not grow forever in active groups (balances live in `users`, so no
-    money-critical data is touched)."""
+    """Daily DB housekeeping: prune the reaction-tip message index and the
+    x402/deposit side-tables so the DB stays bounded in active groups
+    (balances live in `users`, so no money-critical data is touched — paid
+    x402 txs are kept for a full year as the anti-replay guard)."""
     while True:
         try:
             removed = await ledger.prune_message_index(config.MESSAGE_INDEX_RETENTION_SECONDS)
             if removed:
                 log.info('pruned %s stale message-index rows', removed)
+            counts = await ledger.prune_housekeeping(
+                getattr(config, "X402_RETENTION_SECONDS", 90 * 86400),
+                getattr(config, "X402_PAYMENT_RETENTION_SECONDS", 365 * 86400),
+            )
+            if any(counts.values()):
+                log.info('pruned x402/pending rows: %s', counts)
         except Exception as e:
             log.warning('housekeeping failed: %s', e)
-        await asyncio.sleep(86400)
+        await asyncio.sleep(getattr(config, "HOUSEKEEPING_INTERVAL_SECONDS", 86400))
 
 async def _run_webhook(stop: asyncio.Event | None=None) -> None:
     """Register the webhook with Telegram, serve the API, keep watchers alive.
@@ -211,18 +237,18 @@ async def main() -> None:
         """Drain queued Telegram notifications with retry logic."""
         while True:
             try:
-                items = await asyncio.to_thread(ledger.dequeue_notifications)
+                items = await ledger.dequeue_notifications()
                 for n in items:
                     try:
                         await bot.send_message(n['chat_id'], n['text'])
-                        await asyncio.to_thread(ledger.ack_notification, n['id'])
+                        await ledger.ack_notification(n['id'])
                     except Exception:
-                        await asyncio.to_thread(ledger.retry_notification, n['id'], 30)
+                        await ledger.retry_notification(n['id'], 30)
             except Exception as e:
                 log.warning('notification outbox worker failed: %s', e)
             await asyncio.sleep(5)
 
-    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(batch_withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(create2_sweep_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot)), asyncio.create_task(onchain_watcher(bot)), asyncio.create_task(x402_reconcile_watcher()), asyncio.create_task(notification_outbox_worker())]
+    tasks = [asyncio.create_task(deposit_watcher()), asyncio.create_task(withdraw_watcher()), asyncio.create_task(batch_withdraw_watcher()), asyncio.create_task(market_watcher()), asyncio.create_task(channel_watcher()), asyncio.create_task(create2_sweep_watcher()), asyncio.create_task(x402_sweep_watcher()), asyncio.create_task(housekeeping_watcher()), asyncio.create_task(solvency_watcher(bot)), asyncio.create_task(onchain_watcher(bot)), asyncio.create_task(x402_reconcile_watcher()), asyncio.create_task(notification_outbox_worker())]
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -247,7 +273,7 @@ async def main() -> None:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         try:
-            await asyncio.to_thread(ledger.close)
+            await ledger.close()
         except Exception:
             pass
         log.info('bot shut down gracefully')

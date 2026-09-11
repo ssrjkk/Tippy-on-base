@@ -4,6 +4,8 @@ All mutating state that tests patch (ledger, _now, _qr_bytes, _money_cmd_last)
 lives here so a single monkeypatch on bot.handlers._common works everywhere.
 """
 
+import html
+import logging
 import re
 import time
 from decimal import Decimal
@@ -14,6 +16,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from .. import base, config, i18n, wallets
 from .. import qr as qrlib
 from ..ledger import async_ledger as ledger
+
+log = logging.getLogger("tipbot.handlers")
 
 __all__ = [
     "AMOUNT_RE",
@@ -49,6 +53,89 @@ __all__ = [
 ]
 
 router = Router()
+
+# ----- error safety net -----
+_error_notify_ts = 0.0
+_ERROR_NOTIFY_COOLDOWN = 60
+
+
+def _err_context(up) -> str:
+    """Short human-readable context of the update that failed."""
+    try:
+        ev = getattr(up, "event", None)
+        if ev is None:
+            return f"update_type={type(up).__name__}"
+        chat = getattr(ev, "chat", None)
+        parts = [f"chat={chat.id}:{chat.type}"] if chat is not None else []
+        fu = getattr(ev, "from_user", None)
+        if fu is not None:
+            parts.append(f"user={fu.username or fu.id}")
+        txt = getattr(ev, "text", None) or getattr(ev, "caption", None)
+        if txt:
+            parts.append(f"text={txt[:120]!r}")
+        return " · ".join(parts) or "unknown"
+    except Exception:
+        return "unknown"
+
+
+@router.errors()
+async def _on_error(event: types.ErrorEvent) -> None:
+    """Last-resort safety net: a failed money handler must not stay silent.
+
+    aiogram swallows unhandled exceptions in both polling and webhook modes.
+    This logs full context, tells the user (private chats only) something went
+    wrong, and pings the admin in a throttled fashion.
+    """
+    global _error_notify_ts
+    up: types.Update = event.update
+    ctx = _err_context(up)
+    log.error(
+        "unhandled update error | context: %s | exception: %r",
+        ctx, event.exception,
+        exc_info=event.exception,
+    )
+
+    # A failed money handler can leave the shared ledger connection in an
+    # open/aborted transaction (e.g. an exception raised between a SELECT FOR
+    # UPDATE and its commit). Roll it back here so the connection isn't
+    # poisoned (`InFailedSqlTransaction`) and doesn't pin row locks that block
+    # concurrent DDL/watchers — otherwise every later handler call fails until
+    # a process restart. Idempotent: rollback after a healthy commit is a no-op.
+    try:
+        await ledger.rollback()
+    except Exception:
+        log.warning("ledger rollback after handler error failed", exc_info=True)
+
+    try:
+        ev = getattr(up, "event", None)
+    except Exception:
+        ev = None
+    bot = getattr(up, "bot", None)
+    try:
+        if bot is not None and ev is not None and getattr(ev, "chat", None) and ev.chat.type == "private":
+            fu = getattr(ev, "from_user", None)
+            lang = "ru"
+            if fu is not None:
+                lang = await user_lang(fu.id)
+            await bot.send_message(ev.chat.id, i18n.t(lang, "error_generic"))
+    except Exception:
+        pass
+
+    admin = int(config.ADMIN_TG_ID) if config.ADMIN_TG_ID else 0
+    if not admin or bot is None:
+        return
+    now = time.time()
+    if now - _error_notify_ts < _ERROR_NOTIFY_COOLDOWN:
+        return
+    _error_notify_ts = now
+    try:
+        await bot.send_message(
+            admin,
+            f"⚠️ <b>Bot error</b>\n{html.escape(type(event.exception).__name__)}: {html.escape(str(event.exception)[:200])}\n{html.escape(ctx)}",
+            parse_mode="HTML",
+        )
+    except Exception:
+        log.exception("failed to notify admin about a handler error")
 
 TX_HASH_RE = re.compile(r"^0x[a-fA-F0-9]{64}$")
 USDC_ADDR_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
@@ -125,6 +212,16 @@ def _fmt(amount_micro: int) -> str:
 
 def _to_micro(amount: Decimal) -> int:
     return int(amount * Decimal(10**config.USDC_DECIMALS))
+
+
+def _h(s: object) -> str:
+    """HTML-escape user content that is interpolated into ParseMode.HTML text.
+
+    Questions, option labels and usernames are user-authored; without escaping
+    a `<a href=...>`/`<script>` payload becomes a phishing vector in every
+    None-to-telegram HTML-rendered message.
+    """
+    return html.escape(str(s))
 
 
 def _esc(s: str, n: int = 4) -> str:

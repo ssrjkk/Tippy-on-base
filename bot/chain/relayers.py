@@ -13,11 +13,14 @@ Relayer keys are derived at startup and stored in-memory only (never
 logged or serialized).  Daily limits reset at midnight UTC.
 """
 
+import json
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 
 from eth_typing import ChecksumAddress
 from web3 import Web3
@@ -25,6 +28,25 @@ from web3 import Web3
 from .. import config
 
 log = logging.getLogger("tipbot.relayers")
+
+_STATE_FILE = Path(__file__).resolve().parent / ".relayer_usage.json"
+_state_lock = threading.Lock()
+# Overridable for tests/CI isolation.
+_STATE_FILE_PATH = os.environ.get("RELAYER_STATE_FILE") or _STATE_FILE
+
+
+def _load_usage() -> dict:
+    """Load persisted per-day usage: {"<unixday>:<addr>": micro_spent}."""
+    if not Path(_STATE_FILE_PATH).exists():
+        return {}
+    try:
+        return json.loads(Path(_STATE_FILE_PATH).read_text())
+    except (ValueError, OSError):
+        return {}
+
+
+def _save_usage(usage: dict) -> None:
+    Path(_STATE_FILE_PATH).write_text(json.dumps(usage, indent=2))
 
 
 @dataclass
@@ -35,12 +57,13 @@ class Relayer:
     _daily_limit_micro: int = 0
     _spent_today: int = 0
     _day_start: int = 0  # unix day (UTC)
+    _persist: bool = False  # True only for production (from_config) relayers
 
     def __post_init__(self):
         self._lock = threading.Lock()
         if self._daily_limit_micro == 0:
             self._daily_limit_micro = int(
-                Decimal(str(getattr(config, "RELAYER_DAILY_LIMIT", 10_000)))
+                Decimal(str(config.RELAYER_DAILY_LIMIT))
                 * Decimal("1000000")  # USDC micro-units
             )
 
@@ -55,6 +78,17 @@ class Relayer:
         with self._lock:
             self._maybe_reset()
             self._spent_today += amount_micro
+            self._persist_state()
+
+    def _persist_state(self) -> None:
+        """Persist spent-today so a restart cannot reset the daily cap."""
+        if not self._persist:
+            return
+        day = str(int(time.time()) // 86400)
+        usage = _load_usage()
+        usage[f"{day}:{self.address.lower()}"] = self._spent_today
+        with _state_lock:
+            _save_usage(usage)
 
     def remaining(self) -> int:
         """Remaining daily capacity in micro-USDC."""
@@ -62,12 +96,19 @@ class Relayer:
             self._maybe_reset()
             return max(0, self._daily_limit_micro - self._spent_today)
 
+    def spent_today_persisted(self) -> int:
+        """Spent this UTC day (for diagnostics/tests)."""
+        with self._lock:
+            self._maybe_reset()
+            return self._spent_today
+
     def _maybe_reset(self) -> None:
-        """Reset the daily counter at midnight UTC."""
+        """Reset the daily counter at midnight UTC and persist the new day."""
         now_day = int(time.time()) // 86400
         if now_day != self._day_start:
             self._day_start = now_day
             self._spent_today = 0
+            self._persist_state()
 
 
 class RelayerPool:
@@ -88,15 +129,20 @@ class RelayerPool:
     @classmethod
     def from_config(cls) -> "RelayerPool":
         """Build pool from RELAYER_PRIVATE_KEYS config."""
-        raw = getattr(config, "RELAYER_PRIVATE_KEYS", "") or ""
+        raw = config.RELAYER_PRIVATE_KEYS
         keys = [k.strip() for k in raw.split(",") if k.strip()]
         relayers = []
+        usage = _load_usage()
+        day = str(int(time.time()) // 86400)
         for key in keys:
             try:
                 acct = Web3().eth.account.from_key(key)
                 addr = Web3.to_checksum_address(acct.address)
-                relayers.append(Relayer(address=addr, _key=key))
-                log.info("relayer registered: %s", addr)
+                r = Relayer(address=addr, _key=key, _persist=True)
+                r._spent_today = int(usage.get(f"{day}:{addr.lower()}", 0))
+                r._day_start = int(time.time()) // 86400
+                relayers.append(r)
+                log.info("relayer registered: %s (spent today=%s)", addr, r._spent_today)
             except Exception as e:
                 log.warning("bad relayer key rejected (%s)", type(e).__name__)
         if not relayers:

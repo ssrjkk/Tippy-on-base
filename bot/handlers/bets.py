@@ -59,7 +59,7 @@ async def _bet_create(message: types.Message, parts: list[str]) -> None:
         return
     for o in options:
         if len(o) > common.config.MAX_OPTION_LEN:
-            await message.answer(i18n.t(lang, 'bet_option_long', n=common.config.MAX_OPTION_LEN, o=o[:40]))
+            await message.answer(i18n.t(lang, 'bet_option_long', n=common.config.MAX_OPTION_LEN, o=common._h(o[:40])))
             return
     bet_id = await common.ledger.create_bet(message.from_user.id, question, options, close_at=deadline)
     if deadline:
@@ -67,7 +67,7 @@ async def _bet_create(message: types.Message, parts: list[str]) -> None:
     else:
         dl = i18n.t(lang, 'bet_no_deadline')
     opt_lines = '\n'.join((f'{i + 1}) {o}' for i, o in enumerate(options)))
-    await message.answer(f"{i18n.t(lang, 'bet_created', id=bet_id)}\n\n<b>{question}</b>\n{opt_lines}{dl}\n\n{i18n.t(lang, 'bet_howto', id=bet_id)}")
+    await message.answer(f"{i18n.t(lang, 'bet_created', id=bet_id)}\n\n<b>{common._h(question)}</b>\n{common._h(opt_lines)}{dl}\n\n{i18n.t(lang, 'bet_howto', id=bet_id)}")
 
 def _parse_deadline(s: str) -> int | None:
     m = common.DEADLINE_RE.match(s.lower())
@@ -125,7 +125,7 @@ async def _bet_place(message: types.Message, parts: list[str]) -> None:
         return
     bal = await common.ledger.balance(message.from_user.id)
     bal_str = f'{bal:.4f}'.rstrip('0').rstrip('.')
-    await message.answer(i18n.t(lang, 'bet_confirmed', id=bet_id, label=options[option_idx], amount=common._fmt(amount_micro), bal=bal_str))
+    await message.answer(i18n.t(lang, 'bet_confirmed', id=bet_id, label=common._h(options[option_idx]), amount=common._fmt(amount_micro), bal=bal_str))
 
 def _rel_deadline(ts: int) -> str:
     """Relative deadline for cards."""
@@ -149,25 +149,25 @@ async def _bet_card(bet, tg_id: int | None=None) -> str:
 
 async def _market_detail_text(view: dict, tg_id: int | None=None) -> str:
     lang = await _lang(tg_id)
-    lines = [f"🎯 #{view['id']} <b>{view['question']}</b>"]
+    lines = [f"🎯 #{view['id']} <b>{common._h(view['question'])}</b>"]
     if view['status'] == 'resolved':
         winner = view['options'][view['winner']]['label'] if view['winner'] is not None and view['winner'] < len(view['options']) else '?'
-        lines.append(i18n.t(lang, 'bet_resolved', winner=winner))
+        lines.append(i18n.t(lang, 'bet_resolved', winner=common._h(winner)))
     elif view['status'] == 'cancelled':
         lines.append(i18n.t(lang, 'bet_cancelled'))
     elif view['expired']:
         lines.append(i18n.t(lang, 'bet_expired', id=view['id']))
     elif view['close_at']:
         creator = view['creator']['username'] or 'id' + str(view['creator']['id'])
-        lines.append(f"⏰ {_rel_deadline(view['close_at'])} · @{creator}")
+        lines.append(f"⏰ {_rel_deadline(view['close_at'])} · @{common._h(creator)}")
     else:
         creator = view['creator']['username'] or 'id' + str(view['creator']['id'])
-        lines.append(f'⌛ /resolve · @{creator}')
+        lines.append(f'⌛ /resolve · @{common._h(creator)}')
     my_stake = await common.ledger.user_bet_stake(view['id'], tg_id) if tg_id else {}
     for o in view['options']:
         mine = f" · <b>{i18n.t(lang, 'your_stake', amt=common._fmt(my_stake[o['index']]))}</b>" if my_stake.get(o['index']) else ''
         backers = f"{o['backers']}👤" if o['backers'] else ''
-        lines.append(f"{o['index'] + 1}) {o['label']} — <b>{common._fmt(o['pool'])} USDC</b> ({o['probability']}%, {backers}){mine}")
+        lines.append(f"{o['index'] + 1}) {common._h(o['label'])} — <b>{common._fmt(o['pool'])} USDC</b> ({o['probability']}%, {backers}){mine}")
     lines.append(i18n.t(lang, 'bet_pot', pot=common._fmt(view['pot']), backers=view['total_backers']))
     lines.append(i18n.t(lang, 'bet_fee_note'))
     return '\n'.join(lines)
@@ -188,7 +188,7 @@ async def _bets_text(tg_id: int | None=None) -> tuple[str, InlineKeyboardMarkup]
             meta = ' ⏰ ' + _rel_deadline(view['close_at'])
         else:
             meta = ''
-        lines.append(f"#{view['id']} {view['question']} — {common._fmt(view['pot'])} USDC · {view['total_backers']}👤{meta}")
+        lines.append(f"#{view['id']} {common._h(view['question'])} — {common._fmt(view['pot'])} USDC · {view['total_backers']}👤{meta}")
     lines.append(i18n.t(lang, 'bet_list_hint'))
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🎯 #{b['id']}: {b['question'][:38]}", callback_data=f"market:{b['id']}")] for b in bets] + [[InlineKeyboardButton(text=i18n.t(lang, 'btn_mk_create'), callback_data='betcreate')]])
     return ('\n'.join(lines), kb)
@@ -222,7 +222,11 @@ async def cb_res(cb: types.CallbackQuery) -> None:
         return
     lang = await _lang(user.id)
     parts = cb.data.split(':')
-    bet_id = int(parts[1])
+    try:
+        bet_id = int(parts[1])
+    except Exception:
+        await cb.answer(i18n.t(lang, 'bad_amount'), show_alert=True)
+        return
     view = await common.ledger.market_view(bet_id)
     if not view:
         await cb.answer(i18n.t(lang, 'market_not_found'), show_alert=True)
@@ -235,7 +239,7 @@ async def cb_res(cb: types.CallbackQuery) -> None:
         return
     if len(parts) == 2:
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🏆 {o['label'][:30]}", callback_data=f"res:{bet_id}:{o['index']}")] for o in view['options']] + [[InlineKeyboardButton(text='◀️ ' + i18n.t(lang, 'btn_back'), callback_data=f'market:{bet_id}')]])
-        await common._edit_menu(cb, i18n.t(lang, 'bet_resolve_title', id=bet_id, question=view['question'], pot=common._fmt(view['pot'])), kb)
+        await common._edit_menu(cb, i18n.t(lang, 'bet_resolve_title', id=bet_id, question=common._h(view['question']), pot=common._fmt(view['pot'])), kb)
         await cb.answer()
         return
     idx = int(parts[2])
@@ -257,13 +261,21 @@ async def cb_res(cb: types.CallbackQuery) -> None:
 async def cb_bet_amount(cb: types.CallbackQuery) -> None:
     lang = await _lang(cb.from_user.id)
     _, bet_id, opt = cb.data.split(':')
-    view = await common.ledger.market_view(int(bet_id))
+    try:
+        bet_id, opt = int(bet_id), int(opt)
+    except Exception:
+        await cb.answer(i18n.t(lang, 'bad_amount'), show_alert=True)
+        return
+    view = await common.ledger.market_view(bet_id)
     if not view:
         await cb.answer(i18n.t(lang, 'market_not_found'), show_alert=True)
         return
-    label = view['options'][int(opt)]['label']
+    if opt >= len(view['options']):
+        await cb.answer(i18n.t(lang, 'bet_bad_option'), show_alert=True)
+        return
+    label = view['options'][opt]['label']
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f'{a} USDC', callback_data=f'bets:{bet_id}:{opt}:{a}') for a in common.QUICK_AMOUNTS], [InlineKeyboardButton(text='◀️ ' + i18n.t(lang, 'btn_back'), callback_data=f'market:{bet_id}')]])
-    await common._edit_menu(cb, i18n.t(lang, 'bet_amount_ask', id=bet_id, question=view['question'], label=label), kb)
+    await common._edit_menu(cb, i18n.t(lang, 'bet_amount_ask', id=bet_id, question=common._h(view['question']), label=common._h(label)), kb)
     await cb.answer()
 
 @common.router.callback_query(F.data.startswith('bets:'))
@@ -273,8 +285,8 @@ async def cb_bet_place(cb: types.CallbackQuery) -> None:
         return
     lang = await _lang(user.id)
     _, bet_id, opt, amt = cb.data.split(':')
-    bet_id, opt = (int(bet_id), int(opt))
     try:
+        bet_id, opt = int(bet_id), int(opt)
         amount_micro = common._to_micro(Decimal(amt))
     except Exception:
         await cb.answer(i18n.t(lang, 'bad_amount'), show_alert=True)
@@ -292,7 +304,7 @@ async def cb_bet_place(cb: types.CallbackQuery) -> None:
         options = json.loads(bet['options'])
         bal = await common.ledger.balance(user.id)
         bal_str = f'{bal:.4f}'.rstrip('0').rstrip('.')
-        text = i18n.t(lang, 'bet_confirmed', id=bet_id, label=options[opt], amount=common._fmt(amount_micro), bal=bal_str)
+        text = i18n.t(lang, 'bet_confirmed', id=bet_id, label=common._h(options[opt]), amount=common._fmt(amount_micro), bal=bal_str)
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=i18n.t(lang, 'btn_market'), callback_data=f'market:{bet_id}'), InlineKeyboardButton(text=i18n.t(lang, 'btn_all_markets'), callback_data='bets')]])
         await common._edit_menu(cb, text, kb)
         await cb.answer()
@@ -302,6 +314,8 @@ async def cb_bet_place(cb: types.CallbackQuery) -> None:
         await cb.answer(i18n.t(lang, 'bet_closed'), show_alert=True)
     elif result == 'balance':
         await cb.answer(i18n.t(lang, 'no_balance'), show_alert=True)
+    elif result == 'cap':
+        await cb.answer(i18n.t(lang, 'bet_max_amount', n=f'{common.config.MAX_BET_USDC:.0f}'), show_alert=True)
     else:
         await cb.answer(i18n.t(lang, 'error_generic'), show_alert=True)
 
@@ -343,10 +357,10 @@ async def _notify_bet_result(message: types.Message, bet_id: int) -> None:
         won = [r for r in rows if r['win']]
         if won:
             total = sum(r['net_micro'] for r in won)
-            line = i18n.t(lang, 'bet_notify_win', id=bet_id, question=bet['question'], winner=winner_label, amount=common._fmt(total))
+            line = i18n.t(lang, 'bet_notify_win', id=bet_id, question=common._h(bet['question']), winner=common._h(winner_label), amount=common._fmt(total))
         else:
             labels = '», «'.join(r['option'] for r in rows)
-            line = i18n.t(lang, 'bet_notify_lose', id=bet_id, question=bet['question'], winner=winner_label, labels=labels)
+            line = i18n.t(lang, 'bet_notify_lose', id=bet_id, question=common._h(bet['question']), winner=common._h(winner_label), labels=common._h(labels))
         try:
             await message.bot.send_message(tg_id, line)
         except Exception:
@@ -365,7 +379,7 @@ async def _notify_bet_cancelled(message: types.Message, bet_id: int) -> None:
         seen.add(tg_id)
         lang = await _lang(tg_id)
         try:
-            await message.bot.send_message(tg_id, i18n.t(lang, 'bet_notify_cancel', id=bet_id, question=bet['question']))
+            await message.bot.send_message(tg_id, i18n.t(lang, 'bet_notify_cancel', id=bet_id, question=common._h(bet['question'])))
         except Exception:
             pass
 
@@ -392,5 +406,5 @@ async def cmd_mybets(message: types.Message) -> None:
         return
     lines = [i18n.t(lang, 'bet_my_header')]
     for p in positions:
-        lines.append(f"🎯 #{p['bet_id']} <b>{p['question']}</b>\n   • {p['option']} — {common._fmt(p['stake_micro'])} USDC\n   • {i18n.t(lang, 'potential_win', amt=common._fmt(p['potential_micro']))}")
+        lines.append(f"🎯 #{p['bet_id']} <b>{common._h(p['question'])}</b>\n   • {common._h(p['option'])} — {common._fmt(p['stake_micro'])} USDC\n   • {i18n.t(lang, 'potential_win', amt=common._fmt(p['potential_micro']))}")
     await message.answer('\n\n'.join(lines))

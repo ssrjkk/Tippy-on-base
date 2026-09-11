@@ -1,6 +1,6 @@
 # BACKLOG — незакрытые моменты и улучшения
 
-Обновлён: 2026-08-30. Состояние кодовой базы: 669/669 pytest, ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
+Обновлён: 2026-09-11. Состояние кодовой базы: 750/750 pytest, ruff/i18n/validate_env — зелёные. Всё ниже — то, что ОСТАЛОСЬ.
 
 ## 🔴 P0 — перед включением ончейн-слоя в проде
 
@@ -40,8 +40,23 @@
 | ~~15~~ | ~~`estimate_buy_shares` — мёртвый код~~ | ✅ удалён |
 | ~~16~~ | ~~`bot/cache.py` (Redis) и relayer pool~~ | ✅ удалён вместе с `test_cache.py` |
 | ~~17~~ | ~~`eip1559_fees_sync`: `priority_wei` → `priority_gwei`~~ | ✅ переименован |
-| ~~18~~ | CSP `unsafe-inline` → nonce-based CSP для всех шаблонов | ✅ `_nonce_inject()` в middleware: per-request nonce на inline `<script>/<style>`, `esm.sh`/`jsdelivr` в whitelist, `unsafe-inline` убран | 
+| ~~18~~ | CSP `unsafe-inline` → nonce-based CSP для всех шаблонов | ✅ `_nonce_inject()` в middleware: per-request nonce на inline `<script>`, `esm.sh`/`jsdelivr` в whitelist. Все inline-обработчики (`onclick=` и т.п.) заменены на data-act делегирование. `style-src 'self' 'unsafe-inline'` оставлен намеренно — иначе браузер блокирует style-атрибуты |
 | ~~19~~ | ~~README roadmap: отметить Cally как shipped~~ | ✅ |
+
+### ✅ Round 5 (2026-09-11) — деньги, безопасность, доки
+
+| # | Задача | Статус |
+|---|---|---|
+| R5.1 | Paywall overpay: EIP-3009 overpay капается ценой поста (`credit_amount = min(settled, price_micro)`) | ✅ `web/x402.py` + регресс-тест |
+| R5.2 | `credit()` отклоняет отрицательные суммы (защита от «минта» баланса) | ✅ + регресс-тест |
+| R5.3 | Own-market guard в БД (`buy_shares` → `ownmarket`) | ✅ + регресс-тест |
+| R5.4 | Атомарный суточный кап `/withdraw` в одной транзакции с дебетом | ✅ + существующий атомарный тест |
+| R5.5 | Персистентность caps relayer-пула (`RELAYER_STATE_FILE`) + валидация ключей в `validate_env.py` | ✅ |
+| R5.6 | HTML-escaping всех пользовательских строк в ответах бота (paywall/onchain/markets/bets/errors) | ✅ |
+| R5.7 | Приватные чаты для `/withdraw /deposit /claim /link /confirm` + `/paywall subscribe` | ✅ |
+| R5.8 | `login_nonces`: TTL-прунинг (`LOGIN_NONCE_TTL_SECONDS`) | ✅ |
+| R5.9 | Агент fail-closed: ошибка LLM = нет действия; валидация капов на старте; предупреждение при локал-фоллбеке EAS | ✅ |
+| R5.10 | Доки актуализированы (README, ARCHITECTURE, SECURITY, ECOSYSTEM_DESIGN, DEPLOY, .env.example, prod.env.example) | ✅ |
 
 ### ✅ Round 3–4 (2026-08-29) — тесты, перф и надёжность
 
@@ -60,6 +75,6 @@
 
 - Stray USDC → OutcomeMarket: stranded dust (NatSpec), только rescueETH.
 - Негативный кэш Basenames 5 минут: свежепривязанный кошелёк ждёт до 5 мин.
-- CSP: `frame-ancestors` Telegram; per-request nonce на inline скрипты/стили + whitelist esm.sh/jsdelivr (unsafe-inline убран).
+- CSP: `frame-ancestors` Telegram; per-request nonce на inline-скрипты + whitelist esm.sh/jsdelivr; `style-src 'unsafe-inline'` только для style-атрибутов (script-src строгий).
 - Диспут: 1 на рынок, финал за владельцем (trust model).
 - `deploys`: OWNER_KEY в env для деплоя — только для тестнета; mainnet = multisig.

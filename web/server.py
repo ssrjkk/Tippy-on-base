@@ -3,6 +3,7 @@
 Run:  python -m web.server
 """
 import base64
+import ipaddress
 import json
 import logging
 import os
@@ -16,7 +17,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
-    RedirectResponse,
     Response,
     StreamingResponse,
 )
@@ -68,25 +68,56 @@ WEB_RATE_MAX_CLIENTS: int = int(os.environ.get('WEB_RATE_MAX_CLIENTS', '10000'))
 _rl_state: dict[str, list[float]] = {}
 _RL_DISABLED: bool = os.environ.get('TESTING', '') == '1'
 _ask_cooldown: dict[str, float] = {}
+_ask_day: str = ''
+_ask_served_today: int = 0
+_ask_lock = __import__('threading').Lock()
+
+
+def _peer_trusted(peers: frozenset, peer: str) -> bool:
+    """True when `peer` is one of the trusted proxy peers.
+
+    Entries may be a bare IP, a CIDR network (compose private networks are
+    172.x), or an exact hostname match. Non-numeric strings fall back to
+    string equality so an operator can list a DNS name too.
+    """
+    if not peer or peer == 'unknown':
+        return False
+    if peer in peers:
+        return True
+    try:
+        addr = ipaddress.ip_address(peer.split('%')[0])
+    except ValueError:
+        return False
+    for p in peers:
+        if '/' in p:
+            try:
+                if addr in ipaddress.ip_network(p, strict=False):
+                    return True
+            except ValueError:
+                continue
+    return False
 
 
 def _client_ip(request: Request) -> str:
     """Rate-limiter identity for a request. By default the TCP peer IP, which
-    the client cannot spoof. Only when a trusted reverse proxy is guaranteed
-    in front (config.TRUST_PROXY_XFF=1) do we honour the RIGHTMOST
-    X-Forwarded-For entry (the real client); the leftmost is client-supplied
-    and spoofable, so it is never trusted."""
-    client = request.client.host if request.client else 'unknown'
-    if config.TRUST_PROXY_XFF:
+    the client cannot spoof. Only when BOTH the direct peer is a trusted proxy
+    (config.TRUSTED_PROXY_PEERS) AND config.TRUST_PROXY_XFF=1 do we honour the
+    RIGHTMOST X-Forwarded-For entry (the real client). The leftmost entries are
+    client-supplied and spoofable, so they are never trusted — and a client
+    forging the header straight at the app socket is still bucketed by its
+    real peer IP because uvicorn doesn't rewrite request.client for untrusted
+    peers (proxy_headers=False)."""
+    peer = request.client.host if request.client else 'unknown'
+    if config.TRUST_PROXY_XFF and _peer_trusted(config.TRUSTED_PROXY_PEERS, peer):
         xff = request.headers.get('X-Forwarded-For')
         if xff:
             parts = [p.strip() for p in xff.split(',') if p.strip()]
             if parts:
-                client = parts[-1]
-    return client
+                return parts[-1]
+    return peer
 
 
-_CSP_SCRIPT_WHITELIST = "https://esm.sh https://cdn.jsdelivr.net"
+_CSP_SCRIPT_WHITELIST = "https://esm.sh https://cdn.jsdelivr.net https://telegram.org"
 
 
 def _nonce_inject(html: str, nonce: str) -> str:
@@ -153,15 +184,21 @@ async def rate_limit(request: Request, call_next):
     response.headers.setdefault('Cache-Control', 'no-store, no-cache, must-revalidate')
     response.headers.setdefault('Content-Security-Policy',
         f"default-src 'self'; script-src 'self' 'nonce-{nonce}' {_CSP_SCRIPT_WHITELIST}; "
-        f"style-src 'self' 'nonce-{nonce}'; img-src 'self' data: https:; "
+        f"style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; "
         "connect-src 'self'; frame-ancestors 'self' https://web.telegram.org")
     try:
         await ledger.rollback()
     except Exception:
         log.warning("ledger.rollback() failed after request to %s", path, exc_info=True)
     if body is not None:
+        # The rebuilt body (nonce-injected, re-encoded) differs in length from
+        # the original, so the copied Content-Length is stale: uvicorn would
+        # raise "Response content longer than Content-Length" and truncate the
+        # page to zero bytes. Pin the header to the actual rebuilt size.
+        headers = dict(response.headers)
+        headers['content-length'] = str(len(body))
         return StreamingResponse(iter([body]), status_code=response.status_code,
-                                 headers=dict(response.headers), media_type=ctype or 'text/html')
+                                 headers=headers, media_type=ctype or 'text/html')
     return response
 
 def _usdc(micro: int) -> float:
@@ -276,11 +313,22 @@ async def api_leaderboard() -> list[dict]:
 
 @app.get('/api/user/{tg_id}', tags=['users'])
 async def api_user(tg_id: int, request: Request) -> dict:
-    if not await ledger.user_exists(tg_id):
-        raise HTTPException(status_code=404, detail='User not found')
+    # No 404 oracle: an unknown tg_id returns the same empty public shape as a
+    # brand-new user (all-zero aggregates), so the endpoint cannot be used to
+    # enumerate which ids exist.
     admin_id = int(config.ADMIN_TG_ID or 0)
     session_id = parse_session(request.cookies.get(COOKIE_NAME))
     is_owner = session_id in (tg_id, admin_id)
+    exists = await ledger.user_exists(tg_id)
+    if not exists:
+        return {
+            'username': None, 'tg_username': None,
+            'tips_sent_usdc': 0.0, 'tips_received_usdc': 0.0,
+            'bets_won_usdc': 0.0, 'bets_placed_usdc': 0.0,
+            'creator_fees_usdc': 0.0,
+            'deposit_address': str(hot_wallet()),
+            'is_owner': False,
+        }
     v = await ledger.user_view(tg_id)
     # Public profile endpoint: expose only non-sensitive stats. The requested
     # user's own full data (balances, positions, tx history) is returned ONLY
@@ -526,12 +574,25 @@ async def api_ask(body: AskRequest, request: Request) -> dict:
             if now - ts >= config.AI_COOLDOWN_SECONDS:
                 del _ask_cooldown[ip]
     _ask_cooldown[_ip] = now
+    # Global daily quota: /api/ask burns LLM tokens, and a fleet of rotating
+    # IPs (or forged XFF from an untrusted peer) cannot be fenced per-IP.
+    # Bounded after the cooldown so a single legit burst still counts.
+    today_key = time.strftime('%Y-%m-%d', time.gmtime())
+    global _ask_day, _ask_served_today
+    with _ask_lock:
+        if _ask_day != today_key:
+            _ask_day = today_key
+            _ask_served_today = 0
+        if _ask_served_today >= config.AI_DAILY_ANSWERS:
+            raise HTTPException(status_code=429, detail='daily answer budget exhausted')
     try:
         answer = await ai.ask_about_markets(question)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from None
     if len(answer) > config.AI_MAX_ANSWER_CHARS:
         answer = answer[:config.AI_MAX_ANSWER_CHARS - 1] + '…'
+    with _ask_lock:
+        _ask_served_today += 1
     return {'answer': answer}
 
 @app.get('/api/wallet', tags=['treasury'])
@@ -557,8 +618,15 @@ async def me_page() -> FileResponse:
 
 @app.get('/', include_in_schema=False)
 async def root():
-    """Landing: 200 for Render's default health check; links to the Mini App."""
-    return RedirectResponse('/app')
+    """Landing dashboard (stats, markets, leaderboard, wallet solvency).
+
+    Serves the public marketing page directly (200 for platform health checks);
+    the Base App Mini App lives at /app.
+    """
+    return Response(
+        content=(STATIC / 'index.html').read_bytes(),
+        media_type='text/html',
+    )
 
 @app.get('/app', include_in_schema=False)
 async def mini_app():
@@ -569,7 +637,7 @@ async def mini_app():
     base_url = public_base_url()
     html = html.replace('__PUBLIC_URL__', base_url)
     html = html.replace('__PUBLIC_HOST__', base_url.split('//')[-1])
-    return Response(content=html, media_type='text/html')
+    return Response(content=html.encode('utf-8'), media_type='text/html')
 
 @app.post('/api/webhook-miniaction', include_in_schema=False)
 async def miniapp_webhook(request: Request):
@@ -579,8 +647,15 @@ async def miniapp_webhook(request: Request):
     declare a webhookUrl. Events are logged for the operator; the response
     is always 200 so the platform does not retry indefinitely.
     """
+    # Static-file fallback would return a 404 HTML page for a body-less GET
+    # on this path, so read the body defensively and cap its size: nothing
+    # here needs more than a few KB, and an unbounded read lets anyone park
+    # an arbitrary large body on the server for free.
     try:
-        payload = await request.json()
+        body = await request.body()
+        if len(body) > 32_768:
+            return Response(status_code=200)
+        payload = json.loads(body) if body else None
     except Exception:
         payload = None
     log.info('miniapp webhook event: %s', payload)
@@ -599,7 +674,7 @@ async def farcaster_manifest():
     manifest = ROOT / 'deploy' / 'farcaster_manifest.json'
     if not manifest.exists():
         return JSONResponse(status_code=404, content={'detail': 'farcaster manifest not configured'})
-    return Response(content=manifest.read_text(encoding='utf-8'), media_type='application/json')
+    return Response(content=manifest.read_bytes(), media_type='application/json')
 
 @app.get('/tos', tags=['legal'])
 async def tos() -> Response:

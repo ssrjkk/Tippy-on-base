@@ -78,6 +78,11 @@ scripts/*
 
 # Agent runtime artifacts
 .agent_seen_news.json
+.agent_state.json
+.agent_state.jsonl
+.relayer_usage.json
+agent_attestations.jsonl
+agent_audit.jsonl
 
 # Foundry dependencies (restored via scripts/setup_foundry.sh)
 contracts/lib/*

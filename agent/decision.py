@@ -122,7 +122,11 @@ def _filter_news(news_items: list[str]) -> tuple[list[str], list[str]]:
             model=cheap_model,
             temperature=0.1,
         )
-        if result.get("relevant", True):
+        if "error" in result:
+            # LLM down — fail closed: do not let unvetted noise reach the
+            # strong model (and never a market created from a hallucination).
+            rejected.append(item)
+        elif result.get("relevant", False):
             relevant.append(item)
         else:
             rejected.append(item)

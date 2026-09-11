@@ -38,7 +38,8 @@ TABLES = [
     "paywall_channels", "paywall_subscriptions", "markets", "market_shares",
     "suspicious_activity", "community_treasuries", "treasury_transactions",
     "treasury_proposals", "treasury_votes", "onchain_markets", "onchain_trades", "gas_drips",
-    "notification_outbox", "create2_proxies",
+    "notification_outbox", "create2_proxies", "x402_invoices",
+    "market_subsidies", "login_nonces",
 ]
 
 
@@ -142,5 +143,7 @@ def ledger(monkeypatch):
     monkeypatch.setattr(bot.tip_targets, "ledger", async_fresh)
     handlers._common._money_cmd_last.clear()
     web.server._rl_state.clear()
+    if hasattr(web.mini, "_money_last"):
+        web.mini._money_last.clear()
     yield fresh
     fresh.close()  # release the open transaction, or TRUNCATE in the next test hangs

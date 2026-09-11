@@ -154,7 +154,10 @@ def attest_action(data: AttestationData) -> str | None:
             return tx_hash.hex()
         return None
 
-    except Exception:
+    except Exception as e:
+        logging.getLogger("agent.eas").warning(
+            "EAS attestation failed — logged locally only: %s", e
+        )
         _log_local(data)
         return None
 

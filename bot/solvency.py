@@ -14,6 +14,8 @@ from bot.ledger import async_ledger as ledger
 
 log = logging.getLogger("tipbot.solvency")
 
+_MICRO = 10 ** config.USDC_DECIMALS
+
 # Alert state
 _last_alert_ts = 0.0
 _ALERT_COOLDOWN = 300  # min 5 min between alerts to avoid spam
@@ -42,27 +44,57 @@ async def _check_solvency(bot) -> None:
 
     # Get reserves
     vault_addr = config.VAULT_ADDRESS
-    if vault_addr:
-        try:
+    try:
+        if vault_addr:
             reserves = await base.vault_balance()
-        except Exception:
-            reserves = None
-    else:
-        try:
+        else:
             reserves = await base.hot_balance()
-        except Exception:
-            reserves = None
+    except Exception:
+        reserves = None
 
     if reserves is None:
-        return  # can't check — RPC down
+        # RPC down: we literally cannot see the backing, so there is no
+        # insolvency verdict. That blindness is itself an emergency — alert the
+        # operator (rate-limited) instead of quietly pretending it is fine.
+        now = time.time()
+        if now - _last_alert_ts >= _ALERT_COOLDOWN:
+            _last_alert_ts = now
+            await _send_alert(
+                bot,
+                "🚨 <b>SOLVENCY CHECK BLIND</b>\n"
+                "RPC unreachable — cannot verify reserves.\n"
+                f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            )
+        return
 
-    delta = reserves - owed
-    solvent = reserves >= owed
+    # x402 incoming: billed tips are a liability the moment they land in user
+    # balances, but the USDC backing them sits in the per-payment derived
+    # address (until the sweep consolidates it into the receive pool, and the
+    # next sweep into the hot wallet). Neither address is the hot wallet/vault,
+    # so without this addend the canary under-states reserves by the whole
+    # in-flight x402 float whenever a sweep is delayed or the gas-drip daily
+    # budget is exhausted. The two lines don't overlap on-chain: an invoice is
+    # 'unswept' only while its funds are still in the derived address, and is
+    # marked swept (so its parked amount drops out of the DB line) right after
+    # the transfer has confirmed into the pool.
+    try:
+        reserves_micro = round(reserves * _MICRO) + await ledger.x402_unswept_credit_total()
+    except Exception as e:
+        log.warning("solvency: x402 unswept read failed: %s", e)
+        reserves_micro = round(reserves * _MICRO)
+    try:
+        reserves_micro += round(await base.receive_pool_balance() * _MICRO)
+    except Exception as e:
+        log.warning("solvency: x402 pool read failed: %s", e)
+
+    owed = liabilities + pending
+    delta = reserves_micro - owed
+    solvent = reserves_micro >= owed
 
     # Always log
     log.info(
         "solvency: reserves=%.2f owed=%.2f delta=%.2f solvent=%s",
-        reserves / 1e6, owed / 1e6, delta / 1e6, solvent,
+        reserves_micro / _MICRO, owed / _MICRO, delta / _MICRO, solvent,
     )
 
     # Alert on insolvency or low margin (< 5% buffer)
@@ -74,9 +106,9 @@ async def _check_solvency(bot) -> None:
         _last_alert_ts = now
         msg = (
             f"🚨 <b>INSOLVENCY DETECTED</b>\n"
-            f"Reserves: ${reserves / 1e6:.2f}\n"
-            f"Liabilities: ${owed / 1e6:.2f}\n"
-            f"Deficit: ${abs(delta) / 1e6:.2f}\n"
+            f"Reserves: ${reserves_micro / _MICRO:.2f}\n"
+            f"Liabilities: ${owed / _MICRO:.2f}\n"
+            f"Deficit: ${abs(delta) / _MICRO:.2f}\n"
             f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}"
         )
         await _send_alert(bot, msg)
@@ -84,9 +116,9 @@ async def _check_solvency(bot) -> None:
         _last_alert_ts = now
         msg = (
             f"⚠️ <b>LOW MARGIN</b> ({delta / owed * 100:.1f}%)\n"
-            f"Reserves: ${reserves / 1e6:.2f}\n"
-            f"Liabilities: ${owed / 1e6:.2f}\n"
-            f"Buffer: ${delta / 1e6:.2f}\n"
+            f"Reserves: ${reserves_micro / _MICRO:.2f}\n"
+            f"Liabilities: ${owed / _MICRO:.2f}\n"
+            f"Buffer: ${delta / _MICRO:.2f}\n"
             f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}"
         )
         await _send_alert(bot, msg)

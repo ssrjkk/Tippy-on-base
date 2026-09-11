@@ -15,6 +15,7 @@ server-side session store; tampering breaks the HMAC; expiry bounds replay.
 import base64
 import hashlib
 import hmac
+import secrets
 import time
 
 from fastapi import APIRouter, HTTPException, Request
@@ -28,7 +29,10 @@ router = APIRouter()
 COOKIE_NAME = 'tippy_session'
 SESSION_TTL_SECONDS = 30 * 24 * 3600
 TG_AUTH_DATE_TTL = 24 * 3600
+TG_AUTH_DATE_FUTURE_SKEW = 300
 WALLET_MSG_TTL = 600
+LOGIN_STATE_COOKIE = 'tippy_login_state'
+LOGIN_STATE_TTL = 30 * 60
 
 def _sign(payload: str) -> str:
     return hmac.new(config.SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -68,8 +72,13 @@ def verify_telegram(params: dict[str, str]) -> int:
         auth_date = int(params.get('auth_date', '0'))
     except ValueError:
         raise HTTPException(403, 'bad auth_date') from None
-    if time.time() - auth_date > TG_AUTH_DATE_TTL:
+    now = int(time.time())
+    if now - auth_date > TG_AUTH_DATE_TTL:
         raise HTTPException(403, 'stale auth_date')
+    if auth_date > now + TG_AUTH_DATE_FUTURE_SKEW:
+        # A signed widget hash with a fabricated future timestamp would be
+        # replayable forever; refuse anything that claims to be from the future.
+        raise HTTPException(403, 'auth_date in the future')
     try:
         return int(params['id'])
     except (KeyError, ValueError):
@@ -105,7 +114,39 @@ async def verify_wallet(body: WalletLogin) -> int:
     tg_id = await ledger.tg_id_of_address(recovered)
     if tg_id is None:
         raise HTTPException(404, f'wallet is not linked to any Tippy user - link it in the bot first (t.me/{config.BOT_USERNAME})')
+    # One-time use per signed message: the same (message, signature) must not
+    # mint a fresh session twice. Consumed only after full verification.
+    nonce_val = nonce.split(': ', 1)[1].strip()
+    if not await ledger.consume_login_nonce(nonce_val):
+        raise HTTPException(403, 'login message already used')
     return tg_id
+
+
+def _issue_login_state() -> str:
+    """One-time signed state issued with /login; the auth callback must echo it.
+
+    A cross-site attacker cannot forge it (HMAC over SECRET_KEY) and cannot
+    read it (HttpOnly), so a forged /api/auth/telegram from another site dies
+    here before a session cookie is minted.
+    """
+    payload = f'{int(time.time())}:{secrets.token_hex(16)}'
+    return f'{payload}.{_sign(payload)}'
+
+
+def _check_login_state(request: Request) -> bool:
+    token = request.cookies.get(LOGIN_STATE_COOKIE, '')
+    if not token or '.' not in token:
+        return False
+    payload, sig = token.rsplit('.', 1)
+    if not hmac.compare_digest(sig, _sign(payload)):
+        return False
+    try:
+        ts_s, _nonce = payload.split(':', 1)
+        ts = int(ts_s)
+    except ValueError:
+        return False
+    ttl = int(time.time()) - ts
+    return 0 <= ttl <= LOGIN_STATE_TTL
 
 def _login_page() -> str:
     bot = config.BOT_USERNAME or 'tippy_on_base_bot'
@@ -113,7 +154,13 @@ def _login_page() -> str:
 
 @router.get('/login', response_class=HTMLResponse, tags=['auth'])
 async def login_page() -> HTMLResponse:
-    return HTMLResponse(_login_page())
+    resp = HTMLResponse(_login_page())
+    resp.set_cookie(
+        LOGIN_STATE_COOKIE, _issue_login_state(),
+        max_age=LOGIN_STATE_TTL, httponly=True, samesite='lax',
+        secure=config.WEBHOOK_URL.startswith('https://') if config.WEBHOOK_URL else False,
+    )
+    return resp
 
 # Stateless session: signed HMAC cookie, no server-side store.  The only
 # revocation mechanism is rotating SECRET_KEY, which logs out every user.
@@ -134,6 +181,11 @@ def _session_response(request: Request, tg_id: int, redirect: str | None=None) -
 
 @router.get('/api/auth/telegram', include_in_schema=False)
 async def auth_telegram(request: Request):
+    # Login CSRF guard: only proceed when the request carries a fresh, signed
+    # login-state cookie issued by our own /login page (HttpOnly, so a
+    # cross-site page cannot forge or read it).
+    if not _check_login_state(request):
+        raise HTTPException(403, 'missing or expired login state — open /login and try again')
     params = dict(request.query_params)
     tg_id = verify_telegram(params)
     username = params.get('username', '')
@@ -145,10 +197,11 @@ async def auth_wallet(request: Request, body: WalletLogin):
     tg_id = await verify_wallet(body)
     return _session_response(request, tg_id)
 
-@router.get('/logout', include_in_schema=False)
+@router.post('/logout', include_in_schema=False)
 async def logout():
     resp = RedirectResponse('/', status_code=303)
     resp.delete_cookie(COOKIE_NAME)
+    resp.delete_cookie(LOGIN_STATE_COOKIE)
     return resp
 
 @router.get('/api/me', tags=['users'])

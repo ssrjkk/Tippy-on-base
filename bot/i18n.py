@@ -146,7 +146,8 @@ STRINGS: dict[str, dict[str, str]] = {
             "🔓 <b>Это твой кошелёк.</b>\n"
             "Ключ только у тебя (/wallet export), вывод куда угодно (/withdraw). "
             "Все операции видны в блокчейне Base — ничего не спрятано.\n\n"
-            "🟦 Base — быстрая и дешёвая сеть от Coinbase. Комиссии — копейки."
+            "🟦 Мы строим на <b>Base</b> — официальной L2-экосистеме от Coinbase · base.org\n"
+            "🧑‍💻 Автор и поддержка: @b2wmain · @ssrjkk · x.com/ludych1 · github.com/ssrjkk"
         ),
         "en": (
             "💵 <b>It's money for chats.</b>\n"
@@ -161,7 +162,8 @@ STRINGS: dict[str, dict[str, str]] = {
             "🔓 <b>The wallet is yours.</b>\n"
             "Only you hold the key (/wallet export), withdraw anywhere (/withdraw). "
             "Every move is visible on the Base blockchain — nothing hidden.\n\n"
-            "🟦 Base is Coinbase's fast and cheap network. Fees are pennies."
+            "🟦 Built on <b>Base</b> — Coinbase's secure and scalable Ethereum L2 · base.org\n"
+            "🧑‍💻 Team & support: @b2wmain · @ssrjkk · x.com/ludych1 · github.com/ssrjkk"
         ),
         "zh": (
             "💵 <b>这是聊天里的钱。</b>\n"
@@ -175,7 +177,8 @@ STRINGS: dict[str, dict[str, str]] = {
             "🔓 <b>钱包属于你。</b>\n"
             "钥匙只在你手里（/wallet export），可以提到任何地方（/withdraw）。"
             "每笔操作都能在 Base 区块链上查到——没有任何隐瞒。\n\n"
-            "🟦 Base 是 Coinbase 推出的快速且便宜的网络，手续费只要几分钱。"
+            "🟦 基于 <b>Base</b> 构建 —— Coinbase 推出的安全可扩展的 Ethereum L2 · base.org\n"
+            "🧑‍💻 作者与支持：@b2wmain · @ssrjkk · x.com/ludych1 · github.com/ssrjkk"
         ),
     },
     # ----- start -----
@@ -193,11 +196,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Что попробовать?\n• <b>/deposit</b> — пополнить (QR)\n• <b>/bets</b> — поставить на рынок\n• <b>/tip 1 @ник</b> — кинуть чаевые\n• <b>/help</b> — все команды",
         "en": "Try this:\n• <b>/deposit</b> — top up (QR)\n• <b>/bets</b> — back a market\n• <b>/tip 1 @nick</b> — send a tip\n• <b>/help</b> — all commands",
         "zh": "试试这些：\n• <b>/deposit</b> —— 充值（二维码）\n• <b>/bets</b> —— 参与投注\n• <b>/tip 1 @昵称</b> —— 发送打赏\n• <b>/help</b> —— 全部命令",
-    },
-    "start_footer": {
-        "ru": "🏗️ Работает на <b>Base</b> — дешёвой L2 от Coinbase · base.org\n🧑‍💻 Автор: @b2wmain · @ssrjkk · x.com/ludych1 · github.com/ssrjkk",
-        "en": "🏗️ Built on <b>Base</b> — Coinbase's low-cost L2 · base.org\n🧑‍💻 Team: @b2wmain · @ssrjkk · x.com/ludych1 · github.com/ssrjkk",
-        "zh": "🏗️ 基于 <b>Base</b> —— Coinbase 推出的低成本 L2 · base.org\n🧑‍💻 团队：@b2wmain · @ssrjkk · x.com/ludych1 · github.com/ssrjkk",
     },
     # ----- hints (menu buttons) -----
     "hint_tip": {
@@ -306,7 +304,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "• /paywall list · /paywall buy &lt;id&gt; — купить и открыть\n"
             "• /paywall subscribe @канал — доступ к платному каналу\n\n"
             "🟦 <b>На Base</b> · 🪙 USDC (ERC-20) · 🔍 все транзакции в блокчейне\n"
-            "🏗️ <b>Base</b> — безопасная, дешёвая, развивающаяся L2 от Coinbase: base.org\n"
+            "🏗️ <b>Base</b> — быстрорастущая, безопасная L2-экосистема от Coinbase: base.org\n"
             "👛 Свой кошелёк: /wallet · выгрузить ключ и сид: /wallet export · импорт по сид-фразе: /import"
         ),
         "en": (
@@ -345,7 +343,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "• /paywall list · /paywall buy &lt;id&gt; — buy and unlock\n"
             "• /paywall subscribe @channel — access to a paid channel\n\n"
             "🟦 <b>On Base</b> · 🪙 USDC (ERC-20) · 🔍 all transactions on-chain\n"
-            "🏗️ <b>Base</b> — safe, cheap, growing L2 by Coinbase: base.org\n"
+            "🏗️ <b>Base</b> — a fast, secure L2 ecosystem by Coinbase: base.org\n"
             "👛 Your wallet: /wallet · export key & seed: /wallet export · import seed: /import"
         ),
         "zh": (
@@ -384,7 +382,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "• /paywall list · /paywall buy &lt;id&gt; —— 购买并解锁\n"
             "• /paywall subscribe @频道 —— 访问付费频道\n\n"
             "🟦 <b>基于 Base</b> · 🪙 USDC（ERC-20）· 🔍 所有交易上链\n"
-            "🏗️ <b>Base</b> —— Coinbase 推出、安全且廉价的 L2：base.org\n"
+            "🏗️ <b>Base</b> —— Coinbase 推出、快速安全的 L2 生态：base.org\n"
             "👛 你的钱包：/wallet · 导出密钥与助记词：/wallet export · 用助记词导入：/import"
         ),
     },
@@ -504,6 +502,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Транзакция не найдена или уже зачислена. Попробуй позже.",
         "en": "❌ Transaction not found or already credited. Try again later.",
         "zh": "❌ 交易未找到或已到账。请稍后重试。",
+    },
+    "claim_unavailable": {
+        "ru": "⚠️ Сейчас не могу проверить подтверждения трансакции (RPC недоступен). Подожди пару минут и повтори, либо дождись автоматического зачисления.",
+        "en": "⚠️ Can't verify the deposit's confirmations right now (RPC unreachable). Wait a few minutes and retry, or let the automatic credit finish.",
+        "zh": "⚠️ 当前无法确认交易确认数（RPC 不可用）。请稍候重试，或等待自动到账。",
     },
     # ----- stats -----
     "stats_text": {
@@ -2061,6 +2064,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Этот исход оспорен владельцем контракта — финальное слово за ним (ownerResolve).",
         "en": "This outcome was disputed by the contract owner — the final say is theirs (ownerResolve).",
         "zh": "该结果已被合约所有者异议——最终决定权在其手中（ownerResolve）。",
+    },
+    "oc_resolve_own_holdings": {
+        "ru": "У тебя есть доли этого исхода — сначала продай их. Резолвить исход, на который сам поставил, нельзя.",
+        "en": "You still hold shares of this outcome — sell them first. Declaring an outcome you bet on is not allowed.",
+        "zh": "你还持有该结果的份额——请先卖出。不能判定自己下注的结果获胜。",
     },
     "oc_subsidy_cap": {
         "ru": "Суточный лимит субсидий Cally исчерпан (${amount} USDC забронировано сегодня). Попробуй завтра или уменьши субсидию.",

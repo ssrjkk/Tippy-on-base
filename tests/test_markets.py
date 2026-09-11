@@ -223,6 +223,35 @@ def test_buy_shares_conservation_and_escrow(ledger):
     assert money(ledger) == before
 
 
+def test_buy_shares_other_user_can_trade(ledger):
+    mid = make_market(ledger)
+    ledger.credit(BOB, 100 * USDC, "deposit")
+    status, _ = ledger.buy_shares(mid, BOB, 0, 10 * USDC)
+    assert status == "ok"
+
+
+def test_agent_cannot_trade_its_own_market(ledger, monkeypatch):
+    """The DB-level own-market guard (survives restarts) rejects the agent
+    buying shares in a market it created — even if agent/tools.py is bypassed
+    (e.g. a forged callback_data or a direct ledger call)."""
+    import bot.config as bot_config
+
+    mid = make_market(ledger)
+    ledger.credit(ALICE, 100 * USDC, "deposit")
+    # Make the agent the creator of a fresh market (ALICE funder is fine —
+    # the guard keys on creator == AGENT_TG_ID).
+    agent_id = int(bot_config.AGENT_TG_ID)
+    ledger.credit(agent_id, 100 * USDC, "deposit")
+    agent_mid = ledger.create_market(agent_id, "Агент маркет?", ["А", "Б"], 50 * USDC)
+    assert isinstance(agent_mid, int)
+    status, _ = ledger.buy_shares(agent_mid, agent_id, 0, 10 * USDC)
+    assert status == "ownmarket"
+    # A random participant is unaffected by the guard.
+    ledger.credit(BOB, 100 * USDC, "deposit")
+    status, info = ledger.buy_shares(mid, BOB, 0, 10 * USDC)
+    assert status == "ok" and info["shares"] > 0
+
+
 def test_buy_shares_too_small_refunds(ledger):
     mid = make_market(ledger)
     ledger.credit(BOB, 100 * USDC, "deposit")
@@ -250,7 +279,7 @@ def test_sell_without_position(ledger):
     assert status in ("noshare", "closed")
 
 
-def test_resolve_market_pays_winners_creator_keeps_leftover(ledger):
+def test_resolve_market_pays_winners_leftover_pro_rata(ledger):
     mid = make_market(ledger)
     ledger.credit(BOB, 100 * USDC, "deposit")
     ledger.credit(CAROL, 100 * USDC, "deposit")
@@ -261,10 +290,11 @@ def test_resolve_market_pays_winners_creator_keeps_leftover(ledger):
     ok, msg, payouts = ledger.resolve_market(mid, 0, ALICE)
     assert ok
     bob_win = [p for p in payouts if p["tg_id"] == BOB and p["win"]]
-    assert bob_win and bob_win[0]["net_micro"] == b["shares"]  # 1 micro-share = 1 micro-USDC
+    assert bob_win and bob_win[0]["net_micro"] == 80 * USDC - ledger.creator_fees(ALICE)
+    assert bob_win[0]["net_micro"] > b["shares"]  # escrow leftover is shared with winners
     carol_lost = [p for p in payouts if p["tg_id"] == CAROL]
     assert carol_lost and not carol_lost[0]["win"]
-    # conservation: winners paid from escrow, creator keeps the rest
+    # conservation: the escrow is fully distributed between winners and creator fee
     assert money(ledger) == before
     m = ledger.get_market(mid)
     assert m["status"] == "resolved" and m["winner"] == 0
@@ -287,9 +317,15 @@ def test_resolve_blocked_while_creator_holds_winning_side(ledger):
     assert not ok
     assert "продайте" in msg or "запрещено" in msg
     assert ledger.get_market(mid)["status"] == "open"
-    # After exiting the position the market resolves normally.
+    # After exiting the position the market resolves normally — but only when
+    # a non-creator participant actually holds the winning outcome (otherwise
+    # the whole escrow would flow to the creator).
     st, _ = ledger.sell_shares(mid, ALICE, 0, b["shares"])
     assert st == "ok"
+    ok, msg, _ = ledger.resolve_market(mid, 0, ALICE)
+    assert not ok and "победителя без держателей" in msg
+    ledger.credit(BOB, 100 * USDC, "deposit")
+    assert ledger.buy_shares(mid, BOB, 0, 10 * USDC)[0] == "ok"
     ok, msg, _ = ledger.resolve_market(mid, 0, ALICE)
     assert ok
     assert ledger.get_market(mid)["status"] == "resolved"
@@ -321,6 +357,35 @@ def test_market_deadline_blocks_trades(ledger):
     ledger.credit(BOB, 100 * USDC, "deposit")
     assert ledger.buy_shares(mid, BOB, 0, 5 * USDC)[0] == "deadline"
     assert ledger.sell_shares(mid, BOB, 0, 1)[0] == "deadline"
+
+
+def test_resolve_blocked_before_deadline(ledger):
+    import time
+
+    ledger.credit(ALICE, 1000 * USDC, "deposit")
+    mid = ledger.create_market(
+        ALICE, "?", ["a", "b"], 50 * USDC, close_at=int(time.time()) + 3600
+    )
+    ledger.credit(BOB, 100 * USDC, "deposit")
+    assert ledger.buy_shares(mid, BOB, 0, 5 * USDC)[0] == "ok"
+    ok, msg, _ = ledger.resolve_market(mid, 0, ALICE)
+    assert not ok
+    assert "дедлайн" in msg
+    assert ledger.get_market(mid)["status"] == "open"
+
+
+def test_resolve_blocked_without_non_creator_winners(ledger):
+    """Declaring a winner nobody else holds would sweep the escrow to creator."""
+    ledger.credit(ALICE, 1000 * USDC, "deposit")
+    mid = ledger.create_market(ALICE, "?", ["a", "b", "c"], 50 * USDC)
+    ledger.credit(BOB, 100 * USDC, "deposit")
+    ledger.credit(CAROL, 100 * USDC, "deposit")
+    assert ledger.buy_shares(mid, BOB, 0, 20 * USDC)[0] == "ok"
+    assert ledger.buy_shares(mid, CAROL, 1, 10 * USDC)[0] == "ok"
+    ok, msg, _ = ledger.resolve_market(mid, 2, ALICE)
+    assert not ok
+    assert "держателей" in msg
+    assert ledger.get_market(mid)["status"] == "open"
 
 
 def test_user_market_positions_view(ledger):

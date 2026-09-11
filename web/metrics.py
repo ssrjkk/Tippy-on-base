@@ -46,7 +46,9 @@ async def collect_metrics() -> str:
             reserves = await base.vault_balance()
         else:
             reserves = await base.hot_balance()
-        m["reserves_usdc"] = reserves / _MICRO if reserves is not None else -1
+        # base.hot_balance()/vault_balance() already return human USDC floats;
+        # do NOT divide by _MICRO again (old code made solvent always false).
+        m["reserves_usdc"] = reserves if reserves is not None else -1
     except Exception:
         m["reserves_usdc"] = -1
 

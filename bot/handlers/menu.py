@@ -9,6 +9,7 @@ from bot import i18n, tip_targets
 
 from . import _common as common
 from .bets import _bets_text, _market_detail_text
+from .paywall import _paywall_list_text
 from .stats import _history_text, _stats_text, _top_text
 from .wallet import _balance_text, _deposit_text, _donate_text
 
@@ -84,7 +85,7 @@ async def cmd_start(message: types.Message, command: CommandObject) -> None:
         lang = await _lang(message.from_user.id)
         bal = await common.ledger.balance(message.from_user.id)
         bal_s = f'{bal:.6f}'.rstrip('0').rstrip('.')
-        welcome = f"{i18n.t(lang, 'start_hi', name=name)}\n\n{i18n.t(lang, 'start_intro')}\n\n💰 {i18n.t(lang, 'menu_balance', bal=bal_s)}\n\n{i18n.t(lang, 'start_try')}\n\n{i18n.t(lang, 'start_footer')}"
+        welcome = f"{i18n.t(lang, 'start_hi', name=name)}\n\n{i18n.t(lang, 'start_intro')}\n\n💰 {i18n.t(lang, 'menu_balance', bal=bal_s)}\n\n{i18n.t(lang, 'start_try')}"
         await message.answer(welcome, reply_markup=common._menu_kb(lang))
         return
     lang = await _lang(message.from_user.id)
@@ -136,21 +137,27 @@ async def _send_paywall_deep_link(message: types.Message, item_id: int) -> None:
 @common.router.callback_query(F.data.startswith('paywall_buy:'))
 async def cb_paywall_buy(cb: types.CallbackQuery) -> None:
     """One-tap purchase from a shared deep link (Farcaster Frame funnel)."""
-    item_id = int(cb.data.split(':', 1)[1])
+    try:
+        item_id = int(cb.data.split(':', 1)[1])
+    except Exception:
+        await cb.answer()
+        return
     item = await common.ledger.paywall_item(item_id)
     lang = await _lang(cb.from_user.id)
     if item is None:
         await common._edit_menu(cb, i18n.t(lang, 'paywall_post_not_found'))
         return
     res = await common.ledger.buy_paywall(cb.from_user.id, item_id)
+    content = html.escape(item['content'] or '')
     if res == 'ok':
-        await common._edit_menu(cb, i18n.t(lang, 'paywall_bought_for', amount=common._fmt(int(item['price_micro'])), content=item['content']))
+        await common._edit_menu(cb, i18n.t(lang, 'paywall_bought_for', amount=common._fmt(int(item['price_micro'])), content=content))
     elif res == 'dup':
-        await common._edit_menu(cb, i18n.t(lang, 'paywall_already_bought', content=item['content']))
+        await common._edit_menu(cb, i18n.t(lang, 'paywall_already_bought', content=content))
     elif res == 'self':
         await common._edit_menu(cb, i18n.t(lang, 'paywall_own_post'))
     else:
         await common._edit_menu(cb, i18n.t(lang, 'paywall_insufficient', amount=common._fmt(int(item['price_micro']))))
+    await cb.answer()
 
 @common.router.callback_query(F.data.in_({'bal', 'dep', 'top', 'hist', 'bets', 'donate', 'stats', 'settings', 'betcreate', 'paywall_list', 'tip', 'ask', 'wallet', 'miniapp'}))
 async def on_menu(cb: types.CallbackQuery) -> None:
@@ -190,13 +197,10 @@ async def on_menu(cb: types.CallbackQuery) -> None:
     elif cb.data == 'betcreate':
         await common._edit_menu(cb, i18n.t(lang, 'betcreate_hint_v2'))
     elif cb.data == 'paywall_list':
-        rows = await common.ledger.paywall_items_list()
-        if not rows:
+        text = await _paywall_list_text(lang, cb.from_user.id)
+        if text is None:
             text = i18n.t(lang, 'paywall_empty')
-            await common._edit_menu(cb, text)
-        else:
-            lines = [f"#{r['id']} — {html.escape(r['title'])} — <b>{common._fmt(int(r['price_micro']))} USDC</b>{(' ✅' if await common.ledger.paywall_purchased(int(r['id']), cb.from_user.id) else '')}" for r in rows]
-            await common._edit_menu(cb, i18n.t(lang, 'paywall_list_header', lines='\n'.join(lines)))
+        await common._edit_menu(cb, text)
     await cb.answer()
 
 async def _settings_kb_text(tg_id: int) -> tuple[str, InlineKeyboardMarkup]:

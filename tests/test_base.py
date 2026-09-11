@@ -149,6 +149,8 @@ def test_scan_deposits_returns_clean_events(monkeypatch):
     assert len(deps) == 2  # mint skipped
     assert deps[0]["tx_hash"] == "0x" + "aa" * 32
     assert deps[0]["amount_micro"] == 123456
+    assert deps[0]["block"] == 0  # fake logs carry no blockNumber
+    assert deps[1]["sender"] == "0x2222"  # mint (EDGE_1) skipped
 
 
 def test_scan_deposits_skips_unparsable_logs(monkeypatch):
@@ -202,6 +204,7 @@ def test_scan_deposits_real_abi_decode(monkeypatch):
             "tx_hash": "0x" + "ab" * 32,
             "sender": Web3.to_checksum_address(from_),
             "amount_micro": value,
+            "block": 500,
         }
     ]
 
@@ -219,7 +222,7 @@ def test_poll_deposits_first_run(monkeypatch):
         def x402_paid(self, tx):
             return False
 
-        def record_pending(self, tx, sender, amount):
+        def record_pending(self, tx, sender, amount, block=None):
             seen["pending"] = (tx, sender, amount)
 
         def tg_id_of_address(self, addr):
@@ -227,6 +230,9 @@ def test_poll_deposits_first_run(monkeypatch):
 
         def tg_id_of_proxy(self, addr):
             return None
+
+        def pending_matured(self, cutoff=None):
+            return []
 
     monkeypatch.setattr(base, "ledger", FakeLedger())
 
@@ -265,7 +271,7 @@ def test_poll_deposits_chunked_sweep_checkpoints_each_chunk(monkeypatch):
         def x402_paid(self, tx):
             return False
 
-        def record_pending(self, tx, sender, amount):
+        def record_pending(self, tx, sender, amount, block=None):
             pass
 
         def tg_id_of_address(self, addr):
@@ -273,6 +279,9 @@ def test_poll_deposits_chunked_sweep_checkpoints_each_chunk(monkeypatch):
 
         def tg_id_of_proxy(self, addr):
             return None
+
+        def pending_matured(self, cutoff=None):
+            return []
 
     fl = FakeLedger()
     monkeypatch.setattr(base, "ledger", fl)
@@ -311,7 +320,7 @@ def test_poll_deposits_chunk_cap_limits_single_sweep(monkeypatch):
         def x402_paid(self, tx):
             return False
 
-        def record_pending(self, tx, sender, amount):
+        def record_pending(self, tx, sender, amount, block=None):
             pass
 
         def tg_id_of_address(self, addr):
@@ -319,6 +328,9 @@ def test_poll_deposits_chunk_cap_limits_single_sweep(monkeypatch):
 
         def tg_id_of_proxy(self, addr):
             return None
+
+        def pending_matured(self, cutoff=None):
+            return []
 
     fl = FakeLedger()
     monkeypatch.setattr(base, "ledger", fl)
@@ -350,7 +362,7 @@ def test_poll_deposits_skips_x402_paid_tx(monkeypatch):
         def x402_paid(self, tx):
             return tx == "0x" + "ee" * 32  # this tx was already an x402 tip
 
-        def record_pending(self, tx, sender, amount):
+        def record_pending(self, tx, sender, amount, block=None):
             seen["pending"] = (tx, sender, amount)
 
         def tg_id_of_address(self, addr):
@@ -358,6 +370,9 @@ def test_poll_deposits_skips_x402_paid_tx(monkeypatch):
 
         def tg_id_of_proxy(self, addr):
             return None
+
+        def pending_matured(self, cutoff=None):
+            return []
 
     monkeypatch.setattr(base, "ledger", FakeLedger())
     monkeypatch.setattr(
@@ -400,7 +415,7 @@ def test_poll_deposits_rescans_recent_blocks_for_reorg(monkeypatch):
         def set_last_block(self, b):
             seen["last"] = b
 
-        def record_pending(self, tx, sender, amount):
+        def record_pending(self, tx, sender, amount, block=None):
             pass
 
         def tg_id_of_address(self, addr):
@@ -408,6 +423,9 @@ def test_poll_deposits_rescans_recent_blocks_for_reorg(monkeypatch):
 
         def tg_id_of_proxy(self, addr):
             return None
+
+        def pending_matured(self, cutoff=None):
+            return []
 
     monkeypatch.setattr(base, "ledger", FakeLedger())
     monkeypatch.setattr(
@@ -436,7 +454,7 @@ def test_poll_deposits_auto_claims_linked(monkeypatch):
         def x402_paid(self, tx):
             return False
 
-        def record_pending(self, tx, sender, amount):
+        def record_pending(self, tx, sender, amount, block=None):
             pass
 
         def tg_id_of_address(self, addr):
@@ -445,7 +463,11 @@ def test_poll_deposits_auto_claims_linked(monkeypatch):
         def tg_id_of_proxy(self, addr):
             return None
 
-        def claim_for_sender(self, tg_id, sender):
+        def pending_matured(self, cutoff=None):
+            # DB pass: the fake "knows" the recorded deposit matured.
+            return [{"sender": "0xowner"}]
+
+        def claim_for_sender(self, tg_id, sender, maturity_block=None):
             calls.append((tg_id, sender))
             return [{"tx_hash": "0x1", "amount_micro": 5}]
 
@@ -459,6 +481,103 @@ def test_poll_deposits_auto_claims_linked(monkeypatch):
     assert calls == [(777, "0xowner")]
     assert seen["last"] == 500
     # The sweep returns exactly what was credited so the watcher can notify.
+    assert credited == [{"tg_id": 777, "amount_micro": 5, "tx_hash": "0x1"}]
+
+
+def test_poll_deposits_defers_credit_until_confirmations(monkeypatch):
+    """A deposit in a too-recent block is recorded immediately (so x402 can't
+    steal the tx_hash) but NOT credited until it has DEPOSIT_CONFIRM_BLOCKS
+    confirmations — crediting a block that may still be reorged would mint
+    funds out of thin air."""
+    fake_w3 = _fake_w3(monkeypatch, block=500)
+    monkeypatch.setattr(base.config, "DEPOSIT_CONFIRM_BLOCKS", 10)
+    calls = []
+    seen = {}
+
+    class FakeLedger:
+        def last_block(self):
+            return 498  # scan window overlaps the newest 10 blocks
+
+        def set_last_block(self, b):
+            seen["last"] = b
+
+        def x402_paid(self, tx):
+            return False
+
+        def record_pending(self, tx, sender, amount, block=None):
+            seen["pending"] = (tx, sender, amount, block)
+
+        def tg_id_of_address(self, addr):
+            return 777 if addr == "0xowner" else None
+
+        def tg_id_of_proxy(self, addr):
+            return None
+
+        def pending_matured(self, cutoff=None):
+            # Deposit block 495 > cutoff 490: must NOT be returned as matured.
+            return []
+
+        def claim_for_sender(self, tg_id, sender, maturity_block=None):
+            calls.append((tg_id, sender, maturity_block))
+            return [{"tx_hash": "0x1", "amount_micro": 5}]
+
+    monkeypatch.setattr(base, "ledger", FakeLedger())
+    monkeypatch.setattr(
+        base,
+        "_scan_deposits",
+        lambda f, t: [{"tx_hash": "0x1", "sender": "0xowner", "amount_micro": 5, "block": 495}],
+    )
+    credited = asyncio.run(base.poll_deposits())
+    # Recorded (all 10 confirm blocks re-scanned / gap walked), but 495 > 490 cutoff:
+    # the callers must not credit it yet.
+    assert seen["pending"] == ("0x1", "0xowner", 5, 495)
+    assert credited == []
+    assert calls == []
+
+
+def test_poll_deposits_credits_mature_deposit(monkeypatch):
+    """Once current - block >= DEPOSIT_CONFIRM_BLOCKS the deposit is credited."""
+    fake_w3 = _fake_w3(monkeypatch, block=500)
+    monkeypatch.setattr(base.config, "DEPOSIT_CONFIRM_BLOCKS", 10)
+    calls = []
+    seen = {}
+
+    class FakeLedger:
+        def last_block(self):
+            return 488  # 488 == 500 - 10 - 2: covers block 489+ -> mature at 490
+
+        def set_last_block(self, b):
+            seen["last"] = b
+
+        def x402_paid(self, tx):
+            return False
+
+        def record_pending(self, tx, sender, amount, block=None):
+            seen["pending"] = (tx, sender, amount, block)
+
+        def tg_id_of_address(self, addr):
+            return 777 if addr == "0xowner" else None
+
+        def tg_id_of_proxy(self, addr):
+            return None
+
+        def pending_matured(self, cutoff=None):
+            # Deposit block 490 <= cutoff 490: matured, returned for credit.
+            return [{"sender": "0xowner"}]
+
+        def claim_for_sender(self, tg_id, sender, maturity_block=None):
+            calls.append((tg_id, sender, maturity_block))
+            return [{"tx_hash": "0x1", "amount_micro": 5}]
+
+    monkeypatch.setattr(base, "ledger", FakeLedger())
+    monkeypatch.setattr(
+        base,
+        "_scan_deposits",
+        lambda f, t: [{"tx_hash": "0x1", "sender": "0xowner", "amount_micro": 5, "block": 490}],
+    )
+    credited = asyncio.run(base.poll_deposits())
+    # block 490 <= cutoff 490 -> mature, so claim with the cutoff as maturity gate.
+    assert calls == [(777, "0xowner", 490)]
     assert credited == [{"tg_id": 777, "amount_micro": 5, "tx_hash": "0x1"}]
 
 
@@ -493,8 +612,123 @@ def test_send_usdc_builds_and_sends(monkeypatch):
     assert transfer.kwargs["maxFeePerGas"] == 2_000_000_000 + 10_000_000  # base*2 + tip
 
 
-# ---------- pending-withdraw watcher ----------
+def test_send_usdc_persists_hash_before_broadcast_on_uncertainty(monkeypatch, tmp_path):
+    """BroadcastUncertainError must leave the deterministic hash persisted on the
+    withdrawal row, so the pending-watcher's receipt gate (never refund a tx that
+    may have landed) settles it instead of blind-refunding a possibly-mined tx."""
+    fresh = _pending_ledger(monkeypatch)
+    wd_id = _reserve_withdraw(fresh, 777, tx_hash=None)
+    fw = _fake_w3(monkeypatch, tx_count=1, base_fee=1_000_000_000)
 
+    class FakeTransfer:
+        def __init__(self):
+            self.kwargs = None
+
+        def build_transaction(self, kwargs):
+            self.kwargs = kwargs
+            return {
+                "nonce": kwargs["nonce"],
+                "from": kwargs["from"],
+                "to": "0x" + "33" * 20,
+                "value": 0,
+                "data": b"\x00",
+                "gas": 60000,
+                "maxFeePerGas": kwargs["maxFeePerGas"],
+                "maxPriorityFeePerGas": kwargs["maxPriorityFeePerGas"],
+                "chainId": kwargs["chainId"],
+            }
+
+    class FakeFunctions:
+        def transfer(self, to, amount):
+            return FakeTransfer()
+
+    monkeypatch.setattr(base, "usdc", types.SimpleNamespace(functions=FakeFunctions()))
+
+    def _boom(raw):
+        raise ConnectionError("network gone after send")
+
+    fw.eth.send_raw_transaction = _boom
+    with pytest.raises(base.BroadcastUncertainError):
+        asyncio.run(base._send_usdc_sync("0x" + "33" * 20, 5_000_000, wd_id=wd_id))
+    row = fresh._conn.execute(
+        "SELECT tx_hash, status FROM tx_log WHERE id = %s", (wd_id,)
+    ).fetchone()
+    assert row["status"] == "pending"  # still settled by the receipt gate
+    assert row["tx_hash"] is not None and row["tx_hash"].startswith("0x")
+
+
+def test_flush_direct_no_refund_on_uncertain_broadcast(monkeypatch, tmp_path):
+    """A broadcast whose result is unknown must NOT refund: the hash is already
+    on the row (persisted by _send_usdc_sync pre-broadcast), the sweep marks it
+    done. Refunding here while the tx may land = double-pay."""
+    fresh = _pending_ledger(monkeypatch)
+    wd_id = _reserve_withdraw(fresh, 777)
+    row = dict(
+        fresh._conn.execute("SELECT * FROM tx_log WHERE id = %s", (wd_id,)).fetchone()
+    )
+
+    def _uncertain(to, amt, wd_id=None):
+        tx_hash = "0x" + "dd" * 32
+        base.ledger.set_withdraw_pending_hash(wd_id, tx_hash)
+        raise base.BroadcastUncertainError(tx_hash)
+
+    monkeypatch.setattr(base, "_send_usdc_sync", _uncertain)
+    report = base._flush_direct([row])
+    assert report == {"flushed": 1, "mode": "direct"}
+    row2 = fresh._conn.execute(
+        "SELECT status, tx_hash FROM tx_log WHERE id = %s", (wd_id,)
+    ).fetchone()
+    assert row2["status"] == "pending"  # NOT refunded
+    assert row2["tx_hash"] == "0x" + "dd" * 32
+    assert fresh.balance(777) == Decimal("0")  # still debited
+
+
+def test_send_vault_batch_persists_hash_before_broadcast(monkeypatch, tmp_path):
+    """The batch tx hash must be on every claimed row BEFORE send_raw_transaction:
+    a crash after broadcast with NULL hashes would make the pending watcher blind-
+    refund N landed payouts (double-pay)."""
+    fresh = _pending_ledger(monkeypatch)
+    wd_id = _reserve_withdraw(fresh, 777)
+    row = dict(
+        fresh._conn.execute("SELECT * FROM tx_log WHERE id = %s", (wd_id,)).fetchone()
+    )
+    fw = _fake_w3(monkeypatch, tx_count=3, base_fee=1_000_000_000)
+    monkeypatch.setattr(base.config, "VAULT_ADDRESS", "0x" + "55" * 20)
+
+    class FakeBatch:
+        def build_transaction(self, kwargs):
+            return {
+                **kwargs,
+                "to": "0x" + "44" * 20,
+                "value": 0,
+                "data": b"x",
+                "gas": 500_000,
+            }
+
+    class FakeVault:
+        class _Functions:
+            def batchDistribute(self, recipients, amounts):
+                return FakeBatch()
+
+        @property
+        def functions(self):
+            return self._Functions()
+
+    fw.eth.contract = lambda *a, **k: FakeVault()
+
+    def _boom(raw):
+        raise ConnectionError("network gone after send")
+
+    fw.eth.send_raw_transaction = _boom
+    with pytest.raises(base.BroadcastUncertainError):
+        base._send_vault_batch_sync([row])
+    row2 = fresh._conn.execute(
+        "SELECT tx_hash FROM tx_log WHERE id = %s", (wd_id,)
+    ).fetchone()
+    assert row2["tx_hash"] is not None and row2["tx_hash"].startswith("0x")
+
+
+# ---------- pending-withdraw watcher ----------
 
 def _reset_db(ledger) -> None:
     ledger._conn.execute(
@@ -516,7 +750,24 @@ def _pending_ledger(monkeypatch):
     _reset_db(fresh)
     _ACTIVE_LEDGERS.append(fresh)
     monkeypatch.setattr(base, "ledger", fresh)
+    _fake_core_rpcs(monkeypatch)
     return fresh
+
+
+def _fake_core_rpcs(monkeypatch):
+    """Route core's transaction/receipt failover reads to base.w3 (whatever the
+    test set it to). The fakes in this file stand in for THE provider; core's
+    real fallback pool must never be reached in a unit test."""
+    from bot.chain import core as core_mod
+
+    def _receipt(tx_hash, first=None):
+        return base.w3.eth.get_transaction_receipt(tx_hash)
+
+    def _tx(tx_hash, first=None):
+        return base.w3.eth.get_transaction(tx_hash)
+
+    monkeypatch.setattr(core_mod, "get_transaction_receipt", _receipt)
+    monkeypatch.setattr(core_mod, "get_transaction", _tx)
 
 
 @pytest.fixture(autouse=True)
@@ -596,12 +847,38 @@ def test_check_pending_withdraws_stuck_gets_refunded(monkeypatch, tmp_path):
         def get_transaction_receipt(self, tx):
             return None  # still not mined
 
+        def get_transaction(self, tx):
+            return None  # dropped from the mempool entirely
+
     monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
     asyncio.run(base.check_pending_withdraws())
     assert fresh.balance(777) == Decimal("5.050000")
     assert fresh._conn.execute(
         "SELECT status FROM tx_log WHERE kind = 'withdraw'"
     ).fetchone()["status"] == "refunded"
+
+
+def test_check_pending_withdraws_mempool_tx_not_refunded(monkeypatch, tmp_path):
+    """A missing receipt does NOT mean the tx is gone: if it still sits in the
+    mempool it can confirm later, and refunding it now would double-pay the
+    user (on-chain payout + refund). Keep it pending instead."""
+    fresh = _pending_ledger(monkeypatch)
+    _reserve_withdraw(fresh, 777, tx_hash="0x" + "cd" * 32, age=7200)
+
+    class FakeEth:
+        def get_transaction_receipt(self, tx):
+            return None  # not mined yet
+
+        def get_transaction(self, tx):
+            return {"hash": tx, "blockNumber": None}  # still in the mempool
+
+    monkeypatch.setattr(base, "w3", types.SimpleNamespace(eth=FakeEth()))
+    asyncio.run(base.check_pending_withdraws())
+    # NOT refunded — the tx may still land.
+    assert fresh.balance(777) == Decimal("0")
+    assert fresh._conn.execute(
+        "SELECT status FROM tx_log WHERE kind = 'withdraw'"
+    ).fetchone()["status"] == "pending"
 
 
 def test_check_pending_withdraws_recent_pending_kept(monkeypatch, tmp_path):
@@ -665,6 +942,28 @@ def test_check_pending_withdraws_legacy_marked_done(monkeypatch, tmp_path):
     assert fresh._conn.execute(
         "SELECT status FROM tx_log WHERE kind = 'withdraw'"
     ).fetchone()["status"] == "done"
+
+
+def test_refund_withdraw_credits_once_when_called_twice(monkeypatch, tmp_path):
+    """Two concurrent refund paths racing on the same row must credit ONCE.
+
+    The pending sweep and a batch fallback can both decide to refund the same
+    withdrawn row. refund_withdraw must atomically guard the status flip:
+    only the first caller to move the row to 'refunded' gets to credit the
+    balance; the loser is a no-op. Without the guard the balance would be
+    credited twice (money creation)."""
+    fresh = _pending_ledger(monkeypatch)
+    wd_id = _reserve_withdraw(fresh, 777, tx_hash=None, status="pending", age=3600)
+
+    first = fresh.refund_withdraw(wd_id, 777, 5_200_000)
+    second = fresh.refund_withdraw(wd_id, 777, 5_200_000)
+
+    assert first is True   # the winner applied the refund
+    assert second is False  # the loser found the row already 'refunded'
+    assert fresh.balance(777) == Decimal("5.200000")  # credited exactly once
+    assert fresh._conn.execute(
+        "SELECT status FROM tx_log WHERE id = %s", (wd_id,)
+    ).fetchone()["status"] == "refunded"
 
 
 # ---------- channel paywall watcher ----------

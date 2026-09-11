@@ -210,11 +210,11 @@ input,textarea{font-family:inherit;outline:none}
   <div class="header">
     <div class="header-logo">Tippy<span>.</span></div>
     <div class="header-right">
-      <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+      <button class="theme-toggle" data-act="toggleTheme" aria-label="Toggle theme">
         <span class="icon-moon">🌙</span>
         <span class="icon-sun">☀️</span>
       </button>
-      <div class="balance-chip" id="balanceChip" onclick="switchTab(0)">
+      <div class="balance-chip" id="balanceChip" data-act="switchTab" data-tab="0">
         <span class="dot"></span>
         <span id="balanceDisplay">--</span>
       </div>
@@ -233,15 +233,15 @@ input,textarea{font-family:inherit;outline:none}
       </div>
 
       <div class="action-row">
-        <button class="action-btn" onclick="openTipSheet()">
+        <button class="action-btn" data-act="openTipSheet">
           <span class="icon">💸</span>
           <span data-i18n="send_tip">Send tip</span>
         </button>
-        <button class="action-btn" onclick="openDepositSheet()">
+        <button class="action-btn" data-act="openDepositSheet">
           <span class="icon">💳</span>
           <span data-i18n="deposit">Deposit</span>
         </button>
-        <button class="action-btn" onclick="openWithdrawSheet()">
+        <button class="action-btn" data-act="openWithdrawSheet">
           <span class="icon">⬆️</span>
           <span data-i18n="withdraw">Withdraw</span>
         </button>
@@ -250,7 +250,7 @@ input,textarea{font-family:inherit;outline:none}
       <div class="card" id="smartWalletCard" style="display:none">
         <div class="card-header">
           <div class="card-title" data-i18n="smart_wallet">Smart Wallet</div>
-          <button class="chip-btn" onclick="copyAddr(document.getElementById('swAddress').dataset.addr)" style="font-size:12px" id="swCopy">💳 <span data-i18n="copy">Copy</span></button>
+          <button class="chip-btn" data-act="copyAddr" data-target="swAddress" style="font-size:12px" id="swCopy">💳 <span data-i18n="copy">Copy</span></button>
         </div>
         <div style="font-size:13px;color:var(--text2);margin-bottom:8px">
           <span id="swDeployed">—</span>
@@ -269,7 +269,7 @@ input,textarea{font-family:inherit;outline:none}
 
     <!-- TAB 1: Markets -->
     <div class="tab-page" id="tab1">
-      <button class="btn btn-primary btn-full" onclick="openCreateMarket()" style="margin-bottom:14px">
+      <button class="btn btn-primary btn-full" data-act="openCreateMarket" style="margin-bottom:14px">
         <span>+</span> <span data-i18n="create_market">Create market</span>
       </button>
       <div id="marketsList"></div>
@@ -277,7 +277,7 @@ input,textarea{font-family:inherit;outline:none}
 
     <!-- TAB 2: Bets -->
     <div class="tab-page" id="tab2">
-      <button class="btn btn-primary btn-full" onclick="openCreateBet()" style="margin-bottom:14px">
+      <button class="btn btn-primary btn-full" data-act="openCreateBet" style="margin-bottom:14px">
         <span>+</span> <span data-i18n="create_bet">Create bet</span>
       </button>
       <div id="betsList"></div>
@@ -287,17 +287,17 @@ input,textarea{font-family:inherit;outline:none}
     <div class="tab-page" id="tab3">
       <div class="section-title" data-i18n="lang">Language</div>
       <div id="langList">
-        <div class="lang-item" onclick="setLang('ru')">
+        <div class="lang-item" data-act="setLang" data-lang="ru">
           <span class="lang-flag">🇷🇺</span>
           <span class="lang-name">Русский</span>
           <span class="lang-check">✓</span>
         </div>
-        <div class="lang-item" onclick="setLang('en')">
+        <div class="lang-item" data-act="setLang" data-lang="en">
           <span class="lang-flag">🇬🇧</span>
           <span class="lang-name">English</span>
           <span class="lang-check">✓</span>
         </div>
-        <div class="lang-item" onclick="setLang('zh')">
+        <div class="lang-item" data-act="setLang" data-lang="zh">
           <span class="lang-flag">🇨🇳</span>
           <span class="lang-name">中文</span>
           <span class="lang-check">✓</span>
@@ -308,8 +308,8 @@ input,textarea{font-family:inherit;outline:none}
       <div class="card" style="padding:12px">
         <div id="aiChat" style="max-height:200px;overflow-y:auto;margin-bottom:10px;font-size:13px;color:var(--text2)"></div>
         <div style="display:flex;gap:8px">
-          <input class="input" id="aiInput" placeholder="Ask about markets..." style="flex:1" onkeydown="if(event.key==='Enter')askAI()">
-          <button class="btn btn-primary btn-sm" onclick="askAI()">→</button>
+          <input class="input" id="aiInput" placeholder="Ask about markets..." style="flex:1">
+          <button class="btn btn-primary btn-sm" data-act="askAI">→</button>
         </div>
       </div>
 
@@ -337,25 +337,25 @@ input,textarea{font-family:inherit;outline:none}
 
       <a href="https://t.me/tippy_on_base_bot" target="_blank" class="btn btn-secondary btn-full" style="margin-top:12px">Telegram Bot</a>
 
-      <button class="btn btn-primary btn-full" id="addMiniApp" style="margin-top:8px;display:none" onclick="addMiniApp()">⭐ Add to Base App</button>
+      <button class="btn btn-primary btn-full" id="addMiniApp" style="margin-top:8px;display:none" data-act="addMiniApp">⭐ Add to Base App</button>
     </div>
   </div>
 
   <!-- Tab Bar -->
   <div class="tab-bar">
-    <div class="tab-item active" onclick="switchTab(0)">
+    <div class="tab-item active" data-act="switchTab" data-tab="0">
       <span class="tab-icon">💰</span>
       <span data-i18n="wallet">Wallet</span>
     </div>
-    <div class="tab-item" onclick="switchTab(1)">
+    <div class="tab-item" data-act="switchTab" data-tab="1">
       <span class="tab-icon">📈</span>
       <span data-i18n="markets">Markets</span>
     </div>
-    <div class="tab-item" onclick="switchTab(2)">
+    <div class="tab-item" data-act="switchTab" data-tab="2">
       <span class="tab-icon">🎲</span>
       <span data-i18n="bets">Bets</span>
     </div>
-    <div class="tab-item" onclick="switchTab(3)">
+    <div class="tab-item" data-act="switchTab" data-tab="3">
       <span class="tab-icon">⋯</span>
       <span data-i18n="more">More</span>
     </div>
@@ -363,8 +363,8 @@ input,textarea{font-family:inherit;outline:none}
 </div>
 
 <!-- Modal Overlay -->
-<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
-  <div class="modal-sheet" id="modalSheet" onclick="event.stopPropagation()">
+<div class="modal-overlay" id="modalOverlay" data-act="closeModal">
+  <div class="modal-sheet" id="modalSheet">
     <div class="modal-handle"></div>
     <div id="modalContent"></div>
   </div>
@@ -574,7 +574,7 @@ function renderMarkets() {
   }
   c.innerHTML = m.map(mk => {
     const opts = mk.options || [];
-    return `<div class="market-card opt-colors" onclick="openMarketDetail('${mk.id}')">
+    return `<div class="market-card opt-colors" data-act="openMarketDetail" data-id="${mk.id}">
       <div class="market-question">${esc(mk.question)}</div>
       <div class="prob-bars">${opts.map((o, i) => {
         const pct = o.price_pct || 0;
@@ -603,7 +603,7 @@ function ocCard(m) {
   const close = m.close_at && !m.resolved && !m.cancelled
     ? new Date(m.close_at * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : '';
-  return `<div class="market-card" onclick="openOcDetail(${m.id})">
+  return `<div class="market-card" data-act="openOcDetail" data-id="${m.id}">
     <div class="market-question">${badge} #${m.id} ${esc(m.question)}</div>
     <div class="prob-bars">${opts.map((o, j) => {
       const pct = o.price_pct || 0;
@@ -626,7 +626,7 @@ function formatShares(micro) {
 }
 
 async function openOcDetail(id) {
-  showDetail('<div class="detail-header"><div class="detail-back" onclick="hideDetail()">←</div><div class="detail-title">⛓️ #' + id + '</div></div><div class="detail-body"><div class="empty"><div class="icon">⛓️</div><div class="text">…</div></div></div>');
+  showDetail('<div class="detail-header"><div class="detail-back" data-act="hideDetail">←</div><div class="detail-title">⛓️ #' + id + '</div></div><div class="detail-body"><div class="empty"><div class="icon">⛓️</div><div class="text">…</div></div></div>');
   try {
     const r = await fetch('/api/mini/onchain/' + id, { credentials: 'same-origin' });
     if (!r.ok) throw new Error();
@@ -654,13 +654,13 @@ async function openOcDetail(id) {
     const heldWinner = mk.resolved && opts.some(o => o.index === mk.winner && o.shares > 0);
     let actions = '';
     if (mk.resolved && heldWinner) {
-      actions = `<div class="card" style="margin-top:12px;cursor:pointer" onclick="toast('${t('oc_redeem_hint').replace('{id}', id)}')">🏆 ${t('you_won')}</div>`;
+      actions = `<div class="card" style="margin-top:12px;cursor:pointer" data-act="toast" data-msg="${esc(t('oc_redeem_hint').replace('{id}', id))}">🏆 ${t('you_won')}</div>`;
     } else if (!mk.resolved && !mk.cancelled) {
-      actions = `<div class="card" style="margin-top:12px;cursor:pointer" onclick="toast(ocTradeHint(${id}))">🛒 ${esc(t('onchain_hint').replace('{id}', id))}</div>`;
+      actions = `<div class="card" style="margin-top:12px;cursor:pointer" data-act="toast" data-msg="${esc(ocTradeHint(id))}">🛒 ${esc(t('onchain_hint').replace('{id}', id))}</div>`;
     }
     showDetail(`
       <div class="detail-header">
-        <div class="detail-back" onclick="hideDetail()">←</div>
+        <div class="detail-back" data-act="hideDetail">←</div>
         <div class="detail-title">${badge} #${mk.id}</div>
       </div>
       <div class="detail-body">
@@ -684,7 +684,7 @@ function renderBets() {
   }
   c.innerHTML = b.map(bet => {
     const opts = bet.options || [];
-    return `<div class="market-card" onclick="openBetDetail('${bet.id}')">
+    return `<div class="market-card" data-act="openBetDetail" data-id="${bet.id}">
       <div class="market-question">${esc(bet.question)}</div>
       <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Pot: <strong style="color:var(--text)">${Number(bet.pot_usdc||bet.pot||0).toFixed(2)} USDC</strong></div>
       <div class="prob-bars">${opts.map(o => {
@@ -720,8 +720,7 @@ function renderMore() {
 
 function updateLangHighlight() {
   document.querySelectorAll('.lang-item').forEach(el => {
-    const lang = el.onclick?.toString().match(/setLang\('(\w+)'\)/)?.[1];
-    el.classList.toggle('active', lang === STATE.lang);
+    el.classList.toggle('active', (el.dataset.lang || '') === STATE.lang);
   });
 }
 
@@ -738,14 +737,14 @@ function openTipSheet() {
     <div class="input-group">
       <label class="input-label">${t('amount')} (USDC)</label>
       <div class="chips" id="tipChips">
-        <div class="chip" onclick="pickChip(this,'tipAmt',1)">1</div>
-        <div class="chip active" onclick="pickChip(this,'tipAmt',5)">5</div>
-        <div class="chip" onclick="pickChip(this,'tipAmt',10)">10</div>
-        <div class="chip" onclick="pickChip(this,'tipAmt',25)">25</div>
+        <div class="chip" data-act="pickChip" data-target="tipAmt" data-val="1">1</div>
+        <div class="chip active" data-act="pickChip" data-target="tipAmt" data-val="5">5</div>
+        <div class="chip" data-act="pickChip" data-target="tipAmt" data-val="10">10</div>
+        <div class="chip" data-act="pickChip" data-target="tipAmt" data-val="25">25</div>
       </div>
       <input class="input" id="tipAmt" type="number" step="0.01" min="0" value="5" placeholder="5">
     </div>
-    <button class="btn btn-primary btn-full" onclick="doTip()">${t('send')}</button>
+    <button class="btn btn-primary btn-full" data-act="doTip">${t('send')}</button>
   `);
 }
 
@@ -781,7 +780,7 @@ function openDepositSheet() {
       <div style="flex:1;min-width:0">
         <div style="font-size:11px;color:var(--text3);margin-bottom:4px">${t('address')}</div>
         <div class="deposit-addr" id="depAddr">${esc(addr)}</div>
-        <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="copyAddr('${esc(addr)}')">${t('copy')}</button>
+        <button class="btn btn-sm btn-secondary" style="margin-top:8px" data-act="copyAddr" data-addr="${esc(addr)}">${t('copy')}</button>
       </div>
     </div>
   `);
@@ -803,7 +802,7 @@ function openWithdrawSheet() {
       <label class="input-label">${t('amount')} (USDC)</label>
       <input class="input" id="wdAmt" type="number" step="0.01" min="0" placeholder="0.00">
     </div>
-    <button class="btn btn-primary btn-full" onclick="doWithdraw()">${t('withdraw')}</button>
+    <button class="btn btn-primary btn-full" data-act="doWithdraw">${t('withdraw')}</button>
   `);
 }
 
@@ -822,7 +821,7 @@ function openMarketDetail(id) {
   const opts = mk.options || [];
   showDetail(`
     <div class="detail-header">
-      <div class="detail-back" onclick="hideDetail()">←</div>
+      <div class="detail-back" data-act="hideDetail">←</div>
       <div class="detail-title">${esc(mk.question)}</div>
     </div>
     <div class="detail-body">
@@ -837,13 +836,13 @@ function openMarketDetail(id) {
           <div class="detail-opt-bar"><div class="detail-opt-bar-fill" style="width:${pct}%;background:var(--c${i})"></div></div>
           <div style="margin-top:10px">
             <div class="chips">
-              <div class="chip" onclick="pickChip(this,'mktAmt_${i}',1)">1</div>
-              <div class="chip active" onclick="pickChip(this,'mktAmt_${i}',5)">5</div>
-              <div class="chip" onclick="pickChip(this,'mktAmt_${i}',10)">10</div>
-              <div class="chip" onclick="pickChip(this,'mktAmt_${i}',25)">25</div>
+              <div class="chip" data-act="pickChip" data-target="mktAmt_${i}" data-val="1">1</div>
+              <div class="chip active" data-act="pickChip" data-target="mktAmt_${i}" data-val="5">5</div>
+              <div class="chip" data-act="pickChip" data-target="mktAmt_${i}" data-val="10">10</div>
+              <div class="chip" data-act="pickChip" data-target="mktAmt_${i}" data-val="25">25</div>
             </div>
             <input class="input" id="mktAmt_${i}" type="number" step="0.01" min="0" value="5" placeholder="5" style="margin-bottom:8px">
-            <button class="btn btn-primary btn-full btn-sm" onclick="doTrade('${mk.id}',${i})">${t('buy')} ${esc(o.label || o.name || 'Option')}</button>
+            <button class="btn btn-primary btn-full btn-sm" data-act="doTrade" data-mid="${mk.id}" data-opt="${i}">${t('buy')} ${esc(o.label || o.name || 'Option')}</button>
           </div>
         </div>`;
       }).join('')}</div>
@@ -882,7 +881,7 @@ function openBetDetail(id) {
   const opts = bet.options || [];
   showDetail(`
     <div class="detail-header">
-      <div class="detail-back" onclick="hideDetail()">←</div>
+      <div class="detail-back" data-act="hideDetail">←</div>
       <div class="detail-title">${esc(bet.question)}</div>
     </div>
     <div class="detail-body">
@@ -898,13 +897,13 @@ function openBetDetail(id) {
           <div class="detail-opt-bar"><div class="detail-opt-bar-fill" style="width:${pct}%;background:var(--accent)"></div></div>
           <div style="margin-top:10px">
             <div class="chips">
-              <div class="chip" onclick="pickChip(this,'betAmt_${i}',1)">1</div>
-              <div class="chip active" onclick="pickChip(this,'betAmt_${i}',5)">5</div>
-              <div class="chip" onclick="pickChip(this,'betAmt_${i}',10)">10</div>
-              <div class="chip" onclick="pickChip(this,'betAmt_${i}',25)">25</div>
+              <div class="chip" data-act="pickChip" data-target="betAmt_${i}" data-val="1">1</div>
+              <div class="chip active" data-act="pickChip" data-target="betAmt_${i}" data-val="5">5</div>
+              <div class="chip" data-act="pickChip" data-target="betAmt_${i}" data-val="10">10</div>
+              <div class="chip" data-act="pickChip" data-target="betAmt_${i}" data-val="25">25</div>
             </div>
             <input class="input" id="betAmt_${i}" type="number" step="0.01" min="0" value="5" placeholder="5" style="margin-bottom:8px">
-            <button class="btn btn-primary btn-full btn-sm" onclick="doBet('${bet.id}',${i})">${t('buy')} ${esc(o.label || o.name || 'Option')}</button>
+            <button class="btn btn-primary btn-full btn-sm" data-act="doBet" data-betid="${bet.id}" data-opt="${i}">${t('buy')} ${esc(o.label || o.name || 'Option')}</button>
           </div>
         </div>`;
       }).join('')}</div>
@@ -946,13 +945,13 @@ function openCreateMarket() {
         <div class="create-opt-row"><input class="input" placeholder="Option 1"></div>
         <div class="create-opt-row"><input class="input" placeholder="Option 2"></div>
       </div>
-      <button class="create-add" onclick="addCreateOpt('mkOpts')">+ Add option</button>
+      <button class="create-add" data-act="addCreateOpt" data-container="mkOpts">+ Add option</button>
     </div>
     <div class="input-group">
       <label class="input-label">${t('hours')}</label>
       <input class="input" id="mkHours" type="number" min="1" placeholder="24">
     </div>
-    <button class="btn btn-primary btn-full" onclick="doCreateMarket()">${t('create')}</button>
+    <button class="btn btn-primary btn-full" data-act="doCreateMarket">${t('create')}</button>
   `);
 }
 
@@ -969,13 +968,13 @@ function openCreateBet() {
         <div class="create-opt-row"><input class="input" placeholder="Option 1"></div>
         <div class="create-opt-row"><input class="input" placeholder="Option 2"></div>
       </div>
-      <button class="create-add" onclick="addCreateOpt('btOpts')">+ Add option</button>
+      <button class="create-add" data-act="addCreateOpt" data-container="btOpts">+ Add option</button>
     </div>
     <div class="input-group">
       <label class="input-label">${t('hours')}</label>
       <input class="input" id="btHours" type="number" min="1" placeholder="24">
     </div>
-    <button class="btn btn-primary btn-full" onclick="doCreateBet()">${t('create')}</button>
+    <button class="btn btn-primary btn-full" data-act="doCreateBet">${t('create')}</button>
   `);
 }
 
@@ -985,12 +984,13 @@ function addCreateOpt(containerId) {
   const n = c.children.length + 1;
   const row = document.createElement('div');
   row.className = 'create-opt-row';
-  row.innerHTML = `<input class="input" placeholder="Option ${n}"><div class="create-opt-rm" onclick="rmCreateOpt(this)">×</div>`;
+  row.innerHTML = `<input class="input" placeholder="Option ${n}"><div class="create-opt-rm" data-act="rmCreateOpt">×</div>`;
   c.appendChild(row);
 }
 
 function rmCreateOpt(btn) {
-  const row = btn.parentElement;
+  const row = btn.closest('.create-opt-row');
+  if (!row) return;
   const container = row.parentElement;
   if (container.children.length <= 2) return;
   row.remove();
@@ -1106,6 +1106,47 @@ function toggleTheme() {
   if (isDark) { document.documentElement.removeAttribute('data-theme'); localStorage.setItem('theme', 'light'); }
   else { document.documentElement.setAttribute('data-theme', 'dark'); localStorage.setItem('theme', 'dark'); }
 }
+
+// ─── Delegated events (CSP: no inline handlers allowed) ───
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act;
+  if (act === 'toggleTheme') { toggleTheme(); return; }
+  if (act === 'switchTab') { switchTab(parseInt(el.dataset.tab, 10)); return; }
+  if (act === 'openTipSheet') { openTipSheet(); return; }
+  if (act === 'openDepositSheet') { openDepositSheet(); return; }
+  if (act === 'openWithdrawSheet') { openWithdrawSheet(); return; }
+  if (act === 'copyAddr') {
+    if (el.dataset.addr) { copyAddr(el.dataset.addr); return; }
+    const target = el.dataset.target ? document.getElementById(el.dataset.target) : null;
+    if (target && target.dataset.addr) { copyAddr(target.dataset.addr); }
+    return;
+  }
+  if (act === 'openCreateMarket') { openCreateMarket(); return; }
+  if (act === 'openCreateBet') { openCreateBet(); return; }
+  if (act === 'setLang') { setLang(el.dataset.lang); return; }
+  if (act === 'askAI') { askAI(); return; }
+  if (act === 'addMiniApp') { addMiniApp(); return; }
+  if (act === 'closeModal') { if (e.target === el) closeModal(e); return; }
+  if (act === 'openMarketDetail') { openMarketDetail(el.dataset.id); return; }
+  if (act === 'openOcDetail') { openOcDetail(parseInt(el.dataset.id, 10)); return; }
+  if (act === 'openBetDetail') { openBetDetail(el.dataset.id); return; }
+  if (act === 'hideDetail') { hideDetail(); return; }
+  if (act === 'toast') { toast(el.dataset.msg); return; }
+  if (act === 'pickChip') { pickChip(el, el.dataset.target, parseInt(el.dataset.val, 10)); return; }
+  if (act === 'doTip') { doTip(); return; }
+  if (act === 'doWithdraw') { doWithdraw(); return; }
+  if (act === 'doTrade') { doTrade(el.dataset.mid, parseInt(el.dataset.opt, 10)); return; }
+  if (act === 'doBet') { doBet(el.dataset.betid, parseInt(el.dataset.opt, 10)); return; }
+  if (act === 'addCreateOpt') { addCreateOpt(el.dataset.container); return; }
+  if (act === 'doCreateMarket') { doCreateMarket(); return; }
+  if (act === 'doCreateBet') { doCreateBet(); return; }
+  if (act === 'rmCreateOpt') { rmCreateOpt(el); return; }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target && e.target.id === 'aiInput') askAI();
+});
 
 // ─── Start ───
 init();

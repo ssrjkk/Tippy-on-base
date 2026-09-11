@@ -484,6 +484,64 @@ TELEGRAM_API_PROXY=socks5h://user:pass@host:1080   # или http://host:8080
 
 Без `TELEGRAM_API_PROXY` бот использует прямое подключение (обычный случай).
 
+## Этап 8. Пул релейеров и батчинг выводов (опционально, для масштаба)
+
+Пока выводы идут с одного hot wallet, всё работает из коробки. Для роста можно
+подключить пул релейеров и батчинг очереди:
+
+```env
+# Пул релейеров: 0x+64hex ключи через запятую, у каждого свой суточный кап.
+RELAYER_PRIVATE_KEYS=0x...,0x...
+RELAYER_DAILY_LIMIT=10000          # USDC/сутки на релейер (по UTC)
+RELAYER_FEE_GAS_GWEI=0.01          # цена газа для оценки комиссии вывода
+#RELAYER_STATE_FILE=.relayer_usage.json  # персистентный учёт капов (рестарт не сбрасывает)
+
+# Батчинг очереди /withdraw (флаш по любому порогу):
+WITHDRAW_BATCH_FLUSH_USDC=50
+WITHDRAW_BATCH_FLUSH_COUNT=20
+WITHDRAW_BATCH_FLUSH_SECONDS=60
+WITHDRAW_BATCH_FALLBACK_DIRECT=1   # батч не удался -> прямые отправки
+```
+
+Проверка формата ключей и лимитов — **перед каждым деплоем**:
+
+```bash
+python scripts/validate_env.py     # exit 0 = всё ок; печатает [ERROR]/[WARN]
+```
+
+Суточный кап на `/withdraw` (MAX_WITHDRAWS_PER_DAY) проверяется в БД **в одной
+транзакции** с дебетом — гонки между процессами невозможны.
+
+## Этап 9. Автономный агент (опционально)
+
+Отдельный процесс, который сам создаёт рынки/ставки/сигналы:
+
+```bash
+python -m agent.main --status   # текущие капы/состояние
+python -m agent.main            # один цикл
+python -m agent.main --loop     # постоянный цикл
+```
+
+```env
+AGENT_TG_ID=<tg id агента>      # 0 = выключен
+AGENT_DAILY_CAP=50              # USDC/сутки
+AGENT_TX_CAP=10                 # USDC/тх (должно быть <= DAILY; иначе агент не стартует)
+AGENT_ACTIONS_PER_HOUR=20
+AGENT_MAX_ERRORS=3              # подряд ошибок -> cooldown
+AGENT_COOLDOWN_SECS=300
+AGENT_LLM_MODEL=gpt-4o-mini
+AGENT_FILTER_MODEL=llama-3.1-8b-instant   # дешёвый фильтр новостей
+AGENT_NEWS_INTERVAL=300
+TIPPY_BASE_URL=http://localhost:8000      # в докере: http://app:8000
+# EAS-аттестации: отдельный ключ (НЕ WALLET_ENC_KEY) + зарегистрированный UID.
+AGENT_EAS_KEY=
+EAS_SCHEMA_UID=
+```
+
+Агент **fail-closed**: ошибка LLM = нет действия; при некорректных капах
+`agent.main` завершается с ошибкой; без `EAS_SCHEMA_UID` аттестации пишутся
+в локальный `agent_attestations.jsonl` с предупреждением в логе.
+
 ## Required secrets
 
 - `BOT_TOKEN`, `HOT_WALLET_KEY` — see `.env.example`.

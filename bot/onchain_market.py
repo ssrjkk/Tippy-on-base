@@ -27,12 +27,60 @@ from .chain.transfers import _send_lock  # noqa: F401
 _DRIP_COOLDOWN_SECONDS = 3600
 _last_drip: dict[str, float] = {}
 
+# Short-lived read caches: priceOf / markets() are state-changing only when a
+# trade lands, so a dashboard or mini-app refresh a few seconds later can reuse
+# the snapshot. Bounds cache growth instead of letting an unauthenticated
+# /api/onchain/* fan-out multiply RPC calls per request forever.
+_READ_CACHE_TTL_SECONDS = 3.0
+_READ_CACHE_MAX = 256
+_market_info_cache: dict[int, tuple[float, dict]] = {}
+_prices_cache: dict[tuple[int, int], tuple[float, list[Decimal]]] = {}
+
+
+def _cache_read(cache: dict, key: tuple) -> object | None:
+    hit = cache.get(key)
+    if hit is None:
+        return None
+    ts, value = hit
+    if time.time() - ts <= _READ_CACHE_TTL_SECONDS:
+        return value
+    cache.pop(key, None)
+    return None
+
+
+def _cache_write(cache: dict, key: tuple, value) -> None:
+    if len(cache) >= _READ_CACHE_MAX:
+        cache.clear()  # crude bound; entries repopulate on demand
+    cache[key] = (time.time(), value)
+
 
 def _check_chain() -> None:
     """Refuse to build/sign anything if the RPC is not the expected chain."""
     from .chain.network import assert_base_chain_sync
 
     assert_base_chain_sync()
+
+
+def _eip1559_fee_fields(w3: Web3) -> dict:
+    """EIP-1559 (type-2) fee fields for user-signed txs.
+
+    On Base legacy `gasPrice` txs can get stuck in the mempool when the base
+    fee spiked after the read — type-2 txs with a 2x cap don't. Block-data
+    misses fall back to the legacy RPC gas price as `maxFeePerGas`.
+    """
+    from .chain.network import eip1559_fees_sync
+
+    fees = eip1559_fees_sync(priority_gwei=0.01)
+    if fees["base_fee_gwei"] > 0:
+        return {
+            "maxPriorityFeePerGas": Web3.to_wei(fees["priority_gwei"], "gwei"),
+            "maxFeePerGas": Web3.to_wei(fees["max_fee_gwei"], "gwei"),
+        }
+    gp = w3.eth.gas_price
+    return {
+        "maxPriorityFeePerGas": Web3.to_wei(1, "gwei"),
+        "maxFeePerGas": gp,
+    }
 
 
 async def _ensure_gas(w3: Web3, user_addr: str, needed_wei: int) -> None:
@@ -42,7 +90,9 @@ async def _ensure_gas(w3: Web3, user_addr: str, needed_wei: int) -> None:
     per-UTC-day budget persisted in the DB — the budget survives bot
     restarts, so a restart cannot be used to re-arm a drained budget.
     """
-    if w3.eth.get_balance(Web3.to_checksum_address(user_addr)) >= needed_wei:
+    if await asyncio.to_thread(
+        lambda: w3.eth.get_balance(Web3.to_checksum_address(user_addr))
+    ) >= needed_wei:
         return
     from bot.ledger import async_ledger as ledger
 
@@ -86,8 +136,13 @@ def _load_abi() -> list:
 
 
 def _w3() -> Web3:
-    from .chain.core import rpc_url
-    return Web3(Web3.HTTPProvider(rpc_url()))
+    from .chain import core
+    # Use the project-standard provider factory so the HTTP request carries a
+    # timeout (RPC_TIMEOUT_SECONDS). Without it, a hung RPC blocks the single
+    # event-loop thread forever and freezes every concurrent money-path watcher
+    # (deposit scanner, pending-withdrawal refund, batch flush, CREATE2/x402
+    # sweeps). Same timed provider the rest of the codebase uses.
+    return core._make_w3(core.rpc_url())
 
 
 def _market_contract(w3: Web3 | None = None):
@@ -116,30 +171,70 @@ async def market_state(market_id: int) -> tuple[int, int, int]:
     """
     w3 = _w3()
     contract = _market_contract(w3)
-    m = contract.functions.markets(market_id).call()
-    num_outcomes = m[0]  # uint8 numOutcomes
-    b = m[4]             # int256 b
-    # ERC1155Supply tracks total supply in a dedicated mapping — minting
-    # credits traders, never the zero address, so balanceOf(0x0) is NOT the
-    # supply (that mistake silently made this return q=[0,...] forever).
-    supplies = await asyncio.gather(
-        *[asyncio.to_thread(contract.functions.totalSupply(market_id * 256 + i).call)
-          for i in range(num_outcomes)]
-    )
-    total_q = sum(supplies)
+
+    def _read() -> tuple[int, int, int]:
+        m = contract.functions.markets(market_id).call()
+        num_outcomes = m[0]  # uint8 numOutcomes
+        b = m[4]             # int256 b
+        # ERC1155Supply tracks total supply in a dedicated mapping — minting
+        # credits traders, never the zero address, so balanceOf(0x0) is NOT the
+        # supply (that mistake silently made this return q=[0,...] forever).
+        supplies = [contract.functions.totalSupply(market_id * 256 + i).call()
+                    for i in range(num_outcomes)]
+        return sum(supplies), b, num_outcomes
+
+    total_q, b, num_outcomes = await asyncio.to_thread(_read)
     return total_q, b, num_outcomes
+
+
+async def creator_holds_outcome(market_id: int, outcome: int) -> bool:
+    """True if the market's creator still holds shares of `outcome` on-chain.
+
+    Mirrors the off-chain resolve guard (ledger.resolve_market): a creator
+    declaring an outcome they themselves hold could mint a payout, so the
+    relayer must refuse to sign such a resolution.
+    """
+    w3 = _w3()
+    contract = _market_contract(w3)
+
+    def _read() -> bool:
+        m = contract.functions.markets(market_id).call()
+        creator = m[5]  # Market.creator
+        if not creator or creator == "0x" + "0" * 40:
+            return False
+        try:
+            held = contract.functions.balanceOf(
+                Web3.to_checksum_address(creator), market_id * 256 + outcome
+            ).call()
+            return int(held) > 0
+        except Exception:
+            return False
+
+    return await asyncio.to_thread(_read)
 
 
 async def price_of(market_id: int, outcome: int) -> Decimal:
     """Current price of one share of `outcome` (0..1 scale) via on-chain view."""
     w3 = _w3()
     contract = _market_contract(w3)
-    price18 = contract.functions.priceOf(market_id, outcome).call()
+
+    def _read() -> int:
+        return contract.functions.priceOf(market_id, outcome).call()
+
+    price18 = await asyncio.to_thread(_read)
     return Decimal(price18) / Decimal(10**18)
 
 
 async def market_prices(market_id: int, num_outcomes: int) -> list[Decimal]:
-    """Live LMSR prices for every outcome (0..1 scale), one RPC batch."""
+    """Live LMSR prices for every outcome (0..1 scale), one RPC batch.
+
+    Cached for a few seconds; market data only changes when a trade lands,
+    so this keeps dashboard refreshes off a per-request RPC fan-out.
+    """
+    key = (market_id, num_outcomes)
+    cached = _cache_read(_prices_cache, key)
+    if cached is not None:
+        return cached
     w3 = _w3()
 
     def _call():
@@ -147,21 +242,31 @@ async def market_prices(market_id: int, num_outcomes: int) -> list[Decimal]:
         return [c.functions.priceOf(market_id, i).call() for i in range(num_outcomes)]
 
     raw = await asyncio.to_thread(_call)
-    return [Decimal(p) / Decimal(10**18) for p in raw]
+    prices = [Decimal(p) / Decimal(10**18) for p in raw]
+    _cache_write(_prices_cache, key, prices)
+    return prices
 
 
 async def quote_buy(market_id: int, outcome: int, shares: int) -> int:
     """On-chain quote: how many micro-USDC `shares` would cost right now."""
     w3 = _w3()
     contract = _market_contract(w3)
-    return contract.functions.quoteBuy(market_id, outcome, shares).call()
+
+    def _read() -> int:
+        return contract.functions.quoteBuy(market_id, outcome, shares).call()
+
+    return await asyncio.to_thread(_read)
 
 
 async def quote_sell(market_id: int, outcome: int, shares: int) -> int:
     """On-chain quote: how many micro-USDC `shares` would yield when sold."""
     w3 = _w3()
     contract = _market_contract(w3)
-    return contract.functions.quoteSell(market_id, outcome, shares).call()
+
+    def _read() -> int:
+        return contract.functions.quoteSell(market_id, outcome, shares).call()
+
+    return await asyncio.to_thread(_read)
 
 
 async def buy(market_id: int, outcome: int, shares: int, max_cost_micro: int,
@@ -172,14 +277,26 @@ async def buy(market_id: int, outcome: int, shares: int, max_cost_micro: int,
     `max_cost_micro`: slippage cap — tx reverts if cost exceeds this.
     """
     _check_chain()
+    needed_wei = int(Decimal("0.0003") * Decimal(10**18))
     w3 = _w3()
     account = w3.eth.account.from_key(user_private_key)
     user_addr = account.address
 
     # 1) Ensure user has gas for approve + buy (rate-limited drip)
-    needed_wei = int(Decimal("0.0003") * Decimal(10**18))
     await _ensure_gas(w3, user_addr, needed_wei)
 
+    # 2) + 3) Full send path off the event loop so a slow/hung RPC never
+    # freezes the single event-loop thread (all concurrent watchers depend on
+    # it). Mirrors smart_wallet's *_sync + asyncio.to_thread pattern.
+    return await asyncio.to_thread(
+        _buy_sync, market_id, outcome, shares, max_cost_micro,
+        user_private_key, user_addr, w3,
+    )
+
+
+def _buy_sync(market_id: int, outcome: int, shares: int, max_cost_micro: int,
+              user_private_key: str, user_addr: str, w3: Web3) -> str:
+    """Blocking half of :func:`buy` (runs in a worker thread)."""
     # 2) Ensure USDC approval
     usdc = _usdc_contract(w3)
     current_allowance = usdc.functions.allowance(
@@ -192,7 +309,7 @@ async def buy(market_id: int, outcome: int, shares: int, max_cost_micro: int,
             "from": user_addr,
             "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
             "gas": 60000,
-            "gasPrice": w3.eth.gas_price,
+            **_eip1559_fee_fields(w3),
         })
         signed = w3.eth.account.sign_transaction(approve_tx, private_key=user_private_key)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -206,7 +323,7 @@ async def buy(market_id: int, outcome: int, shares: int, max_cost_micro: int,
         "from": user_addr,
         "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 300000,
-        "gasPrice": w3.eth.gas_price,
+        **_eip1559_fee_fields(w3),
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=user_private_key)
     with _send_lock:
@@ -229,15 +346,23 @@ async def sell(market_id: int, outcome: int, shares: int,
     w3 = _w3()
     account = w3.eth.account.from_key(user_private_key)
     user_addr = account.address
-    contract = _market_contract(w3)
+    return await asyncio.to_thread(
+        _sell_sync, market_id, outcome, shares, min_proceeds_micro,
+        user_private_key, user_addr, w3,
+    )
 
+
+def _sell_sync(market_id: int, outcome: int, shares: int, min_proceeds_micro: int,
+               user_private_key: str, user_addr: str, w3: Web3) -> str:
+    """Blocking half of :func:`sell` (runs in a worker thread)."""
+    contract = _market_contract(w3)
     tx = contract.functions.sell(
         market_id, outcome, shares, min_proceeds_micro
     ).build_transaction({
         "from": user_addr,
         "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 300000,
-        "gasPrice": w3.eth.gas_price,
+        **_eip1559_fee_fields(w3),
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=user_private_key)
     with _send_lock:
@@ -255,13 +380,19 @@ async def redeem(market_id: int, user_private_key: str) -> int:
     w3 = _w3()
     account = w3.eth.account.from_key(user_private_key)
     user_addr = account.address
-    contract = _market_contract(w3)
+    return await asyncio.to_thread(
+        _redeem_sync, market_id, user_private_key, user_addr, w3,
+    )
 
+
+def _redeem_sync(market_id: int, user_private_key: str, user_addr: str, w3: Web3) -> int:
+    """Blocking half of :func:`redeem` (runs in a worker thread)."""
+    contract = _market_contract(w3)
     tx = contract.functions.redeem(market_id).build_transaction({
         "from": user_addr,
         "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 200000,
-        "gasPrice": w3.eth.gas_price,
+        **_eip1559_fee_fields(w3),
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=user_private_key)
     with _send_lock:
@@ -289,13 +420,20 @@ async def redeem_many(market_ids: list[int], user_private_key: str) -> int:
     w3 = _w3()
     account = w3.eth.account.from_key(user_private_key)
     user_addr = account.address
-    contract = _market_contract(w3)
+    return await asyncio.to_thread(
+        _redeem_many_sync, market_ids, user_private_key, user_addr, w3,
+    )
 
+
+def _redeem_many_sync(market_ids: list[int], user_private_key: str,
+                      user_addr: str, w3: Web3) -> int:
+    """Blocking half of :func:`redeem_many` (runs in a worker thread)."""
+    contract = _market_contract(w3)
     tx = contract.functions.redeemMany(market_ids).build_transaction({
         "from": user_addr,
         "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 200000 * len(market_ids),
-        "gasPrice": w3.eth.gas_price,
+        **_eip1559_fee_fields(w3),
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=user_private_key)
     with _send_lock:
@@ -329,6 +467,15 @@ async def create_market(num_outcomes: int, subsidy_micro: int, closes_at: int,
     needed_wei = int(Decimal("0.0005") * Decimal(10**18))
     await _ensure_gas(w3, user_addr, needed_wei)
 
+    return await asyncio.to_thread(
+        _create_market_sync, num_outcomes, subsidy_micro, closes_at,
+        creator_private_key, user_addr, w3,
+    )
+
+
+def _create_market_sync(num_outcomes: int, subsidy_micro: int, closes_at: int,
+                        creator_private_key: str, user_addr: str, w3: Web3) -> int:
+    """Blocking half of :func:`create_market` (runs in a worker thread)."""
     # Approve USDC transfer for subsidy
     usdc = _usdc_contract(w3)
     current_allowance = usdc.functions.allowance(
@@ -341,7 +488,7 @@ async def create_market(num_outcomes: int, subsidy_micro: int, closes_at: int,
             "from": user_addr,
             "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
             "gas": 60000,
-            "gasPrice": w3.eth.gas_price,
+            **_eip1559_fee_fields(w3),
         })
         signed = w3.eth.account.sign_transaction(approve_tx, private_key=creator_private_key)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -354,7 +501,7 @@ async def create_market(num_outcomes: int, subsidy_micro: int, closes_at: int,
         "from": user_addr,
         "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 500000,
-        "gasPrice": w3.eth.gas_price,
+        **_eip1559_fee_fields(w3),
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=creator_private_key)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -373,15 +520,23 @@ async def oracle_resolve(market_id: int, winning_outcome: int,
     w3 = _w3()
     account = w3.eth.account.from_key(oracle_private_key)
     user_addr = account.address
-    contract = _market_contract(w3)
+    return await asyncio.to_thread(
+        _oracle_resolve_sync, market_id, winning_outcome,
+        oracle_private_key, user_addr, w3,
+    )
 
+
+def _oracle_resolve_sync(market_id: int, winning_outcome: int,
+                         oracle_private_key: str, user_addr: str, w3: Web3) -> str:
+    """Blocking half of :func:`oracle_resolve` (runs in a worker thread)."""
+    contract = _market_contract(w3)
     tx = contract.functions.oracleResolve(
         market_id, winning_outcome
     ).build_transaction({
         "from": user_addr,
         "nonce": w3.eth.get_transaction_count(user_addr, "pending"),
         "gas": 100000,
-        "gasPrice": w3.eth.gas_price,
+        **_eip1559_fee_fields(w3),
     })
     signed = w3.eth.account.sign_transaction(tx, private_key=oracle_private_key)
     with _send_lock:
@@ -396,14 +551,18 @@ def _resolve_like(contract, w3: Web3, fn_name: str, args: tuple,
                   private_key: str, gas: int) -> str:
     """Shared sign-and-broadcast for ownerResolve/cancelExpired (hot wallet)."""
     account = w3.eth.account.from_key(private_key)
-    tx = getattr(contract.functions, fn_name)(*args).build_transaction({
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address, "pending"),
-        "gas": gas,
-        "gasPrice": w3.eth.gas_price,
-    })
-    signed = account.sign_transaction(tx)
+    # Nonce read must happen under the shared hot-wallet lock too: these are
+    # sent FROM the bot owner/hot wallet, whose nonce the withdraw/batch/x402
+    # paths consume — a nonce read outside the lock could collide and replace
+    # one of those payouts.
     with _send_lock:
+        tx = getattr(contract.functions, fn_name)(*args).build_transaction({
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address, "pending"),
+            "gas": gas,
+            **_eip1559_fee_fields(w3),
+        })
+        signed = account.sign_transaction(tx)
         raw_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(raw_hash, timeout=60)
     if receipt.status != 1:
@@ -469,7 +628,14 @@ async def market_views(limit: int = 12) -> list[dict]:
 
 
 async def get_market_info(market_id: int) -> dict:
-    """Read full market info from chain (off the event loop)."""
+    """Read full market info from chain (off the event loop).
+
+    Cached a few seconds like :func:`market_prices` — resolution/escrow only
+    move on-chain, a dashboard poll doesn't need a fresh call per request.
+    """
+    cached = _cache_read(_market_info_cache, (market_id,))
+    if cached is not None:
+        return cached
     w3 = _w3()
     contract = _market_contract(w3)
 
@@ -489,4 +655,6 @@ async def get_market_info(market_id: int) -> dict:
             "cancelled": m[9],
         }
 
-    return await asyncio.to_thread(_call)
+    info = await asyncio.to_thread(_call)
+    _cache_write(_market_info_cache, (market_id,), info)
+    return info

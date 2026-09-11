@@ -78,10 +78,53 @@ Document this so operators know the trade-off before deploying.
 
 ## Private-chat guards
 
-The `/export`, `/wallet export`, and `/import` commands refuse to execute
-outside a private chat (`message.chat.type != "private"`).  They reply with
-a hint to DM the bot and best-effort delete the triggering message, preventing
-leakage of private keys and seed phrases into group history.
+Commands that can leak secrets or move funds refuse to execute outside a
+private chat (`message.chat.type != "private"`): `/export`, `/wallet export`,
+`/import`, `/withdraw`, `/deposit`, `/claim`, `/link`, `/confirm`, and
+`/paywall subscribe` (the latter hands out a one-time channel invite link —
+in a group that link would be clickable by lurkers). They reply with a hint
+to DM the bot and best-effort delete the triggering message.
+
+## Output escaping
+
+Every bot reply that interpolates user-controlled text (market questions,
+option labels, paywall titles, error strings, admin exception alerts) is
+HTML-escaped and sent with `parse_mode=HTML`. A user cannot craft a title
+like `<b>...</b><a href=...>` to inject markup or links into other users'
+chats. Ledger-internal paths stay plain text where no `parse_mode` is set.
+
+## Web: CSP and login nonces
+
+- The dashboard serves a strict Content-Security-Policy: `script-src` is
+  nonce-based — no inline `<script>` without a nonce and **zero** inline
+  event handlers (`onclick=` etc. are all replaced by delegated
+  `data-act` listeners in the Mini App); `style-src` allows inline style
+  attributes (`'unsafe-inline'`) only for styling, scripts stay locked down.
+- Wallet login nonces are stored hashed (SHA-256) in `login_nonces`, are
+  single-use (PK-enforced, atomic claim), and are pruned after
+  `LOGIN_NONCE_TTL_SECONDS` (default 7 days).
+
+## Withdrawal limits are atomic
+
+`MAX_WITHDRAWS_PER_DAY` is enforced inside the same transaction that debits
+the user: a guarded `INSERT ... WHERE (SELECT COUNT(*) ...) < cap`. Two
+concurrent `/withdraw` commands (or two bot processes) can never both pass
+the check — there is no check-then-act window.
+
+## Multi-relayer pool
+
+`RELAYER_PRIVATE_KEYS` runs a pool of dedicated relayer keys, each capped by
+`RELAYER_DAILY_LIMIT` (USDC per UTC day). Usage is persisted to
+`RELAYER_STATE_FILE` (default `.relayer_usage.json`) so a restart cannot
+reset the daily budget. Keys and caps are format-checked by
+`python scripts/validate_env.py`.
+
+## Autonomous agent
+
+The agent is fail-closed by construction: an LLM error means no action; an
+inconsistent caps set (per-tx > daily, zero caps) refuses to start; the DB
+blocks trading on its own markets; EAS attestations degrade to a local audit
+trail with a warning (never silently).
 
 ## Emergency runbook
 

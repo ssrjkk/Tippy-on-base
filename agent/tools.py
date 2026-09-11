@@ -1,9 +1,9 @@
 """Agent tools — direct function calls into Tippy's internal ledger.
 
 These wrap ledger.* methods for the agent loop. Each tool:
-  1. Checks spend caps (caps.check_action)
+  1. Reserves budget + rate slot (caps.check_action — atomic reserve)
   2. Calls ledger
-  3. Records action (caps.record_action) or error (caps.record_error)
+  3. Returns the reservation on failure (caps.release_action) or logs error
 
 Security:
   - Agent CANNOT resolve its own markets (oracle protection)
@@ -48,16 +48,17 @@ async def create_market(
             round(subsidy_usdc * 1_000_000), close_at=close_at
         )
         if market_id is None or market_id == "balance":
+            caps.release_action(subsidy_usdc)
             caps.record_error()
             return {"error": f"create_market failed: {market_id}"}
         _agent_markets.add(market_id)
-        caps.record_action(subsidy_usdc)
         return {
             "market_id": market_id,
             "options": options,
             "subsidy_usdc": subsidy_usdc,
         }
     except Exception as e:
+        caps.release_action(subsidy_usdc)
         caps.record_error()
         return {"error": str(e)}
 
@@ -87,13 +88,18 @@ async def place_bet(
 
     try:
         status, info = await ledger.buy_shares(market_id, tg_id, outcome_idx, micro)
+        if status == "ownmarket":
+            caps.release_action(amount_usdc)
+            caps.record_error()
+            return {"error": "Oracle protection: agent cannot trade its own markets"}
         if status != "ok":
+            caps.release_action(amount_usdc)
             caps.record_error()
             return {"error": f"buy_shares failed: {status}"}
-        caps.record_action(amount_usdc)
         bal = float(await ledger.balance(tg_id))
         return {"status": "ok", "info": info, "new_balance_usdc": bal}
     except Exception as e:
+        caps.release_action(amount_usdc)
         caps.record_error()
         return {"error": str(e)}
 

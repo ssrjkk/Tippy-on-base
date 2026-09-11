@@ -83,7 +83,7 @@ async def _market_create(message: types.Message, parts: list[str]) -> None:
         return
     for o in options:
         if len(o) > common.config.MAX_OPTION_LEN:
-            await message.answer(i18n.t(lang, 'market_option_long', n=common.config.MAX_OPTION_LEN, o=o[:40]))
+            await message.answer(i18n.t(lang, 'market_option_long', n=common.config.MAX_OPTION_LEN, o=common._h(o[:40])))
             return
     wait = await common._throttle(message.from_user.id, 'market')
     if wait:
@@ -95,7 +95,7 @@ async def _market_create(message: types.Message, parts: list[str]) -> None:
         return
     dl = i18n.t(lang, 'market_deadline_fmt', time=datetime.fromtimestamp(deadline).strftime('%d.%m %H:%M')) if deadline else i18n.t(lang, 'market_no_deadline_card')
     opts_text = '\n'.join((f'{i + 1}) {o}' for i, o in enumerate(options)))
-    await message.answer(i18n.t(lang, 'market_created_msg', id=result, question=question, options=opts_text, liquidity=i18n.t(lang, 'market_liquidity', amount=common._fmt(subsidy)), deadline=dl, hint=i18n.t(lang, 'market_trade_hint', id=result)))
+    await message.answer(i18n.t(lang, 'market_created_msg', id=result, question=common._h(question), options=common._h(opts_text), liquidity=i18n.t(lang, 'market_liquidity', amount=common._fmt(subsidy)), deadline=dl, hint=i18n.t(lang, 'market_trade_hint', id=result)))
 
 async def _market_card(m: dict, tg_id: int | None=None) -> str:
     lang = await common.user_lang(tg_id) if tg_id else 'ru'
@@ -103,11 +103,11 @@ async def _market_card(m: dict, tg_id: int | None=None) -> str:
     options = json.loads(m['options'])
     quantities = await common.ledger.market_quantities(mid)
     prices = lmsr_prices(quantities, int(m['b_micro']))
-    lines = [f"📈 #{mid} <b>{m['question']}</b>"]
+    lines = [f"📈 #{mid} <b>{common._h(m['question'])}</b>"]
     if m['status'] == 'resolved':
         w = int(m['winner']) if m['winner'] is not None else -1
         label = options[w] if 0 <= w < len(options) else '?'
-        lines.append(i18n.t(lang, 'market_card_resolved', label=label))
+        lines.append(i18n.t(lang, 'market_card_resolved', label=common._h(label)))
     elif m['status'] == 'cancelled':
         lines.append(i18n.t(lang, 'market_card_cancelled'))
     elif m['close_at'] and int(time.time()) > int(m['close_at']):
@@ -121,7 +121,7 @@ async def _market_card(m: dict, tg_id: int | None=None) -> str:
         if i in pos and pos[i]['shares'] > 0:
             value_micro = int(pos[i]['shares'] * p)
             mine = '\n' + i18n.t(lang, 'market_your_shares', shares=common._fmt(pos[i]['shares']), value=common._fmt(value_micro))
-        lines.append(f'{i + 1}) {o} — <b>{_pct(p)}</b> {_bar(p)}{mine}')
+        lines.append(f'{i + 1}) {common._h(o)} — <b>{_pct(p)}</b> {_bar(p)}{mine}')
     escrow = int(m['escrow_micro'])
     lines.append(i18n.t(lang, 'market_liquidity_pool', amount=common._fmt(escrow)))
     if m['status'] == 'open':
@@ -140,7 +140,7 @@ async def _markets_text(tg_id: int | None=None) -> tuple[str, InlineKeyboardMark
         prices = await common.ledger.market_prices(mid) or []
         top = max(range(len(prices)), key=lambda i: prices[i]) if prices else 0
         leader = json.loads(m['options'])[top] if prices else '?'
-        lines.append(f"#{mid} {m['question']}{i18n.t(lang, 'market_fav', leader=f'{leader[:30]} {_pct(prices[top])}')}" if prices else f"#{mid} {m['question']}")
+        lines.append(f"#{mid} {common._h(m['question'])}{i18n.t(lang, 'market_fav', leader=f'{common._h(leader[:30])} {_pct(prices[top])}')}" if prices else f"#{mid} {common._h(m['question'])}")
         kb_rows.append([InlineKeyboardButton(text=f"📈 #{mid}: {m['question'][:36]}", callback_data=f'mk:{mid}')])
     lines.append(i18n.t(lang, 'market_list_hint'))
     kb_rows.append([InlineKeyboardButton(text=i18n.t(lang, 'btn_mk_create'), callback_data='mkcreate')])
@@ -195,7 +195,7 @@ async def cb_mk_buy(cb: types.CallbackQuery) -> None:
     idx = int(opt)
     label = options[idx] if idx < len(options) else '?'
     rows = [[InlineKeyboardButton(text=i18n.t(lang, 'btn_buy_amount', amount=a), callback_data=f'mkdo:{mid}:{idx}:{a}') for a in common.QUICK_AMOUNTS], [InlineKeyboardButton(text=i18n.t(lang, 'btn_back_short'), callback_data=f'mk:{mid}')]]
-    await common._edit_menu(cb, i18n.t(lang, 'market_buy_card', mid=mid, label=label), InlineKeyboardMarkup(inline_keyboard=rows))
+    await common._edit_menu(cb, i18n.t(lang, 'market_buy_card', mid=mid, label=common._h(label)), InlineKeyboardMarkup(inline_keyboard=rows))
     await cb.answer()
 
 @common.router.callback_query(F.data.startswith('mkdo:'))
@@ -206,6 +206,7 @@ async def cb_mk_do(cb: types.CallbackQuery) -> None:
     lang = await common.user_lang(user.id)
     _, mid, opt, amt = cb.data.split(':')
     try:
+        mid_int, opt_int = int(mid), int(opt)
         spend = common._to_micro(Decimal(amt))
     except Exception:
         await cb.answer(i18n.t(lang, 'bad_amount'), show_alert=True)
@@ -217,14 +218,14 @@ async def cb_mk_do(cb: types.CallbackQuery) -> None:
     if wait:
         await cb.answer(wait, show_alert=True)
         return
-    status, info = await common.ledger.buy_shares(int(mid), user.id, int(opt), spend)
+    status, info = await common.ledger.buy_shares(mid_int, user.id, opt_int, spend)
     if status != 'ok':
         msgs = {'closed': i18n.t(lang, 'market_closed'), 'deadline': i18n.t(lang, 'market_trade_deadline'), 'badopt': i18n.t(lang, 'market_trade_badopt'), 'balance': i18n.t(lang, 'market_balance'), 'toosmall': i18n.t(lang, 'market_trade_toosmall')}
         await cb.answer(msgs.get(status, i18n.t(lang, 'error_generic')), show_alert=True)
         return
     bal = await common.ledger.balance(user.id)
     bal_str = format(bal, '.4f').rstrip('0').rstrip('.')
-    text = i18n.t(lang, 'market_buy_ok_detail', mid=mid, label=info['label'], shares=common._fmt(info['shares']), price=_pct(info['price']), cost=common._fmt(info['cost']), bal=bal_str)
+    text = i18n.t(lang, 'market_buy_ok_detail', mid=mid, label=common._h(info['label']), shares=common._fmt(info['shares']), price=_pct(info['price']), cost=common._fmt(info['cost']), bal=bal_str)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=i18n.t(lang, 'btn_market'), callback_data=f'mk:{mid}'), InlineKeyboardButton(text=i18n.t(lang, 'btn_sell'), callback_data=f'mksell:{mid}:{opt}')]])
     await common._edit_menu(cb, text, kb)
     await cb.answer()
@@ -271,7 +272,7 @@ async def cb_mk_selldo(cb: types.CallbackQuery) -> None:
     if status != 'ok':
         await cb.answer(i18n.t(lang, 'market_sell_error'), show_alert=True)
         return
-    text = i18n.t(lang, 'market_sell_ok_detail', mid=mid, label=info['label'], shares=common._fmt(info['shares']), price=_pct(info['price']), value=common._fmt(info['value']))
+    text = i18n.t(lang, 'market_sell_ok_detail', mid=mid, label=common._h(info['label']), shares=common._fmt(info['shares']), price=_pct(info['price']), value=common._fmt(info['value']))
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=i18n.t(lang, 'btn_market'), callback_data=f'mk:{mid}')]])
     await common._edit_menu(cb, text, kb)
     await cb.answer()
@@ -297,7 +298,7 @@ async def cb_mk_resolve(cb: types.CallbackQuery) -> None:
     if len(parts) == 2:
         options = json.loads(m['options'])
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f'🏆 {o[:30]}', callback_data=f'mkres:{mid}:{i}')] for i, o in enumerate(options)] + [[InlineKeyboardButton(text=i18n.t(lang, 'btn_back_short'), callback_data=f'mk:{mid}')]])
-        await common._edit_menu(cb, i18n.t(lang, 'market_resolve_title', mid=mid, question=m['question']), kb)
+        await common._edit_menu(cb, i18n.t(lang, 'market_resolve_title', mid=mid, question=common._h(m['question'])), kb)
         await cb.answer()
         return
     idx = int(parts[2])
@@ -371,7 +372,7 @@ async def cmd_trade(message: types.Message) -> None:
         return
     bal = await common.ledger.balance(message.from_user.id)
     bal_str = format(bal, '.4f').rstrip('0').rstrip('.')
-    await message.answer(i18n.t(lang, 'market_buy_ok_detail', mid=mid, label=info['label'], shares=common._fmt(info['shares']), price=_pct(info['price']), cost=common._fmt(info['cost']), bal=bal_str) + '\n\n' + i18n.t(lang, 'market_sell_hint', mid=mid, opt=opt + 1))
+    await message.answer(i18n.t(lang, 'market_buy_ok_detail', mid=mid, label=common._h(info['label']), shares=common._fmt(info['shares']), price=_pct(info['price']), cost=common._fmt(info['cost']), bal=bal_str) + '\n\n' + i18n.t(lang, 'market_sell_hint', mid=mid, opt=opt + 1))
 
 @common.router.message(Command('sell'))
 async def cmd_sell(message: types.Message) -> None:
@@ -401,7 +402,7 @@ async def cmd_sell(message: types.Message) -> None:
     if status != 'ok':
         await message.answer(i18n.t(lang, 'market_trade_closed'))
         return
-    await message.answer(i18n.t(lang, 'market_sell_done', mid=mid, label=info['label'], shares=common._fmt(info['shares']), price=_pct(info['price']), value=common._fmt(info['value'])))
+    await message.answer(i18n.t(lang, 'market_sell_done', mid=mid, label=common._h(info['label']), shares=common._fmt(info['shares']), price=_pct(info['price']), value=common._fmt(info['value'])))
 
 @common.router.message(Command('positions'))
 async def cmd_positions(message: types.Message) -> None:
@@ -419,7 +420,7 @@ async def cmd_positions(message: types.Message) -> None:
         total_cost += max(p['cost'], 0)
         pnl = value_micro - p['cost']
         sign = '+' if pnl >= 0 else '−'
-        lines.append(f"📈 #{p['market_id']} <b>{p['question'][:60]}</b>\n" + i18n.t(lang, 'market_position_line', option=p['option'], shares=common._fmt(p['shares']), price=_pct(p['price']), value=common._fmt(value_micro), pnl=f'{sign}{common._fmt(abs(pnl))}'))
+        lines.append(f"📈 #{p['market_id']} <b>{common._h(p['question'][:60])}</b>\n" + i18n.t(lang, 'market_position_line', option=common._h(p['option']), shares=common._fmt(p['shares']), price=_pct(p['price']), value=common._fmt(value_micro), pnl=f'{sign}{common._fmt(abs(pnl))}'))
     lines.append(i18n.t(lang, 'market_total_value', value=common._fmt(total_value)))
     await message.answer('\n\n'.join(lines))
 
@@ -437,9 +438,9 @@ async def _notify_market_result(message: types.Message, mid: int, payouts: list[
         except Exception:
             lang = 'ru'
         if p['win']:
-            line = i18n.t(lang, 'market_win', amount=common._fmt(p['net_micro']), mid=mid, question=m['question'], winner=winner_label)
+            line = i18n.t(lang, 'market_win', amount=common._fmt(p['net_micro']), mid=mid, question=common._h(m['question']), winner=common._h(winner_label))
         else:
-            line = i18n.t(lang, 'market_lose', mid=mid, question=m['question'], winner=winner_label)
+            line = i18n.t(lang, 'market_lose', mid=mid, question=common._h(m['question']), winner=common._h(winner_label))
         try:
             await message.bot.send_message(int(p['tg_id']), line)
         except Exception:

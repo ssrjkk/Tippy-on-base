@@ -240,16 +240,19 @@ def test_x402_tip_eip3009_end_to_end(ledger, monkeypatch, client, evm):
     body = r.json()
     assert body["x402Version"] == 1
     acc = body["accepts"][0]
-    assert acc["scheme"] == "exact" and acc["payTo"] == RECEIVE
+    pay_to = acc["payTo"]
+    # payTo is now the per-invoice unique address (not the shared RECEIVE)
+    assert pay_to.startswith("0x") and len(pay_to) == 42
+    assert acc["scheme"] == "exact"
     assert acc["maxAmountRequired"] == "1500000"
     assert acc["asset"] == config.USDC_ADDRESS
 
-    # 2) Pay: sign the EIP-3009 authorization exactly like an x402 agent would
+    # 2) Pay: sign the EIP-3009 authorization to the per-invoice payTo
     payer_addr = evm["payer"]
-    auth = _auth(payer_addr, RECEIVE, 1_500_000, "0x" + "21" * 32)
+    auth = _auth(payer_addr, pay_to, 1_500_000, "0x" + "21" * 32)
     sig = _sign(auth, evm["payer_key"], evm["chain_id"], config.USDC_ADDRESS, name="MiniUSDC")
     payer_before = evm["usdc"].functions.balanceOf(payer_addr).call()
-    receive_before = evm["usdc"].functions.balanceOf(RECEIVE).call()
+    receive_before = evm["usdc"].functions.balanceOf(pay_to).call()
 
     r = client.post("/api/x402/tip?recipient=4242&amount=1.5",
                     headers={"X-PAYMENT": _x_payment(auth, sig, "/api/x402/tip")})
@@ -258,9 +261,9 @@ def test_x402_tip_eip3009_end_to_end(ledger, monkeypatch, client, evm):
     receipt = json.loads(base64.b64decode(r.headers["X-PAYMENT-RESPONSE"]))
     assert receipt["success"] is True and receipt["transaction"].startswith("0x")
 
-    # 3) On-chain: value moved payer -> receive, nonce burned
+    # 3) On-chain: value moved payer -> pay_to, nonce burned
     assert evm["usdc"].functions.balanceOf(payer_addr).call() == payer_before - 1_500_000
-    assert evm["usdc"].functions.balanceOf(RECEIVE).call() == receive_before + 1_500_000
+    assert evm["usdc"].functions.balanceOf(pay_to).call() == receive_before + 1_500_000
     payer_addr = evm["payer"]
     nonce_bytes = bytes.fromhex("21" * 32)
     assert evm["usdc"].functions.authorizationState(payer_addr, nonce_bytes).call() is True
@@ -276,23 +279,32 @@ def test_x402_tip_eip3009_end_to_end(ledger, monkeypatch, client, evm):
     assert float(ledger.balance(4242)) == 1.5
 
 
-def test_x402_tip_eip3009_overpay_credits_actual(ledger, monkeypatch, client, evm):
-    """A hand-rolled client may authorize MORE than the invoice: the credit
-    must equal the ACTUALLY settled value (money conservation)."""
+def test_x402_tip_eip3009_overpay_capped_at_quote(ledger, monkeypatch, client, evm):
+    """A hand-rolled client may authorize MORE than the invoice: the on-chain
+    settlement moves the full signed amount, but the CREDIT is capped at the
+    quoted price — the excess stays in the receive pool instead of
+    over-crediting the recipient."""
     ledger.ensure_user(4242, None)
     from bot import config
 
+    # Get invoice to learn the per-invoice payTo
+    r = client.post("/api/x402/tip?recipient=4242&amount=1.5")
+    assert r.status_code == 402
+    pay_to = r.json()["accepts"][0]["payTo"]
+
     payer_addr = evm["payer"]
-    auth = _auth(payer_addr, RECEIVE, 3_000_000, "0x" + "31" * 32)  # 3 USDC for a 1.5 invoice
+    auth = _auth(payer_addr, pay_to, 3_000_000, "0x" + "31" * 32)  # 3 USDC for a 1.5 invoice
     sig = _sign(auth, evm["payer_key"], evm["chain_id"], config.USDC_ADDRESS, name="MiniUSDC")
     payer_before = evm["usdc"].functions.balanceOf(payer_addr).call()
 
     r = client.post("/api/x402/tip?recipient=4242&amount=1.5",
                     headers={"X-PAYMENT": _x_payment(auth, sig, "/api/x402/tip")})
     assert r.status_code == 200, r.text
+    # On-chain: the full signed 3 USDC moved (money is gone from the payer)...
     assert r.json()["settlement"]["amount_micro"] == 3_000_000
     assert evm["usdc"].functions.balanceOf(payer_addr).call() == payer_before - 3_000_000
-    assert float(ledger.balance(4242)) == 3.0
+    # ...but the recipient is credited the 1.5 USDC quote, not the 3 USDC.
+    assert float(ledger.balance(4242)) == 1.5
 
 
 def test_x402_tip_eip3009_wrong_pay_to_rejected(ledger, monkeypatch, client, evm):
@@ -319,21 +331,50 @@ def test_x402_paywall_eip3009_end_to_end(ledger, monkeypatch, client, evm):
     assert r.status_code == 402
     assert r.json()["accepts"][0]["maxAmountRequired"] == "2000000"
 
+    pay_to = r.json()["accepts"][0]["payTo"]
+    assert pay_to.startswith("0x") and len(pay_to) == 42
+
     payer_addr = evm["payer"]
-    auth = _auth(payer_addr, RECEIVE, 2_000_000, "0x" + "51" * 32)
+    auth = _auth(payer_addr, pay_to, 2_000_000, "0x" + "51" * 32)
     sig = _sign(auth, evm["payer_key"], evm["chain_id"], config.USDC_ADDRESS, name="MiniUSDC")
-    owner_before = evm["usdc"].functions.balanceOf(RECEIVE).call()
+    owner_before = evm["usdc"].functions.balanceOf(pay_to).call()
 
     r = client.post(f"/api/x402/paywall?item={item_id}&amount=2",
                     headers={"X-PAYMENT": _x_payment(auth, sig, f"/api/x402/paywall?item={item_id}")})
     assert r.status_code == 200, r.text
     assert r.json()["content"] == "SECRET CONTENT"
-    assert evm["usdc"].functions.balanceOf(RECEIVE).call() == owner_before + 2_000_000
+    assert evm["usdc"].functions.balanceOf(pay_to).call() == owner_before + 2_000_000
     # Owner credited and the purchase recorded against the settlement tx.
     assert float(ledger.balance(4242)) == 2.0
     assert ledger.paywall_purchased(item_id, 4242) is False  # buyer_tg is NULL for x402 rows
     item = ledger.paywall_item(item_id)
     assert item is not None
+
+
+def test_x402_paywall_eip3009_overpay_capped_at_price(ledger, monkeypatch, client, evm):
+    """Paywall settlement must credit the owner only the LISTED price, never the
+    full on-chain settled value — an attacker choosing to authorize more must not
+    mint free money into the owner's balance."""
+    from bot import config
+
+    item_id = ledger.create_paywall(4242, "Capped report", 2 * 10**6, "SECRET")
+    ledger.ensure_user(4242, None)
+
+    r = client.post(f"/api/x402/paywall?item={item_id}&amount=2")
+    assert r.status_code == 402
+    pay_to = r.json()["accepts"][0]["payTo"]
+
+    payer_addr = evm["payer"]
+    auth = _auth(payer_addr, pay_to, 3_000_000, "0x" + "61" * 32)  # 3 USDC vs 2.0 list
+    sig = _sign(auth, evm["payer_key"], evm["chain_id"], config.USDC_ADDRESS, name="MiniUSDC")
+
+    r = client.post(f"/api/x402/paywall?item={item_id}&amount=2",
+                    headers={"X-PAYMENT": _x_payment(auth, sig, f"/api/x402/paywall?item={item_id}")})
+    assert r.status_code == 200, r.text
+    # Settlement moved the full signed amount on-chain, but the credit is capped.
+    assert r.json()["settlement"]["amount_micro"] == 3_000_000
+    assert float(ledger.balance(4242)) == 2.0
+    assert ledger.paywall_purchased(item_id, 4242) is False
 
 
 # ---------------------------------------------------------------------------

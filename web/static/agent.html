@@ -64,7 +64,7 @@
             const status = await statusRes.json();
 
             if (status.error) {
-                document.getElementById('status').innerHTML = `<div class="stat"><span class="label">Error</span><span class="value warning">${status.error}</span></div>`;
+                document.getElementById('status').innerHTML = `<div class="stat"><span class="label">Error</span><span class="value warning">${escapeHtml(status.error)}</span></div>`;
                 return;
             }
 

@@ -11,10 +11,28 @@ from aiogram.filters import Command, CommandObject
 
 from . import _common as common
 
-__all__ = ['PAYWALL_DRAFT_TTL', 'PAYWALL_HELP', '_index_message', '_paywall_channel_cmd', '_paywall_channels_cmd', '_paywall_draft', '_paywall_subscribe_cmd', 'cmd_paywall', 'on_reaction']
+__all__ = ['PAYWALL_DRAFT_TTL', 'PAYWALL_HELP', '_index_message', '_paywall_channel_cmd', '_paywall_channels_cmd', '_paywall_draft', '_paywall_list_text', '_paywall_subscribe_cmd', 'cmd_paywall', 'on_reaction']
 PAYWALL_DRAFT_TTL = 300
 _paywall_draft: dict[int, tuple[int, str, float]] = {}
 PAYWALL_HELP = '🔐 <b>Платный контент</b>\n• /paywall create 5 Мой отчёт — создать пост за 5 USDC\n  (после этого пришли контент одним сообщением)\n• /paywall list — все платные посты\n• /paywall buy &lt;id&gt; — купить и открыть контент\n• /paywall cancel — отменить создание\n\n📡 <b>Платные каналы</b>\n• /paywall channel 5 — в канале: доступ за 5 USDC / 30 дней\n• /paywall channel off — выключить продажу доступа\n• /paywall subscribe @канал — купить/продлить доступ\n• /paywall channels — платные каналы и мои подписки\n\nПродавец получает USDC на баланс сразу после покупки.\nПокупка идёт с баланса (/deposit). AI-агенты платят через API:\nPOST /api/x402/paywall?item=&lt;id&gt;&amount=&lt;usdc&gt; (x402-протокол).'
+
+async def _paywall_list_text(lang: str, uid: int) -> str | None:
+    """Formatted paid-post list for a user, or None when there are none."""
+    rows = await common.ledger.paywall_items_list()
+    if not rows:
+        return None
+    lines = [
+        f"#{r['id']} — {html.escape(r['title'])} — <b>{common._fmt(int(r['price_micro']))} USDC</b>"
+        f"{' ✅' if await common.ledger.paywall_purchased(int(r['id']), uid) else ''}"
+        for r in rows
+    ]
+    return (
+        i18n.t(lang, 'paywall_list_header')
+        + "\n\n"
+        + "\n".join(lines)
+        + "\n\n"
+        + i18n.t(lang, 'paywall_list_buy_hint')
+    )
 
 @common.router.message(Command('paywall'))
 async def cmd_paywall(message: types.Message, command: CommandObject) -> None:
@@ -41,7 +59,7 @@ async def cmd_paywall(message: types.Message, command: CommandObject) -> None:
             await message.answer(i18n.t(lang, 'paywall_title_too_long', n=common.config.PAYWALL_MAX_TITLE_LEN))
             return
         _paywall_draft[uid] = (common._to_micro(amount), title, time.time())
-        await message.answer(i18n.t(lang, 'paywall_draft_ok', amount=common._fmt(common._to_micro(amount)), title=title))
+        await message.answer(i18n.t(lang, 'paywall_draft_ok', amount=common._fmt(common._to_micro(amount)), title=html.escape(title)))
         return
     if sub == 'cancel':
         if _paywall_draft.pop(uid, None):
@@ -50,25 +68,11 @@ async def cmd_paywall(message: types.Message, command: CommandObject) -> None:
             await message.answer(i18n.t(lang, 'paywall_no_active'))
         return
     if sub == 'list':
-        rows = await common.ledger.paywall_items_list()
-        if not rows:
+        text = await _paywall_list_text(lang, uid)
+        if text is None:
             await message.answer(i18n.t(lang, 'paywall_empty'))
-            return
-        lines = [
-            f"#{r['id']} — {html.escape(r['title'])} — <b>{common._fmt(int(r['price_micro']))} USDC</b>"
-            f"{' ✅' if await common.ledger.paywall_purchased(int(r['id']), uid) else ''}"
-            for r in rows
-        ]
-        text = (
-            i18n.t(lang, 'paywall_list_header')
-            + "\n\n"
-            + "\n".join(lines)
-            + "\n\n"
-            + i18n.t(lang, 'paywall_list_buy_hint')
-        )
-        await message.answer(text)
-        lines = [f"#{r['id']} — {html.escape(r['title'])} — <b>{common._fmt(int(r['price_micro']))} USDC</b>{(' ✅' if await common.ledger.paywall_purchased(int(r['id']), uid) else '')}" for r in rows]
-        await message.answer(i18n.t(lang, 'paywall_list_header', lines='\n'.join(lines)) + '\n\n' + i18n.t(lang, 'paywall_list_buy_hint'))
+        else:
+            await message.answer(text)
         return
     if sub == 'buy':
         if len(parts) != 2 or not parts[1].isdigit():
@@ -79,10 +83,11 @@ async def cmd_paywall(message: types.Message, command: CommandObject) -> None:
             await message.answer(i18n.t(lang, 'paywall_post_not_found'))
             return
         res = await common.ledger.buy_paywall(uid, int(parts[1]))
+        content = html.escape(item['content'] or '')
         if res == 'ok':
-            await message.answer(i18n.t(lang, 'paywall_bought_for', amount=common._fmt(int(item['price_micro'])), content=item['content']))
+            await message.answer(i18n.t(lang, 'paywall_bought_for', amount=common._fmt(int(item['price_micro'])), content=content))
         elif res == 'dup':
-            await message.answer(i18n.t(lang, 'paywall_already_bought', content=item['content']))
+            await message.answer(i18n.t(lang, 'paywall_already_bought', content=content))
         elif res == 'self':
             await message.answer(i18n.t(lang, 'paywall_own_post'))
         elif res == 'insufficient':
@@ -139,6 +144,10 @@ async def _paywall_channel_cmd(message: types.Message, args: list[str]) -> None:
 async def _paywall_subscribe_cmd(message: types.Message, target: str) -> None:
     """/paywall subscribe <@channel|id> — buy or extend channel access."""
     uid = message.from_user.id
+    # The one-time invite link (member_limit=1) must never be posted into a
+    # group where anyone else could consume it before the buyer.
+    if not await common.require_private(message):
+        return
     target = target.strip().lstrip('@')
     if not target:
         await message.answer(i18n.t(await common.user_lang(uid), 'paywall_subscribe_format'))
@@ -189,7 +198,7 @@ async def _paywall_subscribe_cmd(message: types.Message, target: str) -> None:
     except Exception:
         title = str(chat_id)
     try:
-        await message.bot.send_message(int(ch['owner_tg']), i18n.t('ru', 'paywall_owner_notified', amount=common._fmt(int(ch['price_micro'])), title=title))
+        await message.bot.send_message(int(ch['owner_tg']), i18n.t('ru', 'paywall_owner_notified', amount=common._fmt(int(ch['price_micro'])), title=html.escape(title)))
     except Exception:
         pass
 
@@ -212,7 +221,7 @@ async def _paywall_channels_cmd(message: types.Message) -> None:
         if sub and int(sub['expires_at']) > time.time():
             until = time.strftime('%d.%m', time.localtime(int(sub['expires_at'])))
             state += i18n.t(await common.user_lang(uid), 'paywall_channel_until', until=until)
-        lines.append(f'• {title}{state}')
+        lines.append(f'• {html.escape(title)}{state}')
     await message.answer(i18n.t(await common.user_lang(uid), 'paywall_channels_header', lines='\n'.join(lines)))
 
 async def _index_message(message: types.Message) -> None:
@@ -241,7 +250,7 @@ async def _index_message(message: types.Message) -> None:
         if item_id is None:
             await message.answer(i18n.t(await common.user_lang(user.id), 'paywall_post_limit', n=common.config.PAYWALL_MAX_ITEMS_PER_USER))
             return
-        await message.answer(i18n.t(await common.user_lang(user.id), 'paywall_post_created', id=item_id, title=title, amount=common._fmt(price_micro)))
+        await message.answer(i18n.t(await common.user_lang(user.id), 'paywall_post_created', id=item_id, title=html.escape(title), amount=common._fmt(price_micro)))
         return
     try:
         await common.ledger.record_message(message.chat.id, message.message_id, user.id)
@@ -271,7 +280,7 @@ async def on_reaction(update: types.MessageReactionUpdated) -> None:
                 pass
         return
     try:
-        await update.bot.send_message(author_id, i18n.t('ru', 'paywall_reaction_received', amount=common._fmt(amount_micro), reactor=reactor.username or str(reactor.id)))
+        await update.bot.send_message(author_id, i18n.t('ru', 'paywall_reaction_received', amount=common._fmt(amount_micro), reactor=html.escape(reactor.username or str(reactor.id))))
     except Exception:
         pass
     try:

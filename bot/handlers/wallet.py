@@ -77,15 +77,17 @@ async def cmd_balance(message: types.Message) -> None:
 
 @common.router.message(Command('deposit'))
 async def cmd_deposit(message: types.Message) -> None:
+    if not await common.require_private(message):
+        return
     await common.ledger.ensure_user(message.from_user.id, message.from_user.username)
     # With CREATE2 enabled, materialise the user's proxy and register it so the
     # deposit scanner credits them when the proxy forwards funds to the hot
     # wallet. Deterministic address; idempotent deploy (no-op if already live).
-    from bot.create2 import get_deposit_address, is_create2_enabled
+    from bot.create2 import deploy_proxy, get_deposit_address, is_create2_enabled
     if is_create2_enabled():
         c2_addr = get_deposit_address(message.from_user.id)
         if c2_addr:
-            await common.create2.deploy_proxy(message.from_user.id)
+            await deploy_proxy(message.from_user.id)
             await common.ledger.set_create2_proxy(message.from_user.id, c2_addr)
     text = await _deposit_text(message.from_user.id)
     lang = await common.user_lang(message.from_user.id)
@@ -106,12 +108,20 @@ async def cmd_donate(message: types.Message) -> None:
 
 @common.router.message(Command('claim'))
 async def cmd_claim(message: types.Message) -> None:
+    if not await common.require_private(message):
+        return
     lang = await common.user_lang(message.from_user.id)
     parts = message.text.strip().split()
     if len(parts) != 2 or not common.TX_HASH_RE.match(parts[1]):
         await message.answer(i18n.t(lang, 'claim_format'))
         return
-    ok, amount_micro, sender, reason = await common.ledger.claim(message.from_user.id, parts[1].lower())
+    # Enforce the same DEPOSIT_CONFIRM_BLOCKS maturity gate as the scanner:
+    # crediting a deposit that may still be reorged mints unbacked balance.
+    cutoff = await common.base.deposit_cutoff()
+    if cutoff is None:
+        await message.answer(i18n.t(lang, 'claim_unavailable'))
+        return
+    ok, amount_micro, sender, reason = await common.ledger.claim(message.from_user.id, parts[1].lower(), maturity_block=cutoff)
     if not ok:
         if reason == 'not_owner':
             await message.answer(i18n.t(lang, 'confirm_not_owner', addr=common._esc(sender)))
@@ -123,6 +133,8 @@ async def cmd_claim(message: types.Message) -> None:
 
 @common.router.message(Command('link'))
 async def cmd_link(message: types.Message) -> None:
+    if not await common.require_private(message):
+        return
     lang = await common.user_lang(message.from_user.id)
     parts = message.text.strip().split()
     if len(parts) != 2 or not common.USDC_ADDR_RE.match(parts[1]) or (not is_address(parts[1])):
@@ -135,6 +147,8 @@ async def cmd_link(message: types.Message) -> None:
 
 @common.router.message(Command('confirm'))
 async def cmd_confirm(message: types.Message) -> None:
+    if not await common.require_private(message):
+        return
     lang = await common.user_lang(message.from_user.id)
     parts = message.text.strip().split()
     if len(parts) != 2 or not common.SIG_RE.match(parts[1]):
@@ -158,7 +172,15 @@ async def cmd_confirm(message: types.Message) -> None:
         await message.answer(i18n.t(lang, 'confirm_bad_sig'))
         return
     await common.ledger.confirm_link(message.from_user.id, address, nonce)
-    claimed = await common.ledger.claim_for_sender(message.from_user.id, address)
+    # Only auto-claim deposits past DEPOSIT_CONFIRM_BLOCKS: linking a wallet
+    # must not become a reorg bypass of the scanner's maturity gate. If the
+    # chain is unreachable, the link still works and the scanner credits
+    # matured deposits later (/claim also waits for the gate).
+    cutoff = await common.base.deposit_cutoff()
+    claimed = (
+        await common.ledger.claim_for_sender(message.from_user.id, address, maturity_block=cutoff)
+        if cutoff is not None else []
+    )
     extra = i18n.t(lang, 'confirm_extra', n=len(claimed)) if claimed else ''
     await message.answer(i18n.t(lang, 'confirm_ok', addr=common._esc(address), extra=extra))
 
@@ -364,6 +386,8 @@ async def _ensure_wallet(tg_id: int) -> dict:
 
 @common.router.message(Command('withdraw'))
 async def cmd_withdraw(message: types.Message) -> None:
+    if not await common.require_private(message):
+        return
     lang = await common.user_lang(message.from_user.id)
     parts = message.text.strip().split()
     if len(parts) != 3 or not common.USDC_ADDR_RE.match(parts[1]) or (not common.AMOUNT_RE.match(parts[2])):

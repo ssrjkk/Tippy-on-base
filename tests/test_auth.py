@@ -64,6 +64,8 @@ def test_session_expiry():
 
 
 def test_telegram_login_creates_user_and_cookie(client, ledger):
+    # The login-state cookie comes from /login; without it the callback is 403.
+    client.get("/login")
     r = client.get(
         "/api/auth/telegram",
         params=tg_signed(3001),
@@ -76,7 +78,19 @@ def test_telegram_login_creates_user_and_cookie(client, ledger):
     assert ledger.user_exists(3001)
 
 
+def test_telegram_login_requires_login_state(client):
+    # No /login-state cookie: cross-site GET cannot forge a session.
+    r = client.get(
+        "/api/auth/telegram",
+        params=tg_signed(3333),
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+    assert "login state" in r.json()["detail"]
+
+
 def test_telegram_login_bad_hash(client):
+    client.get("/login")
     params = tg_signed(3002)
     params["hash"] = "0" * 64
     r = client.get("/api/auth/telegram", params=params, follow_redirects=False)
@@ -84,10 +98,22 @@ def test_telegram_login_bad_hash(client):
 
 
 def test_telegram_login_stale_auth_date(client):
+    client.get("/login")
     old = int(time.time()) - 3 * 24 * 3600
     r = client.get(
         "/api/auth/telegram",
         params=tg_signed(3003, auth_date=old),
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+
+
+def test_telegram_login_future_auth_date(client):
+    client.get("/login")
+    future = int(time.time()) + 3600
+    r = client.get(
+        "/api/auth/telegram",
+        params=tg_signed(3004, auth_date=future),
         follow_redirects=False,
     )
     assert r.status_code == 403
@@ -129,6 +155,31 @@ def test_wallet_login_linked_account(client, ledger):
     )
     assert r.status_code == 200, r.text
     assert auth.parse_session(r.cookies.get(auth.COOKIE_NAME)) == 3101
+
+
+def test_wallet_login_replay_rejected(client, ledger):
+    """The same signed (message, signature) must not mint a session twice."""
+    acct = Account.from_key("0x" + "66" * 32)
+    address = acct.address
+    nonce = ledger.new_link_nonce(3104, address)
+    assert ledger.confirm_link(3104, address, nonce)
+
+    msg = _wallet_message(address)
+    sig = acct.sign_message(
+        __import__("eth_account.messages", fromlist=["encode_defunct"]).encode_defunct(text=msg)
+    ).signature.to_0x_hex()
+
+    r1 = client.post(
+        "/api/auth/wallet",
+        json={"address": address, "message": msg, "signature": sig},
+    )
+    assert r1.status_code == 200
+    r2 = client.post(
+        "/api/auth/wallet",
+        json={"address": address, "message": msg, "signature": sig},
+    )
+    assert r2.status_code == 403
+    assert "already used" in r2.json()["detail"]
 
 
 def test_wallet_login_unlinked_wallet(client):

@@ -59,13 +59,42 @@ class TestCaps:
         assert result is not None
         assert "Rate limit" in result
 
-    def test_record_action_updates_state(self):
-        from agent.caps import _load_state, record_action
-        record_action(5.0)
+    def test_check_action_reserves_budget(self):
+        from agent.caps import _load_state, check_action
+        result = check_action(5.0)
+        assert result is None  # allowed + reserved
         state = _load_state()
         assert state["daily_spent"] == 5.0
         assert state["actions_this_hour"] == 1
         assert state["consecutive_errors"] == 0
+
+    def test_check_action_reservation_blocks_overshoot(self):
+        from agent.caps import _load_state, _save_state, check_action
+        # Two concurrent actions would both see the pre-reservation snapshot in
+        # the old API; the reserve-on-check closes that TOCTOU.
+        _save_state({
+            "daily_spent": 46.0,
+            "daily_date": __import__("time").strftime("%Y-%m-%d", __import__("time").gmtime()),
+            "actions_this_hour": 0,
+            "hour_ts": 0,
+            "consecutive_errors": 0,
+            "cooldown_until": 0.0,
+        })
+        assert check_action(4.0) is None       # reserves 4 (46+4=50)
+        state = _load_state()
+        assert state["daily_spent"] == 50.0
+        # The next check sees the reservation and must reject an overshoot.
+        r2 = check_action(4.0)
+        assert r2 is not None
+        assert "Daily cap" in r2
+
+    def test_release_action_returns_reserved_budget(self):
+        from agent.caps import _load_state, check_action, release_action
+        assert check_action(5.0) is None
+        release_action(5.0)
+        state = _load_state()
+        assert state["daily_spent"] == 0.0
+        assert state["actions_this_hour"] == 0
 
     def test_record_error_triggers_breaker(self):
         from agent.caps import _load_state, record_error
@@ -199,6 +228,7 @@ class TestDecision:
         from agent.decision import decide
         with patch("agent.decision._call_llm") as mock:
             mock.return_value = {
+                "relevant": True,  # stage-1 filter verdict (same mock serves both stages)
                 "create_market": True,
                 "question": "Will ETH hit $5000?",
                 "options": ["Yes", "No"],
@@ -218,6 +248,7 @@ class TestDecision:
         from agent.decision import decide
         with patch("agent.decision._call_llm") as mock:
             mock.return_value = {
+                "relevant": True,
                 "create_market": True,
                 "question": "Test?",
                 "options": ["A", "B"],

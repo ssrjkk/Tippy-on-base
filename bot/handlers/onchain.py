@@ -230,7 +230,10 @@ async def cmd_oc_create(message: types.Message) -> None:
     try:
         market_id = await om.create_market(len(options), subsidy, close_at, key)
     except Exception as e:
-        await status.edit_text(i18n.t(lang, 'oc_tx_failed', err=str(e)[:200]))
+        # The tx reverted (or never landed): give the cap quota back so a
+        # transient failure doesn't permanently burn the creator's daily budget.
+        await common.ledger.release_subsidy(subsidy)
+        await status.edit_text(i18n.t(lang, 'oc_tx_failed', err=esc(str(e)[:200])))
         return
     try:
         await common.ledger.save_onchain_market(market_id, tg_id, question, options, close_at)
@@ -239,8 +242,8 @@ async def cmd_oc_create(message: types.Message) -> None:
         # The market is real on-chain; never let a DB hiccup hide it from
         # the user — tell them it exists and how to re-register it.
         log.warning('onchain registry save failed for #%s: %s', market_id, e)
-        registry_note = '\n⚠️ ' + i18n.t(lang, 'oc_registry_warn', err=str(e)[:120])
-    await status.edit_text(i18n.t(lang, 'oc_created', id=market_id, q=esc(question), addr=addr) + registry_note)
+        registry_note = '\n⚠️ ' + i18n.t(lang, 'oc_registry_warn', err=esc(str(e)[:120]), id2=market_id)
+    await status.edit_text(i18n.t(lang, 'oc_created', id=market_id, q=esc(question), addr=esc(addr)) + registry_note)
 
 
 async def _buy_core(tg_id: int, mid: int, outcome: int, spend: int, lang: str) -> tuple[bool, str]:
@@ -268,7 +271,7 @@ async def _buy_core(tg_id: int, mid: int, outcome: int, spend: int, lang: str) -
     try:
         tx_hash = await om.buy(mid, outcome, shares, spend, key)
     except Exception as e:
-        return False, i18n.t(lang, 'oc_tx_failed', err=str(e)[:200])
+        return False, i18n.t(lang, 'oc_tx_failed', err=esc(str(e)[:200]))
     try:
         # A failed trade-log write must never eat the trade confirmation:
         # the on-chain tx is already real and the user must see its result.
@@ -306,7 +309,7 @@ async def _sell_core(tg_id: int, mid: int, outcome: int, pct: int, lang: str) ->
     try:
         tx_hash = await om.sell(mid, outcome, shares, min_proceeds, key)
     except Exception as e:
-        return False, i18n.t(lang, 'oc_tx_failed', err=str(e)[:200])
+        return False, i18n.t(lang, 'oc_tx_failed', err=esc(str(e)[:200]))
     return True, i18n.t(lang, 'oc_sold', label=esc(options[outcome]), shares=common._fmt(shares), value=common._fmt(value), url=_tx_link(tx_hash))
 
 
@@ -444,6 +447,11 @@ async def _do_resolve(mid: int, winner_idx: int, lang: str, bot=None) -> tuple[b
     if info["cancelled"]:
         await common.ledger.mark_onchain_cancelled(mid)
         return False, i18n.t(lang, "oc_resolve_state", state="cancelled")
+    # Mirror the off-chain rule (ledger.resolve_market): if the creator still
+    # holds the outcome they are about to declare, refuse to sign — declaring
+    # a held outcome would mint them a payout from the pool.
+    if await om.creator_holds_outcome(mid, winner_idx):
+        return False, i18n.t(lang, "oc_resolve_own_holdings")
     oracle_key = common.config.ORACLE_PRIVATE_KEY.strip()
     try:
         if oracle_key:
@@ -456,7 +464,7 @@ async def _do_resolve(mid: int, winner_idx: int, lang: str, bot=None) -> tuple[b
             # The oracle answer was disputed: only the contract owner can
             # finalize now. Point the creator there instead of a raw revert.
             return False, i18n.t(lang, "oc_resolve_disputed")
-        return False, i18n.t(lang, "oc_tx_failed", err=err[:200])
+        return False, i18n.t(lang, "oc_tx_failed", err=esc(err[:200]))
     await common.ledger.set_onchain_resolved(mid, winner_idx)
     await _notify_winners(mid, winner_idx, bot)
     return True, i18n.t(lang, "oc_resolved", idx=winner_idx + 1, url=_tx_link(tx_hash))

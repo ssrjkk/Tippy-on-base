@@ -68,8 +68,9 @@ class User:
 
 
 class Chat:
-    def __init__(self, id=-1000, members=()):
+    def __init__(self, id=-1000, members=(), type="private"):
         self.id = id
+        self.type = type
         self.members = list(members)
 
     async def get_members(self, limit=200):
@@ -170,7 +171,7 @@ def _transfer_log(sender, receiver, value_micro, tx_hash, block=1000):
     }
 
 
-def install_rpc(monkeypatch, logs=(), block=1000, receipts=None, fail_first=0, tx_count=7):
+def install_rpc(monkeypatch, logs=(), block=1000, receipts=None, transactions=None, fail_first=0, tx_count=7):
     """Fake Base RPC. get_logs fails the first `fail_first` calls (RPC outage)."""
     state = {"calls": 0, "sent_raw": []}
     captured = {}
@@ -200,6 +201,7 @@ def install_rpc(monkeypatch, logs=(), block=1000, receipts=None, fail_first=0, t
         chain_id=8453,
         get_logs=get_logs,
         get_transaction_receipt=lambda h: (receipts or {}).get(h),
+        get_transaction=lambda h: (transactions or {}).get(h),
         get_transaction_count=lambda a, p: tx_count,
         get_block=lambda x: {"baseFeePerGas": 1_000_000_000},
         send_raw_transaction=send_raw,
@@ -724,6 +726,8 @@ def test_e2e_deep_link_resolved_and_unknown(e2e, monkeypatch):
 
 def test_e2e_wallet_security(e2e, monkeypatch):
     bot = Bot()
+    install_rpc(monkeypatch, block=1500)  # deposit maturity gate needs a chain
+    e2e.set_last_block(1500)
     start(bot, ALICE, "alice")
     start(bot, BOB, "bob")
 
@@ -890,7 +894,16 @@ def test_e2e_dashboard_values(e2e, monkeypatch, api):
     assert h["deposit_lag"] == 0
 
     # 404s for unknown entities
-    assert api.get("/api/user/424242").status_code == 404
+    # Unknown users get the EMPTY public shape (200), not a 404: a 404 off a
+    # user id would be an existence oracle and let anyone enumerate the bot's
+    # userbase by brute-forcing ids.
+    u_missing = api.get("/api/user/424242")
+    assert u_missing.status_code == 200
+    body = u_missing.json()
+    assert body["username"] is None and body["is_owner"] is False
+    assert body["tips_sent_usdc"] == 0.0 and body["bets_placed_usdc"] == 0.0
+    assert body["deposit_address"].startswith("0x") and len(body["deposit_address"]) == 42
+    assert "balance_usdc" not in body and "positions" not in body
     assert api.get("/api/market/999").status_code == 404
     assert api.get("/qr?data=").status_code == 400  # missing param
     assert api.get("/qr?data=" + "x" * 2000).status_code == 400  # too long

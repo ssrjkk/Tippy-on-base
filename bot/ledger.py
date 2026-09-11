@@ -165,34 +165,69 @@ class ReconnectingConn:
         return self._conn.broken
 
     def execute(self, query, params=None, **kwargs):
+        # Capture whether we were mid-transaction BEFORE _ensure() may replace a
+        # broken connection. If we reconnect first and only then read the status,
+        # the fresh connection reports IDLE and we'd silently run this statement
+        # on it — dropping every earlier uncommitted statement of the same
+        # logical operation (e.g. the debit in reserve_withdraw without its
+        # credit, or a pre-persisted withdraw hash without the debit).
+        was_in_transaction = self._transaction_status != psycopg.pq.TransactionStatus.IDLE
         self._ensure()
+        in_transaction = self._transaction_status != psycopg.pq.TransactionStatus.IDLE
         try:
             return self._conn.execute(query, params, **kwargs)
         except psycopg.OperationalError:
-            # Retry once only on a dead connection with nothing to roll back
-            # (no open transaction). Other operational errors propagate.
-            if self._conn.broken or self._conn.closed:
-                self._connect()
-                return self._conn.execute(query, params, **kwargs)
-            if self._conn.info.transaction_status != psycopg.pq.TransactionStatus.IDLE:
+            # Never retry a statement that ran inside an already-open
+            # transaction: the prior statements are uncommitted, and re-running
+            # just this one on a fresh connection would silently drop them
+            # (e.g. a debit without its credit). Propagate so the caller rolls
+            # back and retries the whole operation from a clean state.
+            if in_transaction or was_in_transaction:
+                raise
+            # Only the first statement of a fresh transaction may be retried,
+            # and only when the server rolled it back (dead connection). A
+            # statement_timeout aborts the backend transaction (status != IDLE)
+            # so re-running there is both unsafe and pointless.
+            can_retry = False
+            try:
+                can_retry = self._transaction_status == psycopg.pq.TransactionStatus.IDLE
+            except Exception:
+                can_retry = self._conn.broken or self._conn.closed
+            if not can_retry:
                 raise
             self._connect()
             return self._conn.execute(query, params, **kwargs)
 
+    @property
+    def _transaction_status(self):
+        """Raw psycopg transaction status of the underlying connection.
+
+        Treats a dead/broken connection as UNKNOWN so callers deciding whether
+        to commit (e.g. ensure_user) fall back to their default behavior."""
+        try:
+            return self._conn.info.transaction_status
+        except Exception:
+            return psycopg.pq.TransactionStatus.UNKNOWN
+
     def commit(self) -> None:
         self._ensure()
-        try:
-            self._conn.commit()
-        except psycopg.OperationalError:
-            # The server rolled back our uncommitted transaction when the
-            # connection dropped; there is nothing left to commit.
-            pass
+        # Do NOT swallow OperationalError here. If the server rolled back our
+        # uncommitted transaction (connection drop, statement timeout), every
+        # write since the last commit/rollback is gone — the caller MUST know,
+        # or it will believe a withdrawal/credit landed when it did not (a
+        # pre-persisted withdraw hash without its debit, etc.) and the caller
+        # would proceed as if the tx committed. Propagate so the caller
+        # reconciles/retries from a clean state instead of returning success.
+        self._conn.commit()
 
     def rollback(self) -> None:
         self._ensure()
         try:
             self._conn.rollback()
         except psycopg.OperationalError:
+            # Rollback failure is benign: the transaction is already gone
+            # (broken connection / server already aborted it); the goal —
+            # clearing any open transaction — is already achieved.
             pass
 
     def close(self) -> None:
@@ -213,6 +248,7 @@ CREATE TABLE IF NOT EXISTS users (
                     smart_deployed BOOLEAN DEFAULT false,  -- deployed on-chain?
                     smart_created_at BIGINT   -- epoch when smart wallet was created
                 );
+                CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
                 CREATE TABLE IF NOT EXISTS tx_log (
                     id        BIGSERIAL PRIMARY KEY,
                     kind      TEXT NOT NULL,             -- deposit | tip | withdraw
@@ -223,12 +259,19 @@ CREATE TABLE IF NOT EXISTS users (
                     note      TEXT,
                     created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
                 );
+                CREATE INDEX IF NOT EXISTS idx_tx_log_tg ON tx_log (tg_id);
+                CREATE INDEX IF NOT EXISTS idx_tx_log_kind ON tx_log (kind);
                 CREATE TABLE IF NOT EXISTS pending_deposits (
                     tx_hash      TEXT PRIMARY KEY,
                     sender       TEXT NOT NULL,
                     amount_micro BIGINT NOT NULL,
+                    block        BIGINT,          -- deposit block; NULL = legacy row
                     claimed      BIGINT NOT NULL DEFAULT 0
                 );
+                ALTER TABLE pending_deposits ADD COLUMN IF NOT EXISTS block BIGINT;
+                ALTER TABLE pending_deposits ADD COLUMN IF NOT EXISTS created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint);
+                CREATE INDEX IF NOT EXISTS idx_pending_deposits_sender ON pending_deposits (LOWER(sender));
+                CREATE INDEX IF NOT EXISTS idx_pending_deposits_claimed ON pending_deposits (claimed);
                 CREATE TABLE IF NOT EXISTS link_nonces (
                     tg_id       BIGINT PRIMARY KEY,
                     address     TEXT NOT NULL,
@@ -249,6 +292,7 @@ CREATE TABLE IF NOT EXISTS users (
                     winner      BIGINT,
                     created_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
                 );
+                CREATE INDEX IF NOT EXISTS idx_bets_status ON bets (status);
                 CREATE TABLE IF NOT EXISTS bet_positions (
                     id           BIGSERIAL PRIMARY KEY,
                     bet_id       BIGINT NOT NULL,
@@ -300,8 +344,27 @@ CREATE TABLE IF NOT EXISTS users (
                     recipient_tg BIGINT NOT NULL,
                     amount_micro BIGINT NOT NULL,
                     sender       TEXT NOT NULL,
+                    pay_to       TEXT,
                     created_at   BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
                 );
+                -- Per-invoice x402 receive addresses. Each invoice mints a
+                -- unique derived address bound to (recipient, amount, kind and
+                -- optional ref), so a payment can never be redeemed against a
+                -- different invoice (closes the legacy tx-hash frontrun).
+                CREATE TABLE IF NOT EXISTS x402_invoices (
+                    invoice_id   TEXT PRIMARY KEY,
+                    pay_addr     TEXT NOT NULL UNIQUE,
+                    recipient_tg BIGINT NOT NULL,
+                    amount_micro BIGINT NOT NULL,
+                    kind         TEXT NOT NULL,             -- 'tip' | 'paywall'
+                    ref_id       TEXT,
+                    pay_to       TEXT,                      -- consolidated receive address (sweep target)
+                    created_at   BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint),
+                    credited     BOOLEAN NOT NULL DEFAULT false,
+                    swept_at     BIGINT
+                );
+                CREATE INDEX IF NOT EXISTS idx_x402_invoices_recv ON x402_invoices (recipient_tg);
+                CREATE INDEX IF NOT EXISTS idx_x402_invoices_credited ON x402_invoices (credited);
                 CREATE TABLE IF NOT EXISTS paywall_items (
                     id          BIGSERIAL PRIMARY KEY,
                     owner_tg    BIGINT NOT NULL,
@@ -352,6 +415,7 @@ CREATE TABLE IF NOT EXISTS users (
                     grace_warned  BIGINT NOT NULL DEFAULT 0,
                     created_at    BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
                 );
+                CREATE INDEX IF NOT EXISTS idx_markets_status ON markets (status);
                 CREATE TABLE IF NOT EXISTS market_shares (
                     market_id  BIGINT NOT NULL,
                     tg_id      BIGINT NOT NULL,
@@ -366,6 +430,7 @@ ALTER TABLE tx_log ADD COLUMN IF NOT EXISTS status TEXT;
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'ru';
 ALTER TABLE bets ADD COLUMN IF NOT EXISTS deadline_notified BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE bets ADD COLUMN IF NOT EXISTS grace_warned BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE x402_payments ADD COLUMN IF NOT EXISTS pay_to TEXT;
 CREATE TABLE IF NOT EXISTS suspicious_activity (
     id          BIGSERIAL PRIMARY KEY,
     tg_id       BIGINT NOT NULL,
@@ -465,6 +530,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_create2_proxies_addr ON create2_proxies (L
 ALTER TABLE users ADD COLUMN IF NOT EXISTS smart_address TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS smart_deployed BOOLEAN DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS smart_created_at BIGINT;
+-- Web login replay protection: one-time wallet-login nonces (hash = PK).
+CREATE TABLE IF NOT EXISTS login_nonces (
+    nonce_hash TEXT PRIMARY KEY,
+    created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::bigint)
+);
 """
 
 class Ledger:
@@ -540,7 +610,7 @@ class Ledger:
 
     # ---------- users ----------
 
-    def ensure_user(self, tg_id: int, username: str | None) -> None:
+    def ensure_user(self, tg_id: int, username: str | None, commit: bool = True) -> None:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO users (tg_id, username) VALUES (%s, %s) ON CONFLICT (tg_id) DO NOTHING",
@@ -550,7 +620,8 @@ class Ledger:
                 "UPDATE users SET username = %s WHERE tg_id = %s AND %s::text IS NOT NULL",
                 (username, tg_id, username),
             )
-            self._conn.commit()
+            if commit:
+                self._conn.commit()
 
     def user_exists(self, tg_id: int) -> bool:
         with self._lock:
@@ -558,6 +629,39 @@ class Ledger:
                 "SELECT 1 FROM users WHERE tg_id = %s", (tg_id,)
             ).fetchone()
         return row is not None
+
+    def consume_login_nonce(self, nonce: str) -> bool:
+        """Atomically mark a wallet-login nonce as used; True only on first use.
+
+        Replay of a signed (message, signature) pair reuses the same Nonce line,
+        so the second attempt hits the PK conflict and is rejected.
+        """
+        import hashlib as _hashlib
+
+        nonce_hash = _hashlib.sha256(nonce.encode()).hexdigest()
+        with self._lock:
+            try:
+                # Opportunistic prune: login nonces are consumed once and are
+                # useless after their TTL; sweep them so the table never grows
+                # without bound. Login attempts are rare, so the extra DELETE
+                # is negligible.
+                self._conn.execute(
+                    "DELETE FROM login_nonces WHERE created_at < %s",
+                    (int(time.time()) - config.LOGIN_NONCE_TTL_SECONDS,),
+                )
+                cur = self._conn.execute(
+                    "INSERT INTO login_nonces (nonce_hash) VALUES (%s) ON CONFLICT (nonce_hash) DO NOTHING RETURNING nonce_hash",
+                    (nonce_hash,),
+                )
+                claimed = cur.fetchone() is not None
+                self._conn.commit()
+                return claimed
+            except Exception:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+                return False
 
     def all_users(self) -> list[dict]:
         with self._lock:
@@ -696,9 +800,11 @@ class Ledger:
 
     # ---------- balances / transfers ----------
 
-    def credit(self, tg_id: int, amount_micro: int, kind: str, counterparty: str = "", tx_hash: str = "", note: str = "") -> None:
+    def credit(self, tg_id: int, amount_micro: int, kind: str, counterparty: str = "", tx_hash: str = "", note: str = "", commit: bool = True) -> None:
+        if amount_micro < 0:
+            raise ValueError(f"credit amount must be >= 0 (got {amount_micro})")
         with self._lock:
-            self.ensure_user(tg_id, None)
+            self.ensure_user(tg_id, None, commit=commit)
             self._conn.execute(
                 "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                 (amount_micro, tg_id),
@@ -707,10 +813,11 @@ class Ledger:
                 "INSERT INTO tx_log (kind, tg_id, counterparty, amount, tx_hash, note) VALUES (%s, %s, %s, %s, %s, %s)",
                 (kind, tg_id, counterparty, amount_micro, tx_hash, note),
             )
-            self._conn.commit()
+            if commit:
+                self._conn.commit()
             audit_log.info(json.dumps({"event": "credit", "tg_id": tg_id, "amount_micro": amount_micro, "kind": kind, "counterparty": counterparty, "tx_hash": tx_hash}))
 
-    def credit_x402(self, recipient_tg: int, tx_hash: str, amount_micro: int, sender: str) -> bool:
+    def credit_x402(self, recipient_tg: int, tx_hash: str, amount_micro: int, sender: str, pay_to: str = "") -> bool:
         """Credit an on-chain x402 payment to a user. Atomic and replay-proof.
 
         The tx_hash is the PK of x402_payments: a second verification of the
@@ -720,11 +827,12 @@ class Ledger:
         with self._lock:
             self.ensure_user(recipient_tg, None)
             cur = self._conn.execute(
-                "INSERT INTO x402_payments (tx_hash, recipient_tg, amount_micro, sender) "
-                "VALUES (%s, %s, %s, %s) ON CONFLICT (tx_hash) DO NOTHING",
-                (tx_hash, recipient_tg, amount_micro, sender),
+                "INSERT INTO x402_payments (tx_hash, recipient_tg, amount_micro, sender, pay_to) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (tx_hash) DO NOTHING",
+                (tx_hash, recipient_tg, amount_micro, sender, pay_to or None),
             )
             if cur.rowcount == 0:
+                self._conn.rollback()
                 return False
             self._conn.execute(
                 "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
@@ -738,18 +846,18 @@ class Ledger:
             self._conn.commit()
             return True
 
-    def reserve_x402_auth(self, nonce: str, tg_id: int, amount_micro: int, sender: str) -> bool:
+    def reserve_x402_auth(self, nonce: str, tg_id: int, amount_micro: int, sender: str, pay_to: str = "") -> bool:
         """Reserve an EIP-3009 authorization nonce (scheme "exact"): the row
         key is `auth:<nonce>` in x402_payments. True = reserved (this caller
         may settle); False = already used (replay). The balance credit only
-        lands in finalize_x402_auth, after the on-chain settlement succeeds."""
+        lands in finalize_x402_credit, after the on-chain settlement succeeds."""
         if not nonce:
             return False
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO x402_payments (tx_hash, recipient_tg, amount_micro, sender) "
-                "VALUES (%s, %s, %s, %s) ON CONFLICT (tx_hash) DO NOTHING",
-                (nonce, tg_id, amount_micro, sender),
+                "INSERT INTO x402_payments (tx_hash, recipient_tg, amount_micro, sender, pay_to) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (tx_hash) DO NOTHING",
+                (nonce, tg_id, amount_micro, sender, pay_to or None),
             )
             committed = cur.rowcount > 0
             self._conn.commit()
@@ -794,7 +902,7 @@ class Ledger:
             # DB-written created_at against the app's time.time() breaks on
             # even a 1-second clock skew between the two.
             return self._conn.execute(
-                "SELECT tx_hash, recipient_tg, amount_micro, sender, created_at "
+                "SELECT tx_hash, recipient_tg, amount_micro, sender, pay_to, created_at "
                 "FROM x402_payments WHERE tx_hash LIKE 'auth:%%' "
                 "AND created_at + %s <= EXTRACT(EPOCH FROM now())::bigint "
                 "ORDER BY created_at",
@@ -820,9 +928,31 @@ class Ledger:
             self._conn.commit()
             return booked
 
+    def release_subsidy(self, amount_micro: int) -> None:
+        """Give back a booked subsidy when the on-chain createMarket tx reverts.
+
+        Best-effort: the same UTC day's running total is decremented (clamped
+        at zero) so a failed attempt does not permanently consume the creator's
+        daily cap. No-op if the amount can never have been booked.
+        """
+        if amount_micro <= 0:
+            return
+        with self._lock:
+            day = int(time.time()) // 86400
+            try:
+                self._conn.execute(
+                    "INSERT INTO market_subsidies (day, total_micro) VALUES (%s, %s) "
+                    "ON CONFLICT (day) DO UPDATE SET total_micro = "
+                    "GREATEST(market_subsidies.total_micro - EXCLUDED.total_micro, 0)",
+                    (day, amount_micro),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+
     def finalize_x402_credit(
         self, nonce: str, settlement_tx: str, recipient_tg: int,
-        amount_micro: int, sender: str,
+        amount_micro: int, sender: str, pay_to: str = "",
     ) -> bool:
         """Atomically convert a reserved EIP-3009 authorization into a settled,
         credited x402 tip: swap the row key to the settlement tx, credit the
@@ -833,12 +963,14 @@ class Ledger:
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE x402_payments SET tx_hash = %s, recipient_tg = %s, "
-                "amount_micro = %s, sender = %s WHERE tx_hash = %s",
-                (settlement_tx, recipient_tg, amount_micro, sender, nonce),
+                "amount_micro = %s, sender = %s, pay_to = COALESCE(%s, pay_to) "
+                "WHERE tx_hash = %s",
+                (settlement_tx, recipient_tg, amount_micro, sender, pay_to or None, nonce),
             )
             if cur.rowcount == 0:
+                self._conn.rollback()
                 return False
-            self.ensure_user(recipient_tg, None)
+            self.ensure_user(recipient_tg, None, commit=False)
             self._conn.execute(
                 "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                 (amount_micro, recipient_tg),
@@ -853,7 +985,7 @@ class Ledger:
 
     def finalize_x402_paywall(
         self, nonce: str, settlement_tx: str, owner_tg: int, item_id: int,
-        amount_micro: int, sender: str,
+        amount_micro: int, sender: str, pay_to: str = "",
     ) -> bool:
         """Atomically convert a reserved authorization into a settled paywall
         purchase: swap the row key to the settlement tx, record the purchase,
@@ -863,10 +995,12 @@ class Ledger:
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE x402_payments SET tx_hash = %s, recipient_tg = %s, "
-                "amount_micro = %s, sender = %s WHERE tx_hash = %s",
-                (settlement_tx, owner_tg, amount_micro, sender, nonce),
+                "amount_micro = %s, sender = %s, pay_to = COALESCE(%s, pay_to) "
+                "WHERE tx_hash = %s",
+                (settlement_tx, owner_tg, amount_micro, sender, pay_to or None, nonce),
             )
             if cur.rowcount == 0:
+                self._conn.rollback()
                 return False
             self._conn.execute(
                 "INSERT INTO paywall_purchases (item_id, buyer_tg, tx_hash, amount_micro) "
@@ -885,25 +1019,92 @@ class Ledger:
             self._conn.commit()
             return True
 
-    def finalize_x402_auth(self, nonce: str, settlement_tx: str) -> bool:
-        """Swap the reserved auth-nonce key for the real settlement tx hash
-        once the on-chain transferWithAuthorization has confirmed."""
-        if not nonce or not settlement_tx:
-            return False
-        with self._lock:
-            cur = self._conn.execute(
-                "UPDATE x402_payments SET tx_hash = %s WHERE tx_hash = %s",
-                (settlement_tx, nonce),
-            )
-            self._conn.commit()
-            return cur.rowcount > 0
-
     def x402_paid(self, tx_hash: str) -> bool:
         with self._lock:
             row = self._conn.execute(
                 "SELECT 1 FROM x402_payments WHERE tx_hash = %s", (tx_hash,)
             ).fetchone()
             return row is not None
+
+    # ---------- x402 per-invoice unique pay addresses ----------
+
+    def create_x402_invoice(
+        self, invoice_id: str, pay_addr: str, recipient_tg: int, amount_micro: int,
+        kind: str, ref_id: str = "", pay_to: str = "",
+    ) -> bool:
+        """Register a unique per-invoice x402 pay address.
+
+        Returns False if the invoice_id or pay_addr already exists (the
+        invoice is deterministic, so a duplicate means a client asking twice
+        for the same invoice — the prior row is authoritative)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO x402_invoices "
+                "(invoice_id, pay_addr, recipient_tg, amount_micro, kind, ref_id, pay_to) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (invoice_id) DO NOTHING",
+                (invoice_id, pay_addr.lower(), recipient_tg, amount_micro,
+                 kind, ref_id or None, pay_to or None),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def x402_invoice_by_addr(self, pay_addr: str) -> dict | None:
+        """The invoice bound to a unique pay address, or None.
+
+        This lookup is the whole point of the design: a legacy tx-hash payment
+        is only redeemable against the EXACT (recipient, amount, kind) invoice
+        it was minted for, so a payment can never be redirected to an attacker
+        (only the invoice's owner can present funds sent to its own address)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM x402_invoices WHERE LOWER(pay_addr) = LOWER(%s)",
+                (pay_addr,),
+            ).fetchone()
+
+    def mark_x402_invoice_credited(self, invoice_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE x402_invoices SET credited = true WHERE invoice_id = %s",
+                (invoice_id,),
+            )
+            self._conn.commit()
+
+    def unswept_x402_invoices(self) -> list[dict]:
+        """Invoices whose unique-derived pay address was paid on-chain but the
+        funds are still parked there (sweep target quota exceeded or the sweep
+        watcher ran before the transfer confirmed)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT invoice_id, pay_addr, recipient_tg, amount_micro, kind, ref_id, pay_to "
+                "FROM x402_invoices WHERE credited = true AND swept_at IS NULL "
+                "ORDER BY created_at"
+            ).fetchall()
+
+    def mark_x402_invoice_swept(self, invoice_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE x402_invoices SET swept_at = EXTRACT(EPOCH FROM now())::bigint "
+                "WHERE invoice_id = %s",
+                (invoice_id,),
+            )
+            self._conn.commit()
+
+    def x402_unswept_credit_total(self) -> int:
+        """Booked x402 credits whose derived pay address has NOT been swept.
+
+        The USDC backing them is still parked on-chain in the per-invoice
+        address (until the sweep consolidates it into the receive pool and then
+        the hot wallet). The solvency canary must count this as a reserve:
+        those funds back outstanding liabilities but sit in an address the
+        reserves line otherwise never reads.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(SUM(amount_micro), 0) AS s FROM x402_invoices "
+                "WHERE credited = true AND swept_at IS NULL"
+            ).fetchone()
+        return int(row["s"])
 
     def pending_deposit_exists(self, tx_hash: str) -> bool:
         """True if `tx_hash` is already a detected on-chain deposit.
@@ -986,6 +1187,7 @@ class Ledger:
                 (price, buyer_tg, price),
             )
             if cur.rowcount == 0:
+                self._conn.rollback()
                 return "insufficient"
             # The insert must SUCCEED for the owner credit below to happen: on
             # a concurrent duplicate (two processes racing past the pre-check)
@@ -1018,7 +1220,7 @@ class Ledger:
             return "ok"
 
     def x402_paywall_purchase(
-        self, owner_tg: int, item_id: int, tx_hash: str, amount_micro: int, sender: str
+        self, owner_tg: int, item_id: int, tx_hash: str, amount_micro: int, sender: str, pay_to: str = ""
     ) -> str:
         """Credit an x402 payment for a paywall item. Atomic and replay-proof.
 
@@ -1028,16 +1230,18 @@ class Ledger:
         """
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO x402_payments (tx_hash, recipient_tg, amount_micro, sender) "
-                "VALUES (%s, %s, %s, %s) ON CONFLICT (tx_hash) DO NOTHING",
-                (tx_hash, owner_tg, amount_micro, sender),
+                "INSERT INTO x402_payments (tx_hash, recipient_tg, amount_micro, sender, pay_to) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (tx_hash) DO NOTHING",
+                (tx_hash, owner_tg, amount_micro, sender, pay_to or None),
             )
             if cur.rowcount == 0:
+                self._conn.rollback()
                 return "replay"
             if self._conn.execute(
                 "SELECT 1 FROM paywall_purchases WHERE item_id = %s AND tx_hash = %s",
                 (item_id, tx_hash),
             ).fetchone():
+                self._conn.rollback()
                 return "replay"
             self._conn.execute(
                 "INSERT INTO paywall_purchases (item_id, buyer_tg, tx_hash, amount_micro) "
@@ -1122,8 +1326,10 @@ class Ledger:
                 (chat_id,),
             ).fetchone()
             if ch is None:
+                self._conn.rollback()
                 return "missing"
             if tg_id == int(ch["owner_tg"]):
+                self._conn.rollback()
                 return "self"  # the owner already has access; no self-purchase
             price = int(ch["price_micro"])
             cur = self._conn.execute(
@@ -1131,19 +1337,22 @@ class Ledger:
                 (price, tg_id, price),
             )
             if cur.rowcount == 0:
+                self._conn.rollback()
                 return "insufficient"
-            row = self._conn.execute(
-                "SELECT expires_at FROM paywall_subscriptions WHERE chat_id = %s AND tg_id = %s",
-                (chat_id, tg_id),
-            ).fetchone()
+            # Extend ATOMICALLY on the current committed row: GREATEST(existing,
+            # now) + period, computed by Postgres inside the upsert. Two
+            # concurrent cross-process renewals (bot + web share one DB) each
+            # pay AND each add their own period on top of the other's commit; a
+            # read-then-write window would otherwise double-charge a fresh
+            # subscription for a single extension.
             now = time.time()
-            base_ts = int(row["expires_at"]) if row and int(row["expires_at"]) > now else int(now)
-            expires = base_ts + int(ch["period_days"]) * 86400
+            period = int(ch["period_days"]) * 86400
             self._conn.execute(
                 "INSERT INTO paywall_subscriptions (chat_id, tg_id, expires_at) "
-                "VALUES (%s, %s, %s) ON CONFLICT (chat_id, tg_id) DO UPDATE SET "
-                "expires_at = EXCLUDED.expires_at",
-                (chat_id, tg_id, expires),
+                "VALUES (%s, %s, %s) "
+                "ON CONFLICT (chat_id, tg_id) DO UPDATE SET expires_at = "
+                "GREATEST(COALESCE(paywall_subscriptions.expires_at, 0), %s) + %s",
+                (chat_id, tg_id, int(now) + period, int(now), period),
             )
             self._conn.execute(
                 "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
@@ -1190,6 +1399,7 @@ class Ledger:
                 (amount_micro, from_id, amount_micro),
             )
             if cur.rowcount == 0:
+                self._conn.rollback()
                 return False
             self._conn.execute(
                 "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
@@ -1204,6 +1414,12 @@ class Ledger:
             return True
 
     def debit(self, tg_id: int, amount_micro: int) -> bool:
+        # NOTE: unlike transfer(), debit() leaves its transaction open on the
+        # SUCCESS path (the caller must commit — most buy/tip/bet flows batch
+        # several writes into one transaction). On the FAILURE path we roll
+        # back here so the shared connection never carries a stale write into
+        # the next unrelated ledger call; callers that roll back after a
+        # failed debit are unaffected (rollback is idempotent).
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE users SET balance = balance - %s WHERE tg_id = %s AND balance >= %s",
@@ -1211,7 +1427,9 @@ class Ledger:
             )
             if cur.rowcount > 0:
                 audit_log.info(json.dumps({"event": "debit", "tg_id": tg_id, "amount_micro": amount_micro, "note": ""}))
-            return cur.rowcount > 0
+                return True
+            self._conn.rollback()
+            return False
 
     def reserve_withdraw(
         self, tg_id: int, to_address: str, amount_micro: int, fee_micro: int
@@ -1223,29 +1441,86 @@ class Ledger:
         batch-payout queue until the batch watcher flushes it (via
         TipBotVault.batchDistribute or a direct transfer). Crash between debit and
         send is safe — the queued row survives and is flushed/refunded later.
+
+        Returns None (no funds move) for any refused destination too, and for
+        the daily-request cap, and flags the attempt for AML review.
         """
         with self._lock:
-            total = amount_micro + fee_micro
-            cur = self._conn.execute(
-                "UPDATE users SET balance = balance - %s WHERE tg_id = %s AND balance >= %s",
-                (total, tg_id, total),
-            )
-            if cur.rowcount == 0:
-                return None
-            cur = self._conn.execute(
-                "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note, status) "
-                "VALUES ('withdraw', %s, %s, %s, %s, 'queued') RETURNING id",
-                (tg_id, to_address, amount_micro, f"fee={fee_micro}"),
-            )
-            wd_id = int(cur.fetchone()["id"])
-            if fee_micro > 0:
-                self._conn.execute(
-                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note, status) "
-                    "VALUES ('fee', %s, %s, %s, %s, 'done')",
-                    (tg_id, to_address, fee_micro, f"withdraw_id={wd_id}"),
+            # ---- destination blocklist (anti self-send / burn / lock-in) ----
+            from .base import hot_wallet
+            dest = (to_address or "").strip().lower()
+            blocked: list[tuple[str, str]] = []
+            dead_addr = "0x" + "0" * 40
+            if dest in (dead_addr, "0x" + "0" * 40):
+                blocked.append(("burn", "zero address"))
+            hot = hot_wallet()
+            if hot and dest and dest == hot.lower():
+                blocked.append(("self", "hot wallet"))
+            if config.VAULT_ADDRESS and dest == config.VAULT_ADDRESS.strip().lower():
+                blocked.append(("vault", "vault contract"))
+            if config.X402_RECEIVE_ADDRESS and dest == config.X402_RECEIVE_ADDRESS.strip().lower():
+                blocked.append(("x402", "x402 receive pool"))
+            if blocked:
+                self._flag_suspicious(
+                    tg_id, "withdraw_blocked",
+                    {"to_address": to_address, "reason": blocked[0][1]}, severity="critical",
                 )
-            self._conn.commit()
-            return wd_id
+                self._conn.rollback()
+                return None
+            # ---- atomic daily-request cap (closes the check-then-act hole:
+            #      two concurrent /withdraw commands can no longer both pass
+            #      the pre-check in the command handler) ----
+            # The guard is embedded in the INSERT itself, so the count check and
+            # the row write happen in one statement inside this transaction.
+            # Cross-process safety: Postgres re-checks the subquery against the
+            # committed snapshot each row it inserts, so two bot processes cannot
+            # overshoot MAX_WITHDRAWS_PER_DAY even without app-level locking.
+            since = int(time.time()) - 86400
+            total = amount_micro + fee_micro
+            committed = False
+            try:
+                cur = self._conn.execute(
+                    "UPDATE users SET balance = balance - %s WHERE tg_id = %s AND balance >= %s",
+                    (total, tg_id, total),
+                )
+                if cur.rowcount == 0:
+                    self._conn.rollback()
+                    return None
+                cur = self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note, status) "
+                    "SELECT 'withdraw', %s, %s, %s, %s, 'queued' "
+                    "WHERE (SELECT COUNT(*) FROM tx_log "
+                    "   WHERE tg_id = %s AND kind = 'withdraw' "
+                    "   AND COALESCE(status, 'done') IN ('queued', 'pending', 'done') AND created_at >= %s) < %s "
+                    "RETURNING id",
+                    (tg_id, to_address, amount_micro, f"fee={fee_micro}",
+                     tg_id, since, config.MAX_WITHDRAWS_PER_DAY),
+                )
+                wd_row = cur.fetchone()
+                if wd_row is None:
+                    # cap reached: already debited, so this whole tx rolls back
+                    self._conn.rollback()
+                    return None
+                wd_id = int(wd_row["id"])
+                if fee_micro > 0:
+                    self._conn.execute(
+                        "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note, status) "
+                        "VALUES ('fee', %s, %s, %s, %s, 'done')",
+                        (tg_id, to_address, fee_micro, f"withdraw_id={wd_id}"),
+                    )
+                self._conn.commit()
+                committed = True
+                return wd_id
+            finally:
+                if not committed:
+                    # Safety net: an unexpected exception mid-operation must not
+                    # leave the row lock held or the connection in INERROR,
+                    # poisoning every later ledger call. rollback is idempotent
+                    # after a successful early return above.
+                    try:
+                        self._conn.rollback()
+                    except Exception:
+                        pass
 
     def record_withdraw_fee(
         self, tg_id: int, to_address: str, fee_micro: int, tx_hash: str
@@ -1305,39 +1580,82 @@ class Ledger:
 
     # ---------- deposits ----------
 
-    def record_pending(self, tx_hash: str, sender: str, amount_micro: int) -> None:
+    def record_pending(self, tx_hash: str, sender: str, amount_micro: int, block: int | None = None) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO pending_deposits (tx_hash, sender, amount_micro) "
-                "VALUES (%s, %s, %s) ON CONFLICT (tx_hash) DO NOTHING",
-                (tx_hash, sender, amount_micro),
+                "INSERT INTO pending_deposits (tx_hash, sender, amount_micro, block) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (tx_hash) DO NOTHING",
+                (tx_hash, sender, amount_micro, block),
             )
             self._conn.commit()
 
-    def claim(self, tg_id: int, tx_hash: str) -> tuple[bool, int, str, str]:
+    def pending_matured(self, cutoff_block: int | None = None) -> list[dict]:
+        """Distinct senders of unclaimed pending deposits eligible for credit.
+
+        `cutoff_block`: rows whose block is NULL (legacy, pre-confirm-gate) or
+        <= cutoff_block (confirmed on-chain). The deposit scan credits these
+        EVERY sweep from the DB, not only while the deposit's block is still
+        inside the re-scanned log window — so a deposit that matured off-window
+        is still automatically credited.
+        """
+        with self._lock:
+            if cutoff_block is None:
+                return self._conn.execute(
+                    "SELECT DISTINCT sender FROM pending_deposits WHERE claimed = 0"
+                ).fetchall()
+            return self._conn.execute(
+                "SELECT DISTINCT sender FROM pending_deposits "
+                "WHERE claimed = 0 AND (block IS NULL OR block <= %s)",
+                (cutoff_block,),
+            ).fetchall()
+
+    def claim(self, tg_id: int, tx_hash: str, maturity_block: int | None = None) -> tuple[bool, int, str, str]:
         """Credit a pending deposit to a user. Returns (ok, amount_micro, sender, reason).
 
         Security: only the owner of the *sending* wallet may claim. Deposits are
         public on-chain, so a tx hash is not a secret — without this check anyone
         could /claim somebody else's funds. reason is '' on success, otherwise
-        'not_found' | 'claimed' | 'not_owner'.
+        'not_found' | 'claimed' | 'not_owner' | 'not_mature'.
+
+        `maturity_block` (the confirmed-deposit cutoff) mirrors the scanner's
+        confirm gate: rows with block > cutoff are NOT credited here — the caller
+        must verify the deposit has DEPOSIT_CONFIRM_BLOCKS confirmations, or the
+        handler becomes a reorg-exploitable bypass of the maturity gate (credit a
+        still-reorgable deposit, withdraw, and let the reorg delete the backing
+        tx). block NULL rows are legacy pre-gate deposits, credited unconditionally.
         """
         with self._lock:
-            row = self._conn.execute(
-                "SELECT sender, amount_micro, claimed FROM pending_deposits WHERE tx_hash = %s",
-                (tx_hash,),
-            ).fetchone()
+            if maturity_block is not None:
+                row = self._conn.execute(
+                    "SELECT sender, amount_micro, block FROM pending_deposits WHERE tx_hash = %s",
+                    (tx_hash,),
+                ).fetchone()
+                if row and row["block"] is not None and row["block"] > maturity_block:
+                    self._conn.rollback()
+                    return False, 0, row["sender"], "not_mature"
+            else:
+                row = self._conn.execute(
+                    "SELECT sender, amount_micro, block FROM pending_deposits WHERE tx_hash = %s",
+                    (tx_hash,),
+                ).fetchone()
             if not row:
+                self._conn.rollback()
                 return False, 0, "", "not_found"
-            if row["claimed"]:
-                return False, 0, row["sender"], "claimed"
             linked = self.linked_address(tg_id)
             if not linked or linked.lower() != row["sender"].lower():
+                self._conn.rollback()
                 return False, 0, row["sender"], "not_owner"
-            self.ensure_user(tg_id, None)
-            self._conn.execute(
-                "UPDATE pending_deposits SET claimed = 1 WHERE tx_hash = %s", (tx_hash,)
+            self.ensure_user(tg_id, None, commit=False)
+            # Atomic claim: the conditional UPDATE is the single arbiter of who
+            # gets the money, even across processes (web dashboard + bot share
+            # one DB). A stale reader that saw claimed=0 loses here.
+            cur = self._conn.execute(
+                "UPDATE pending_deposits SET claimed = 1 WHERE tx_hash = %s AND claimed = 0",
+                (tx_hash,),
             )
+            if cur.rowcount == 0:
+                self._conn.rollback()
+                return False, 0, row["sender"], "claimed"
             self._conn.execute(
                 "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                 (row["amount_micro"], tg_id),
@@ -1349,20 +1667,36 @@ class Ledger:
             self._conn.commit()
             return True, row["amount_micro"], row["sender"], ""
 
-    def claim_for_sender(self, tg_id: int, sender: str) -> list[dict]:
-        """Auto-claim ALL pending deposits from a linked sender address."""
+    def claim_for_sender(self, tg_id: int, sender: str, maturity_block: int | None = None) -> list[dict]:
+        """Auto-claim pending deposits from a linked sender address.
+
+        `maturity_block`: only claims deposits whose block <= maturity_block
+        (DEPOSIT_CONFIRM_BLOCKS-confirmed on chain). Rows with block NULL are
+        legacy deposits recorded before the confirm gate — claimed unconditionally
+        (they were pre-confirmed when the newer system took over).
+        """
         with self._lock:
+            if maturity_block is not None:
+                where = (
+                    "WHERE LOWER(sender) = LOWER(%s) AND claimed = 0 "
+                    "AND (block IS NULL OR block <= %s) FOR UPDATE"
+                )
+                params = (sender, maturity_block)
+            else:
+                where = "WHERE LOWER(sender) = LOWER(%s) AND claimed = 0 FOR UPDATE"
+                params = (sender,)
             rows = self._conn.execute(
-                "SELECT tx_hash, amount_micro FROM pending_deposits "
-                "WHERE LOWER(sender) = LOWER(%s) AND claimed = 0 FOR UPDATE",
-                (sender,),
+                "SELECT tx_hash, amount_micro FROM pending_deposits " + where,
+                params,
             ).fetchall()
-            self.ensure_user(tg_id, None)
+            self.ensure_user(tg_id, None, commit=False)
             for row in rows:
-                self._conn.execute(
-                    "UPDATE pending_deposits SET claimed = 1 WHERE tx_hash = %s",
+                cur = self._conn.execute(
+                    "UPDATE pending_deposits SET claimed = 1 WHERE tx_hash = %s AND claimed = 0",
                     (row["tx_hash"],),
                 )
+                if cur.rowcount == 0:
+                    continue  # already claimed by a competing process
                 self._conn.execute(
                     "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                     (row["amount_micro"], tg_id),
@@ -1399,7 +1733,7 @@ class Ledger:
             row = self._conn.execute(
                 "SELECT COUNT(*) AS c FROM tx_log "
                 "WHERE tg_id = %s AND kind = 'withdraw' "
-                "AND COALESCE(status, 'done') IN ('queued', 'done') AND created_at >= %s",
+                "AND COALESCE(status, 'done') IN ('queued', 'pending', 'done') AND created_at >= %s",
                 (tg_id, since),
             ).fetchone()
         return int(row["c"])
@@ -1488,7 +1822,11 @@ class Ledger:
     def mark_withdraw_done(self, wd_id: int, tx_hash: str) -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE tx_log SET tx_hash = %s, status = 'done' WHERE id = %s",
+                # COALESCE(NULLIF(...)): a legacy row whose hash is unknown
+                # stays NULL (ambiguous) instead of being overwritten with an
+                # empty marker string that would read like a real tx hash.
+                "UPDATE tx_log SET tx_hash = COALESCE(NULLIF(%s, ''), tx_hash), "
+                "status = 'done' WHERE id = %s",
                 (tx_hash, wd_id),
             )
             self._conn.commit()
@@ -1554,21 +1892,37 @@ class Ledger:
             )
             self._conn.commit()
 
-    def refund_withdraw(self, wd_id: int, tg_id: int, total_micro: int) -> None:
-        """Full refund of amount + fee; keeps the row as an audit trail."""
+    def refund_withdraw(self, wd_id: int, tg_id: int, total_micro: int) -> bool:
+        """Full refund of amount + fee; keeps the row as an audit trail.
+
+        Single-credit guarantee: the withdraw row is first flipped to
+        'refunded' (guarded against a terminal status) and the balance is
+        credited ONLY if that flip was won. Two concurrent refund paths (the
+        pending-sweep and a batch fallback) racing on the same row now result
+        in exactly one credit, not two.
+
+        Returns True if the refund was applied, False if the row was already
+        'done'/'refunded' (no credit happens in that case).
+        """
         with self._lock:
+            flipped = self._conn.execute(
+                "UPDATE tx_log SET status = 'refunded' WHERE id = %s "
+                "AND COALESCE(status, '') NOT IN ('done', 'refunded') RETURNING id",
+                (wd_id,),
+            ).fetchone()
+            if flipped is None:
+                self._conn.rollback()
+                return False
             self._conn.execute(
                 "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                 (total_micro, tg_id),
-            )
-            self._conn.execute(
-                "UPDATE tx_log SET status = 'refunded' WHERE id = %s", (wd_id,)
             )
             self._conn.execute(
                 "UPDATE tx_log SET status = 'refunded' "
                 "WHERE kind = 'fee' AND note = %s", (f"withdraw_id={wd_id}",)
             )
             self._conn.commit()
+            return True
 
     def top_tippers(self, limit: int = 10, since_days: int | None = None) -> list[dict]:
         since = None
@@ -1700,13 +2054,19 @@ class Ledger:
             ).fetchall()
 
     def place_bet(self, bet_id: int, tg_id: int, option_idx: int, amount_micro: int) -> str:
-        """Returns 'ok' | 'closed' | 'deadline' | 'badopt' | 'balance'."""
+        """Returns 'ok' | 'closed' | 'deadline' | 'badopt' | 'balance' | 'cap'."""
         if amount_micro <= 0:
             # debit(-X) would INCREASE the balance and record a negative stake
             # that vanishes from the pot at resolution (money creation). Raise
             # instead of returning a status: callers treat unknown statuses as
             # success in some handlers.
             raise ValueError("bet amount must be positive")
+        max_bet_micro = int(Decimal(config.MAX_BET_USDC) * Decimal(MICRO))
+        if amount_micro > max_bet_micro:
+            # Enforced at the ledger so BOTH the text path and the
+            # callback-button path share the same per-trade cap (a forged
+            # callback_data must not bypass MAX_BET_USDC).
+            return "cap"
         with self._lock:
             bet = self.get_bet_for_update(bet_id)
             if not bet or bet["status"] != "open":
@@ -1722,7 +2082,7 @@ class Ledger:
             if not self.debit(tg_id, amount_micro):
                 self._conn.rollback()
                 return "balance"
-            self.ensure_user(tg_id, None)
+            self.ensure_user(tg_id, None, commit=False)
             self._conn.execute(
                 "INSERT INTO bet_positions (bet_id, tg_id, option_idx, amount_micro) VALUES (%s, %s, %s, %s)",
                 (bet_id, tg_id, option_idx, amount_micro),
@@ -1873,8 +2233,9 @@ class Ledger:
         if b <= 0:
             return "subsidy"
         with self._lock:
-            self.ensure_user(creator_tg_id, None)
+            self.ensure_user(creator_tg_id, None, commit=False)
             if not self.debit(creator_tg_id, subsidy_micro):
+                self._conn.rollback()
                 return "balance"
             cur = self._conn.execute(
                 "INSERT INTO markets (creator, question, options, close_at, subsidy_micro, b_micro, escrow_micro) "
@@ -2072,7 +2433,7 @@ class Ledger:
     ) -> tuple[str, dict]:
         """Spend up to `spend_micro` USDC on outcome shares at the live price.
 
-        Returns ('ok', info) or ('closed'|'deadline'|'badopt'|'balance'|'toosmall', {}).
+        Returns ('ok', info) or ('closed'|'deadline'|'badopt'|'balance'|'toosmall'|'ownmarket', {}).
         The share count is floored against the exact LMSR cost curve, so the
         user never overpays; the sub-micro remainder stays in the escrow.
         Trades below MARKET_MIN_TRADE_MICRO are rejected before any debit
@@ -2081,55 +2442,72 @@ class Ledger:
         if spend_micro < 10_000:  # 0.01 USDC
             return "toosmall", {}
         with self._lock:
-            self._ensure()
-            m = self.get_market_for_update(market_id)
-            if not m or m["status"] != "open":
-                self._conn.rollback()
-                return "closed", {}
-            if m["close_at"] is not None and int(time.time()) > m["close_at"]:
-                self._conn.rollback()
-                return "deadline", {}
-            options = json.loads(m["options"])
-            if option_idx < 0 or option_idx >= len(options):
-                self._conn.rollback()
-                return "badopt", {}
-            if not self.debit(tg_id, spend_micro):
-                self._conn.rollback()
-                return "balance", {}
-            q = self.market_quantities(market_id)
-            shares = lmsr_buy_shares(q, int(m["b_micro"]), option_idx, spend_micro)
-            if shares <= 0:
-                # Nothing has been committed yet, so a plain rollback undoes
-                # the debit — no need for an explicit refund credit.
-                self._conn.rollback()
-                return "toosmall", {}
-            prices = lmsr_prices([*q[:option_idx], q[option_idx] + shares, *q[option_idx + 1:]],
-                                 int(m["b_micro"]))
-            self.ensure_user(tg_id, None)
-            self._conn.execute(
-                "INSERT INTO market_shares (market_id, tg_id, option_idx, shares, cost_micro) "
-                "VALUES (%s, %s, %s, %s, %s) "
-                "ON CONFLICT (market_id, tg_id, option_idx) DO UPDATE "
-                "SET shares = market_shares.shares + EXCLUDED.shares, "
-                "cost_micro = market_shares.cost_micro + EXCLUDED.cost_micro",
-                (market_id, tg_id, option_idx, shares, spend_micro),
-            )
-            self._conn.execute(
-                "UPDATE markets SET escrow_micro = escrow_micro + %s WHERE id = %s",
-                (spend_micro, market_id),
-            )
-            self._conn.execute(
-                "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
-                "VALUES ('market_buy', %s, %s, %s, %s)",
-                (tg_id, str(market_id), spend_micro, options[option_idx]),
-            )
-            self._conn.commit()
-            return "ok", {
-                "shares": shares,
-                "cost": spend_micro,
-                "price": prices[option_idx],
-                "label": options[option_idx],
-            }
+            committed = False
+            try:
+                self._ensure()
+                m = self.get_market_for_update(market_id)
+                if not m or m["status"] != "open":
+                    self._conn.rollback()
+                    return "closed", {}
+                if m["close_at"] is not None and int(time.time()) > m["close_at"]:
+                    self._conn.rollback()
+                    return "deadline", {}
+                options = json.loads(m["options"])
+                if option_idx < 0 or option_idx >= len(options):
+                    self._conn.rollback()
+                    return "badopt", {}
+                # Anti-manipulation: the autonomous agent must never trade against
+                # its own markets. Enforced in the DB (survives restarts) so the
+                # in-memory guard in agent/tools.py is not the only line of defense.
+                if tg_id == config.AGENT_TG_ID and int(m["creator"]) == tg_id:
+                    self._conn.rollback()
+                    return "ownmarket", {}
+                if not self.debit(tg_id, spend_micro):
+                    self._conn.rollback()
+                    return "balance", {}
+                q = self.market_quantities(market_id)
+                shares = lmsr_buy_shares(q, int(m["b_micro"]), option_idx, spend_micro)
+                if shares <= 0:
+                    # Nothing has been committed yet, so a plain rollback undoes
+                    # the debit — no need for an explicit refund credit.
+                    self._conn.rollback()
+                    return "toosmall", {}
+                prices = lmsr_prices([*q[:option_idx], q[option_idx] + shares, *q[option_idx + 1:]],
+                                     int(m["b_micro"]))
+                self.ensure_user(tg_id, None, commit=False)
+                self._conn.execute(
+                    "INSERT INTO market_shares (market_id, tg_id, option_idx, shares, cost_micro) "
+                    "VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (market_id, tg_id, option_idx) DO UPDATE "
+                    "SET shares = market_shares.shares + EXCLUDED.shares, "
+                    "cost_micro = market_shares.cost_micro + EXCLUDED.cost_micro",
+                    (market_id, tg_id, option_idx, shares, spend_micro),
+                )
+                self._conn.execute(
+                    "UPDATE markets SET escrow_micro = escrow_micro + %s WHERE id = %s",
+                    (spend_micro, market_id),
+                )
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                    "VALUES ('market_buy', %s, %s, %s, %s)",
+                    (tg_id, str(market_id), spend_micro, options[option_idx]),
+                )
+                self._conn.commit()
+                committed = True
+                return "ok", {
+                    "shares": shares,
+                    "cost": spend_micro,
+                    "price": prices[option_idx],
+                    "label": options[option_idx],
+                }
+            finally:
+                if not committed:
+                    # Never leak the FOR UPDATE row lock or leave the connection
+                    # in INERROR when an unexpected exception fires mid-operation.
+                    try:
+                        self._conn.rollback()
+                    except Exception:
+                        pass
 
     def sell_shares(
         self, market_id: int, tg_id: int, option_idx: int, shares_micro: int
@@ -2218,6 +2596,12 @@ class Ledger:
                 self._conn.rollback()
                 return False, "Неверный номер варианта.", []
 
+            # Trading closes at `close_at`; resolution must wait until then so a
+            # freshly-listed market can't be resolved before others can weigh in.
+            if m["close_at"] is not None and int(time.time()) < int(m["close_at"]):
+                self._conn.rollback()
+                return False, "Рынок ещё не достиг дедлайна — резолв доступен после закрытия торгов.", []
+
             # Anti-manipulation: the autonomous agent must never resolve its own
             # markets. Enforced here (persists across restarts) in addition to
             # the in-memory guard in agent/tools.py.
@@ -2245,17 +2629,28 @@ class Ledger:
             winner_rows = self._conn.execute(
                 "SELECT tg_id, SUM(shares) AS s FROM market_shares "
                 "WHERE market_id = %s AND option_idx = %s AND shares > 0 "
-                "GROUP BY tg_id",
-                (market_id, winning_idx),
+                "AND tg_id <> %s GROUP BY tg_id",
+                (market_id, winning_idx, int(m["creator"])),
             ).fetchall()
 
             escrow = int(m["escrow_micro"])
             # 1 micro-share pays 1 micro-USDC (1e6 shares = 1 USDC payout)
             payout_total = sum(int(w["s"]) for w in winner_rows)
+            # An outcome nobody but the creator holds (or nobody at all) must
+            # not be declared the winner: with zero payouts the whole escrow —
+            # subsidy included — would flow to the creator. Such a market can
+            # only be cancelled (refunded) instead.
+            if payout_total <= 0:
+                self._conn.rollback()
+                return False, (
+                    "Нельзя объявить победителя без держателей исхода у других "
+                    "участников — отмените рынок (возврат средств)."
+                ), []
             if payout_total > escrow:  # cannot happen per funding theorem; belt & braces
                 payout_total = escrow
 
             payouts: list[dict] = []
+            weights: list[tuple[int, int]] = []  # (tg_id, gross) for leftover math
             distributed = 0
             for w in winner_rows:
                 gross = int(w["s"])
@@ -2265,6 +2660,7 @@ class Ledger:
                     continue
                 distributed += gross
                 tg = int(w["tg_id"])
+                weights.append((tg, gross))
                 self._conn.execute(
                     "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                     (gross, tg),
@@ -2277,16 +2673,55 @@ class Ledger:
                 payouts.append({"tg_id": tg, "net_micro": gross, "win": True})
 
             leftover = escrow - distributed
-            if leftover > 0:
-                self._conn.execute(
-                    "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
-                    (leftover, int(m["creator"])),
+            if leftover > 0 and weights:
+                # Creator takes the documented fee on winnings; every remaining
+                # micro of escrow goes pro-rata to the winners instead of being
+                # swept to the creator.
+                creator_fee = min(
+                    int((Decimal(distributed) * config.WIN_FEE_PCT).to_integral_value(rounding=ROUND_CEILING)),
+                    leftover,
                 )
-                self._conn.execute(
-                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
-                    "VALUES ('fee', %s, %s, %s, %s)",
-                    (int(m["creator"]), str(market_id), leftover, "market fees"),
-                )
+                if creator_fee > 0:
+                    self._conn.execute(
+                        "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                        (creator_fee, int(m["creator"])),
+                    )
+                    self._conn.execute(
+                        "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                        "VALUES ('fee', %s, %s, %s, %s)",
+                        (int(m["creator"]), str(market_id), creator_fee, "market fees"),
+                    )
+                    leftover -= creator_fee
+                if leftover > 0:
+                    total_w = sum(g for _, g in weights)
+                    extra: dict[int, int] = {}
+                    given, remainders = 0, []
+                    for tg, g in weights:
+                        q = leftover * g // total_w
+                        extra[tg] = q
+                        given += q
+                        remainders.append((leftover * g - q * total_w, tg, g))
+                    for _rem, tg, _g in sorted(remainders, key=lambda r: (-r[0], -r[2], r[1])):
+                        if given >= leftover:
+                            break
+                        extra[tg] = extra[tg] + 1
+                        given += 1
+                    for tg, amt in extra.items():
+                        if amt <= 0:
+                            continue
+                        self._conn.execute(
+                            "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                            (amt, tg),
+                        )
+                        self._conn.execute(
+                            "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
+                            "VALUES ('market_win', %s, %s, %s, %s)",
+                            (tg, str(market_id), amt, m["question"]),
+                        )
+                        for p in payouts:
+                            if p["tg_id"] == tg:
+                                p["net_micro"] += amt
+                                break
             # holders of losing outcomes get nothing (their cost was spent into
             # the escrow when they bought).
             for r in self._market_share_rows(market_id):
@@ -2499,10 +2934,16 @@ class Ledger:
                 (chat_id, message_id, reactor_id),
             ).fetchone()
             if dup:
+                self._conn.rollback()
                 return False, "duplicate", author
             if not self.debit(reactor_id, amount_micro):
+                # debit() leaves its UPDATE transaction open (it returns
+                # without committing/rolling back); roll it back here so the
+                # shared connection doesn't carry a stale write into the next
+                # unrelated ledger call or block concurrent DDL.
+                self._conn.rollback()
                 return False, "balance", author
-            self.credit(author, amount_micro, "tip", counterparty=str(reactor_id), note="reaction")
+            self.credit(author, amount_micro, "tip", counterparty=str(reactor_id), note="reaction", commit=False)
             self._conn.execute(
                 "INSERT INTO reaction_tips (chat_id, message_id, tg_id, amount_micro) VALUES (%s, %s, %s, %s)",
                 (chat_id, message_id, reactor_id, amount_micro),
@@ -2525,6 +2966,43 @@ class Ledger:
             )
             self._conn.commit()
             return cur.rowcount
+
+    def prune_housekeeping(self, retention_seconds: int, x402_payment_retention_seconds: int) -> dict:
+        """Bound the growth of the x402/deposit side-tables.
+
+        Nothing money-critical is touched:
+        - `x402_invoices` that are credited AND swept are pure audit rows; the
+          reconcile path only reads invoices with credited=false.
+        - `pending_deposits` that are claimed are consumed; the scan/pool only
+          ever reads claimed=0. (Legacy rows got a `created_at` via the ALTER
+          default backfill, so they age out from when the column was added.)
+        - `x402_payments` is the anti-replay ledger (a paid tx hash must never
+          be re-deposited). The deposit scanner only re-scans the newest
+          confirm/lookback window on Base (~hours), so hashes older than one
+          year can never collide with a scanned deposit again; keeping the
+          tail is overkill. The longer retention (365d) is used for these.
+
+        Keep the final tx_log audit trail untouched.
+        Returns {'x402_invoices': n, 'pending_deposits': n, 'x402_payments': n}.
+        """
+        now = int(time.time())
+        invoice_cutoff = now - retention_seconds
+        with self._lock:
+            x = self._conn.execute(
+                "DELETE FROM x402_invoices "
+                "WHERE credited = true AND swept_at IS NOT NULL AND created_at < %s",
+                (invoice_cutoff,),
+            ).rowcount
+            y = self._conn.execute(
+                "DELETE FROM pending_deposits WHERE claimed = 1 AND created_at < %s",
+                (now - retention_seconds,),
+            ).rowcount
+            z = self._conn.execute(
+                "DELETE FROM x402_payments WHERE created_at < %s",
+                (now - x402_payment_retention_seconds,),
+            ).rowcount
+            self._conn.commit()
+        return {"x402_invoices": x, "pending_deposits": y, "x402_payments": z}
 
     # ---------- user settings ----------
 
@@ -2722,12 +3200,13 @@ class Ledger:
         share = amount_micro // count
         total = share * count
         with self._lock:
-            self.ensure_user(sender_id, None)
+            self.ensure_user(sender_id, None, commit=False)
             cur = self._conn.execute(
                 "UPDATE users SET balance = balance - %s WHERE tg_id = %s AND balance >= %s",
                 (total, sender_id, total),
             )
             if cur.rowcount == 0:
+                self._conn.rollback()
                 return False, "Недостаточно баланса. Пополни: /deposit", []
             self._conn.execute(
                 "INSERT INTO tx_log (kind, tg_id, counterparty, amount, note) "
@@ -2735,7 +3214,7 @@ class Ledger:
                 (sender_id, ",".join(map(str, chosen)), total),
             )
             for to_id in chosen:
-                self.ensure_user(to_id, None)
+                self.ensure_user(to_id, None, commit=False)
                 self._conn.execute(
                     "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                     (share, to_id),
@@ -2929,15 +3408,6 @@ class Ledger:
                 "total_backers": sum(backers.values()),
             })
         return out
-
-    def _backers_per_option(self, bet_id: int) -> dict[int, int]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT option_idx, COUNT(DISTINCT tg_id) AS c FROM bet_positions "
-                "WHERE bet_id = %s GROUP BY option_idx",
-                (bet_id,),
-            ).fetchall()
-        return {int(r["option_idx"]): int(r["c"]) for r in rows}
 
     def payouts_for(self, bet_id: int) -> list[dict]:
         """Per-backer outcome of a RESOLVED market (deterministic re-computation

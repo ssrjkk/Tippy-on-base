@@ -160,6 +160,11 @@ async def run_loop() -> None:
 
 
 def main() -> None:
+    cfg_errors = config.validate()
+    if cfg_errors:
+        for e in cfg_errors:
+            print(f"  [CONFIG ERROR] {e}")
+        raise SystemExit(1)
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--loop", action="store_true", help="Run continuous loop")
     ap.add_argument("--status", action="store_true", help="Show agent status")

@@ -202,6 +202,25 @@ async def vault_balance() -> float | None:
     return await asyncio.to_thread(_vault_balance_sync)
 
 
+def _receive_pool_balance_sync() -> float:
+    """USDC sitting in the shared x402 receive pool, or 0.0 if not configured."""
+    addr = getattr(config, "X402_RECEIVE_ADDRESS", "") or ""
+    if not addr:
+        return 0.0
+    try:
+        micro = usdc.functions.balanceOf(Web3.to_checksum_address(addr)).call()
+    except Exception:
+        micro = _rpc_call(
+            lambda c: c.functions.balanceOf(Web3.to_checksum_address(addr)).call()
+        )
+    return micro / 10**config.USDC_DECIMALS
+
+
+async def receive_pool_balance() -> float:
+    """Async: USDC in the x402 receive pool (off the event loop)."""
+    return await asyncio.to_thread(_receive_pool_balance_sync)
+
+
 def _scan_deposits(from_block: int, to_block: int) -> list[dict]:
     """Return incoming USDC transfers to the hot wallet.
 
@@ -230,9 +249,9 @@ def _scan_deposits(from_block: int, to_block: int) -> list[dict]:
     else:
         raise RuntimeError(f"all RPC providers failed for get_logs: {last_err}")
     out = []
-    for log in logs:
+    for entry in logs:
         try:
-            event = usdc.events.Transfer().process_log(log)
+            event = usdc.events.Transfer().process_log(entry)
         except Exception:
             continue
         args = event["args"]
@@ -242,7 +261,8 @@ def _scan_deposits(from_block: int, to_block: int) -> list[dict]:
             {
                 "sender": args["from"],
                 "amount_micro": args["value"],
-                "tx_hash": "0x" + log["transactionHash"].hex(),
+                "tx_hash": "0x" + entry["transactionHash"].hex(),
+                "block": int(entry.get("blockNumber") or 0),
             }
         )
     return out
@@ -295,9 +315,15 @@ def _poll_deposits_sync() -> list[dict]:
     if current <= last:
         return credited
     start = max(1, min(last + 1, current - config.DEPOSIT_CONFIRM_BLOCKS))
+    # A deposit may only be credited after DEPOSIT_CONFIRM_BLOCKS confirmations:
+    # blocks newer than `cutoff` can still be reorged, and crediting a reorged
+    # deposit would mint funds out of thin air (nothing ever revokes a credit).
+    # record_pending stays immediate (idempotent, tx_hash PK) so an old deposit
+    # is always re-scanned in the confirm window and credited once mature.
+    cutoff = current - config.DEPOSIT_CONFIRM_BLOCKS
     # Public RPCs reject wide eth_getLogs ranges with 413, so walk the gap in
     # bounded chunks, checkpointing after each one. Idempotency of
-    # record_pending/claim_for_sender makes re-scans safe.
+    # record_pending makes re-scans safe.
     max_end = current
     swept = 0
     while start <= max_end and swept < config.DEPOSIT_SCAN_MAX_CHUNKS_PER_SWEEP:
@@ -305,28 +331,58 @@ def _poll_deposits_sync() -> list[dict]:
         for dep in _scan_deposits(start, chunk_end):
             if ledger.x402_paid(dep["tx_hash"]):
                 continue  # already credited via /api/x402 — never double-credit
-            ledger.record_pending(dep["tx_hash"], dep["sender"], dep["amount_micro"])
-            owner = ledger.tg_id_of_address(dep["sender"])
-            if owner is None:
-                owner = ledger.tg_id_of_proxy(dep["sender"])
-            if owner:
-                for c in ledger.claim_for_sender(owner, dep["sender"]):
-                    credited.append(
-                        {
-                            "tg_id": owner,
-                            "amount_micro": c["amount_micro"],
-                            "tx_hash": c["tx_hash"],
-                        }
-                    )
+            # Record ONLY here. Crediting is done by the DB pass below: the log
+            # re-scan window covers only the newest DEPOSIT_CONFIRM_BLOCKS, and
+            # a deposit must be re-found while STILL inside that window to be
+            # credited from the log. Maturing is not correlated with the window,
+            # so driving it from the logs leaves deposits stuck pending.
+            ledger.record_pending(dep["tx_hash"], dep["sender"], dep["amount_micro"], int(dep.get("block", 0)) or None)
         ledger.set_last_block(chunk_end)
         start = chunk_end + 1
         swept += 1
+    # Credit every MATURED pending deposit each sweep, straight from the DB:
+    # pending_deposits carries the deposit block, so maturity (block <= cutoff)
+    # is decoupled from whether the deposit is still re-found in the log
+    # window. Pop each owner-linked sender; claim_for_sender is idempotent
+    # (claimed=0 arbiter + FOR UPDATE), so overlapping scans never double-credit.
+    for row in ledger.pending_matured(cutoff):
+        owner = ledger.tg_id_of_address(row["sender"])
+        if owner is None:
+            owner = ledger.tg_id_of_proxy(row["sender"])
+        if owner is None:
+            continue  # unlinked wallet — waits for a manual /claim
+        for c in ledger.claim_for_sender(owner, row["sender"], maturity_block=cutoff):
+            credited.append(
+                {
+                    "tg_id": owner,
+                    "amount_micro": c["amount_micro"],
+                    "tx_hash": c["tx_hash"],
+                }
+            )
     return credited
 
 
 async def poll_deposits() -> list[dict]:
     """Async: run one deposit sweep off the event loop."""
     return await asyncio.to_thread(_poll_deposits_sync)
+
+
+async def deposit_cutoff() -> int | None:
+    """Confirmed-deposit cutoff block: current height - DEPOSIT_CONFIRM_BLOCKS.
+
+    Returns None when the chain is unreachable — callers must then REFUSE to
+    credit (a deposit whose confirmation depth cannot be verified may still be
+    reorged; crediting it would mint unbacked balance).
+    """
+    try:
+        # NOTE: web3 exposes eth.block_number as a property whose access issues
+        # the RPC synchronously, so it must be read INSIDE the worker thread
+        # (a bare `to_thread(w3.eth.block_number)` would evaluate it on the
+        # event loop and pass an int to to_thread).
+        current = await asyncio.to_thread(lambda: w3.eth.block_number)
+    except Exception:
+        return None
+    return current - config.DEPOSIT_CONFIRM_BLOCKS
 
 
 def _check_pending_withdrawn_sync() -> None:
@@ -336,7 +392,10 @@ def _check_pending_withdrawn_sync() -> None:
       send -> mark done without a receipt check (never refund a paid tx).
     - 'pending' with tx_hash=NULL = crash between debit-commit and send.
     - 'pending' with a receipt status=0 (reverted) -> refund immediately.
-    - 'pending' still not mined after WITHDRAW_STUCK_TIMEOUT_SECONDS -> refund.
+    - 'pending' with no receipt yet: refund only when the tx is unknown to every
+      node (dropped from the mempool). A tx still in the mempool past the stuck
+      timeout must NOT be refunded — it can still confirm, and a refund would
+      double-pay the user.
     """
     now = int(time.time())
     for row in ledger.pending_withdraws():
@@ -369,8 +428,19 @@ def _check_pending_withdrawn_sync() -> None:
             # the row pending; the next sweep re-checks once RPC recovers.
             continue
         if receipt is None:
-            if now - int(row["created_at"]) > config.WITHDRAW_STUCK_TIMEOUT_SECONDS:
-                ledger.refund_withdraw(wd_id, int(row["tg_id"]), total_micro)
+            if now - int(row["created_at"]) <= config.WITHDRAW_STUCK_TIMEOUT_SECONDS:
+                continue  # not timed out yet; keep waiting
+            # No receipt yet past the timeout. A missing receipt does NOT mean
+            # the tx is gone: it may still sit in the mempool and confirm later,
+            # and refunding such a tx would double-pay the user. Only refund
+            # when the tx hash is unknown to every node (dropped / never seen).
+            try:
+                live_tx = core.get_transaction(tx_hash, first=w3)
+            except Exception:
+                continue  # RPC down for get_transaction: keep pending, re-check later
+            if live_tx is not None:
+                continue  # still pending in the mempool — could still land
+            ledger.refund_withdraw(wd_id, int(row["tg_id"]), total_micro)
         elif bool(receipt.get("status")):
             ledger.mark_withdraw_done(wd_id, tx_hash)
         else:
@@ -382,14 +452,39 @@ async def check_pending_withdraws() -> None:
     await asyncio.to_thread(_check_pending_withdrawn_sync)
 
 
-def _send_usdc_sync(to_address: str, amount_micro: int) -> str:
+def _assert_send_chain() -> None:
+    """Refuse to sign/broadcast a money-move against a chain-misconfigured RPC.
+
+    Checks the LOCAL provider actually building the tx (base.w3) against
+    EXPECTED_CHAIN_ID, not core.w3: base.w3 is what stamps `chainId` into the
+    signed payload (and is tried first for broadcast), so a wrong sticker
+    there would put real funds on the wrong network.
+    """
+    expected = config.EXPECTED_CHAIN_ID
+    if expected and w3.eth.chain_id != expected:
+        raise RuntimeError(
+            f"RPC is on chain {w3.eth.chain_id}, expected {expected} "
+            "(EXPECTED_CHAIN_ID) — refusing to sign"
+        )
+
+
+def _send_usdc_sync(to_address: str, amount_micro: int, wd_id: int | None = None) -> str:
     """Internal sync send USDC from hot wallet. Returns tx hash. Raises on failure.
 
     Serialized by a process lock so two concurrent withdrawals never pick the
     same nonce (which would silently replace one tx with the other).
+
+    When `wd_id` is given, the deterministic tx hash is PERSISTED on the
+    withdrawal row BEFORE broadcast: a post-broadcast DB failure or crash must
+    never leave the row as pending-with-NULL-hash, because the pending-withdraw
+    watcher would then blindly refund a landed tx (double-pay).
     """
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
     with _send_lock:
+        # Never sign/broadcast a money-move against a misconfigured RPC (e.g.
+        # Base Sepolia instead of Base mainnet): live `w3.eth.chain_id` would
+        # be baked into the tx and real funds could land on the wrong chain.
+        _assert_send_chain()
         nonce = core.get_transaction_count(HOT_WALLET, first=w3)
         base_fee = core.get_latest_base_fee(first=w3)
         # Priority tip 0.01 gwei (Base's practical floor; 0.001 gwei can be too
@@ -415,6 +510,8 @@ def _send_usdc_sync(to_address: str, amount_micro: int) -> str:
         # connection drop) we still KNOW the potential hash — without this, a
         # late-confirming tx would be double-paid by an immediate refund.
         tx_hash = "0x" + Web3.keccak(signed.raw_transaction).hex()
+        if wd_id is not None:
+            ledger.set_withdraw_pending_hash(wd_id, tx_hash)
         try:
             raw = core.send_raw_transaction(signed.raw_transaction, first=w3)
         except Exception:
@@ -486,6 +583,10 @@ def _send_vault_batch_sync(rows: list[dict]) -> str:
     )
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
     with _send_lock:
+        # Same guard as _send_usdc_sync: a multi-recipient batchDistribute is
+        # the largest money move in the system, so a chain-misconfigured RPC
+        # must never get a signed-then-broadcast batch on the wrong chain.
+        _assert_send_chain()
         nonce = core.get_transaction_count(HOT_WALLET, first=w3)
         base_fee = core.get_latest_base_fee(first=w3)
         priority = w3.to_wei("0.01", "gwei")
@@ -501,6 +602,11 @@ def _send_vault_batch_sync(rows: list[dict]) -> str:
         )
         signed = acct.sign_transaction(tx)
         tx_hash = "0x" + Web3.keccak(signed.raw_transaction).hex()
+        # Persist the batch hash BEFORE broadcast: a post-broadcast DB failure
+        # or crash must never leave the claimed rows pending-with-NULL-hash,
+        # which the pending-watcher would blindly refund at timeout (double-pay
+        # of a landed batch).
+        ledger.set_withdraw_batch_hash([int(r["id"]) for r in rows], tx_hash)
         try:
             raw = core.send_raw_transaction(signed.raw_transaction, first=w3)
         except Exception:
@@ -513,16 +619,28 @@ def _flush_direct(rows: list[dict]) -> dict:
     sent = 0
     for r in rows:
         wd_id, to, amt = int(r["id"]), r["counterparty"], int(r["amount"])
+        # tx hash is pre-persisted by _send_usdc_sync BEFORE broadcast, so the
+        # only thing that may follow a broadcast is a DB write that can never
+        # route to a refund (a landed tx + refund = double-pay).
         try:
-            tx_hash = _send_usdc_sync(to, amt)
-            ledger.mark_withdraw_done(wd_id, tx_hash)
+            tx_hash = _send_usdc_sync(to, amt, wd_id=wd_id)
+        except BroadcastUncertainError:
+            # hash already persisted; the pending sweep settles it
             sent += 1
-        except BroadcastUncertainError as e:
-            ledger.set_withdraw_pending_hash(wd_id, e.tx_hash)
-            sent += 1
+            continue
         except Exception as e:
             log.warning("direct batch withdraw %s failed (%s); refunding", wd_id, e)
             ledger.refund_withdraw(wd_id, int(r["tg_id"]), amt + _row_fee_micro(r))
+            continue
+        try:
+            ledger.mark_withdraw_done(wd_id, tx_hash)
+            sent += 1
+        except Exception as e:
+            # Post-broadcast DB write failure: keep pending with the hash and
+            # let the pending-watcher's receipt gate settle it — refunding now
+            # would double-pay a tx already on the wire.
+            log.warning("direct batch withdraw %s broadcast but db failed (%s)", wd_id, e)
+            sent += 1
     return {"flushed": sent, "mode": "direct"}
 
 
@@ -544,9 +662,11 @@ def _flush_withdraw_batch_sync() -> dict:
     if config.VAULT_ADDRESS:
         try:
             tx_hash = _send_vault_batch_sync(claimed_rows)
-            ledger.set_withdraw_batch_hash(claimed, tx_hash)
+            # hash was persisted pre-broadcast inside _send_vault_batch_sync
             return {"flushed": len(claimed), "mode": "vault", "tx_hash": tx_hash}
         except BroadcastUncertainError as e:
+            # hash also already persisted pre-broadcast; keep the explicit set
+            # for robustness (idempotent)
             ledger.set_withdraw_batch_hash(claimed, e.tx_hash)
             return {"flushed": len(claimed), "mode": "vault_uncertain", "tx_hash": e.tx_hash}
         except Exception as e:

@@ -30,6 +30,15 @@ SECRET_KEY: str = (
 # your proxy (cloudflared / Koyeb edge / nginx), never for a directly exposed
 # port. False (default) uses the TCP peer IP, which cannot be spoofed.
 TRUST_PROXY_XFF: bool = os.environ.get("TRUST_PROXY_XFF", "0") == "1"
+# Extra safety over TRUST_PROXY_XFF: X-Forwarded-For is only honoured when the
+# DIRECT TCP peer is one of these trusted proxies (comma-separated IPs/hosts).
+# A client forging X-Forwarded-For straight at the app socket (e.g. via a
+# mis-published port) is still bucketed by its real peer IP. Default 127.0.0.1
+# covers a local cloudflared/nginx; on a compose network add the proxy service
+# IP, e.g. "cloudflared,127.0.0.1".
+TRUSTED_PROXY_PEERS: frozenset = frozenset(
+    p.strip() for p in os.environ.get("TRUSTED_PROXY_PEERS", "127.0.0.1").split(",") if p.strip()
+)
 POLL_SECONDS: int = int(os.environ.get("POLL_SECONDS", "15"))
 # Pin api.telegram.org to a reachable Telegram DC IP when DNS is poisoned/blocked.
 TELEGRAM_API_IP: str = os.environ.get("TELEGRAM_API_IP", "").strip()
@@ -60,6 +69,15 @@ X402_ENABLED: bool = os.environ.get("X402_ENABLED") == "1"
 # and the real depositor loses funds. Empty -> x402 stays disabled even if
 # X402_ENABLED=1.
 X402_RECEIVE_ADDRESS: str = os.environ.get("X402_RECEIVE_ADDRESS", "").strip()
+# Optional dedicated signing key for deriving per-invoice x402 pay addresses.
+# Empty -> per-invoice addresses are derived from HOT_WALLET_KEY (recoverable
+# for the sweep). Set this to a dedicated, low-value key if you prefer to keep
+# the hot-wallet key exclusively for the hot wallet (compromise isolation).
+X402_INVOICE_KEY: str = os.environ.get("X402_INVOICE_KEY", "").strip()
+# Floor for x402 payment quotes: settling a payment costs gas, so a quote
+# smaller than this (in USDC) is refused instead of costing the treasury more
+# to settle than the payment yields.
+X402_MIN_USDC: Decimal = Decimal(os.environ.get("X402_MIN_USDC", "0.01"))
 
 # Metrics endpoint protection. Empty (default) -> /metrics is open so a local
 # Prometheus can scrape it directly. Set METRICS_TOKEN to require
@@ -104,6 +122,7 @@ MAX_WITHDRAWS_PER_DAY: int = int(os.environ.get("MAX_WITHDRAWS_PER_DAY", "5"))
 MAX_TIP_USDC: Decimal = Decimal(os.environ.get("MAX_TIP_USDC", "1000"))
 MAX_BET_USDC: Decimal = Decimal(os.environ.get("MAX_BET_USDC", "500"))
 LINK_NONCE_TTL_SECONDS: int = int(os.environ.get("LINK_NONCE_TTL_SECONDS", "3600"))
+LOGIN_NONCE_TTL_SECONDS: int = int(os.environ.get("LOGIN_NONCE_TTL_SECONDS", str(7 * 86400)))
 MAX_OPTION_LEN: int = int(os.environ.get("MAX_OPTION_LEN", "60"))
 MONEY_CMD_COOLDOWN_SECONDS: int = int(os.environ.get("MONEY_CMD_COOLDOWN_SECONDS", "5"))
 MAX_WALLETS_PER_USER: int = int(os.environ.get("MAX_WALLETS_PER_USER", "10"))
@@ -164,6 +183,8 @@ AI_MODEL: str = os.environ.get("AI_MODEL", "openai/gpt-oss-120b")
 AI_TIMEOUT_SECONDS: int = int(os.environ.get("AI_TIMEOUT_SECONDS", "45"))
 AI_COOLDOWN_SECONDS: int = int(os.environ.get("AI_COOLDOWN_SECONDS", "15"))
 AI_MAX_QUESTION_LEN: int = int(os.environ.get("AI_MAX_QUESTION_LEN", "1000"))
+# Global budget for web /api/ask answers per UTC day (LLM token spend guard).
+AI_DAILY_ANSWERS: int = int(os.environ.get("AI_DAILY_ANSWERS", "300"))
 AI_MAX_ANSWER_CHARS: int = int(os.environ.get("AI_MAX_ANSWER_CHARS", "3500"))
 
 # Agent: Telegram user ID for the autonomous agent (0 = disabled)
@@ -281,6 +302,12 @@ VAULT_ADDRESS: str | None = os.environ.get("VAULT_ADDRESS", "").strip() or None
 # Empty -> on-chain markets are simply off; the existing off-chain ones in
 # ledger.py are unaffected either way.
 OUTCOME_MARKET_ADDRESS: str | None = os.environ.get("OUTCOME_MARKET_ADDRESS", "").strip() or None
+# Multi-relayer withdrawal pool (bot/chain/relayers.py). Comma-separated hex
+# private keys; per-relayer USDC daily cap. Empty -> pool disabled (single-key
+# withdraw path only).
+RELAYER_PRIVATE_KEYS: str = os.environ.get("RELAYER_PRIVATE_KEYS", "").strip()
+RELAYER_DAILY_LIMIT: Decimal = Decimal(os.environ.get("RELAYER_DAILY_LIMIT", "10000"))
+RELAYER_FEE_GAS_GWEI: Decimal = Decimal(os.environ.get("RELAYER_FEE_GAS_GWEI", "0.01"))
 # A fresh custodial wallet has 0 ETH, so its first on-chain tx would fail
 # outright — onchain_market tops it up from the hot wallet when it dips below
 # the threshold. Both in whole ETH (Base gas is cheap; this is a few cents).
@@ -337,6 +364,11 @@ def validate() -> None:
         raise ValueError(
             "HOT_WALLET_KEY must be the wallet's 0x + 64-hex private key "
             "(not a seed phrase, not a public address)"
+        )
+    if X402_INVOICE_KEY and not re.fullmatch(r"0x[0-9a-fA-F]{64}", X402_INVOICE_KEY):
+        raise ValueError(
+            "X402_INVOICE_KEY must be a 0x + 64-hex private key, not a public "
+            "address or seed phrase"
         )
     if not BASE_RPC_URL.startswith(("http://", "https://")):
         raise ValueError(f"BASE_RPC_URL is not a valid http(s) URL: {BASE_RPC_URL!r}")

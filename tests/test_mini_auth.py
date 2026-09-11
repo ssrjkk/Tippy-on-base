@@ -14,9 +14,9 @@ from web.mini import INIT_DATA_TTL, verify_init_data
 BOT_TOKEN = '0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi'
 
 
-def _make_init_data(tg_id=123456, extra=None, token=BOT_TOKEN):
+def _make_init_data(tg_id=123456, extra=None, token=BOT_TOKEN, auth_date=None):
     """Build a valid Telegram Mini App initData string."""
-    auth_date = str(int(time.time()))
+    auth_date = str(int(time.time()) if auth_date is None else auth_date)
     user = urllib.parse.quote('{"id":' + str(tg_id) + ',"first_name":"Test"}')
     pairs = {'auth_date': auth_date, 'user': user}
     if extra:
@@ -44,6 +44,18 @@ def test_tampered_data(mock_config):
     tampered = init_data.replace('12345', '99999')
     with pytest.raises(HTTPException) as exc_info:
         verify_init_data(tampered)
+    assert exc_info.value.status_code == 403
+
+
+@patch('web.mini.config')
+def test_future_timestamp(mock_config):
+    mock_config.BOT_TOKEN = BOT_TOKEN
+    # A far-future auth_date must be refused (the old check only saw the past
+    # TTL, so a validly-signed future date would otherwise pass forever).
+    future = int(time.time()) + 3600
+    init_data = _make_init_data(tg_id=12345, auth_date=future)
+    with pytest.raises(HTTPException) as exc_info:
+        verify_init_data(init_data)
     assert exc_info.value.status_code == 403
 
 

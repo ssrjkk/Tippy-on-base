@@ -323,7 +323,11 @@ def test_cmd_claim_bad_format(ledger):
     assert "Формат" in m.answers[0][0]
 
 
-def test_cmd_claim_ok(ledger):
+def test_cmd_claim_ok(ledger, monkeypatch):
+    async def _cutoff():
+        return 999_999_999
+
+    monkeypatch.setattr(handlers.base, "deposit_cutoff", _cutoff)
     ledger.record_pending("0x" + "1" * 64, ACC.address, 5_000_000)
     nonce = ledger.new_link_nonce(ALICE, ACC.address)
     ledger.confirm_link(ALICE, ACC.address, nonce)
@@ -333,8 +337,12 @@ def test_cmd_claim_ok(ledger):
     assert ledger.balance(ALICE) == Decimal("5.000000")
 
 
-def test_cmd_claim_other_users_deposit_rejected(ledger):
+def test_cmd_claim_other_users_deposit_rejected(ledger, monkeypatch):
     """BOB cannot claim ALICE's deposit even knowing the tx hash."""
+    async def _cutoff():
+        return 999_999_999
+
+    monkeypatch.setattr(handlers.base, "deposit_cutoff", _cutoff)
     ledger.record_pending("0x" + "1" * 64, ACC.address, 5_000_000)
     nonce = ledger.new_link_nonce(ALICE, ACC.address)
     ledger.confirm_link(ALICE, ACC.address, nonce)
@@ -345,10 +353,29 @@ def test_cmd_claim_other_users_deposit_rejected(ledger):
     assert ledger.balance(ALICE) == Decimal("0")
 
 
-def test_cmd_claim_unknown(ledger):
+def test_cmd_claim_unknown(ledger, monkeypatch):
+    async def _cutoff():
+        return 999_999_999
+
+    monkeypatch.setattr(handlers.base, "deposit_cutoff", _cutoff)
     m = Message("/claim 0x" + "2" * 64)
     run(cmd_claim(m))
     assert "Транзакция не найдена" in m.answers[0][0]
+
+
+def test_cmd_claim_not_mature(ledger, monkeypatch):
+    """A still-immature pending deposit must NOT be credited via /claim."""
+    async def _cutoff():
+        return 10_000
+
+    monkeypatch.setattr(handlers.base, "deposit_cutoff", _cutoff)
+    ledger.record_pending("0x" + "1" * 64, ACC.address, 5_000_000, block=2_000_000)
+    nonce = ledger.new_link_nonce(ALICE, ACC.address)
+    ledger.confirm_link(ALICE, ACC.address, nonce)
+    m = Message("/claim 0x" + "1" * 64)
+    run(cmd_claim(m))
+    assert ledger.balance(ALICE) == Decimal("0")
+    assert not m.answers[0][0].startswith("Депозит зачислен")
 
 
 def _sign_text_from_answer(text):
@@ -1707,6 +1734,37 @@ def test_cmd_paywall_list_and_buy(ledger):
     m4 = Message("/paywall buy 999", from_id=ALICE)
     run(cmd_paywall(m4, CommandObject(command="paywall", args="buy 999")))
     assert "не найден" in m4.answers[0][0]
+
+
+def test_cmd_paywall_list_sends_one_message(ledger):
+    ledger.ensure_user(BOB, "bob")
+    item_id = ledger.create_paywall(BOB, "Пост", 400_000, "секретный контент")
+    m = Message("/paywall list", from_id=ALICE)
+    run(cmd_paywall(m, CommandObject(command="paywall", args="list")))
+    assert len(m.answers) == 1, "list must send exactly one message"
+    text = m.answers[0][0]
+    assert f"#{item_id}" in text
+    assert "0.4 USDC" in text
+    assert "Купить: /paywall buy" in text
+
+
+def test_on_menu_paywall_list_shows_posts(ledger):
+    ledger.ensure_user(BOB, "bob")
+    item_id = ledger.create_paywall(BOB, "Пост", 400_000, "секретный контент")
+    cb = Callback("paywall_list", ALICE)
+    run(on_menu(cb))
+    text = cb.message.text
+    assert f"#{item_id}" in text
+    assert "0.4 USDC" in text
+    assert "Купить: /paywall buy" in text
+
+
+def test_oc_registry_warn_placeholders():
+    from bot import i18n
+    for lang in ("ru", "en", "zh"):
+        msg = i18n.t(lang, "oc_registry_warn", err="db down", id2=42)
+        assert "db down" in msg
+        assert "42" in msg
 
 
 def test_cmd_paywall_buy_insufficient(ledger):

@@ -170,13 +170,35 @@ async def _run_stdio():
 
 
 async def _run_sse(port: int):
+    import os as _os
+
     from mcp.server.sse import SseServerTransport
     from starlette.applications import Starlette
+    from starlette.responses import JSONResponse as _JSONResponse
     from starlette.routing import Mount, Route
+
+    # Fail closed: an SSE endpoint exposes fund-moving tools (create market,
+    # place bet, sell signal), so it must never start without a secret.
+    mcp_token = _os.environ.get("MCP_AUTH_TOKEN", "").strip()
+    if not mcp_token:
+        raise RuntimeError(
+            "MCP_AUTH_TOKEN is required to run the MCP server over SSE — "
+            "refusing to start an unauthenticated fund-moving endpoint."
+        )
+    allowed_origins = {
+        o.strip().lower().rstrip("/")
+        for o in _os.environ.get("MCP_ALLOWED_ORIGINS", "").split(",")
+        if o.strip()
+    }
 
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request):
+        # Browser-driven cross-site requests carry an Origin header; CLI MCP
+        # clients don't. Block any Origin that isn't explicitly allowed.
+        origin = (request.headers.get("origin") or "").lower().rstrip("/")
+        if origin and origin not in allowed_origins:
+            return _JSONResponse({"detail": "forbidden origin"}, status_code=403)
         async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
             await server.run(streams[0], streams[1], server.create_initialization_options())
 
@@ -187,20 +209,18 @@ async def _run_sse(port: int):
         ],
     )
 
-    import os as _os
-    mcp_token = _os.environ.get("MCP_AUTH_TOKEN", "").strip()
-    if mcp_token:
-        from starlette.middleware.base import BaseHTTPMiddleware
-        from starlette.responses import JSONResponse as _JSONResponse
+    import hmac as _hmac
 
-        class _AuthMiddleware(BaseHTTPMiddleware):
-            async def dispatch(self, request, call_next):
-                auth = request.headers.get("authorization", "")
-                if auth != f"Bearer {mcp_token}":
-                    return _JSONResponse({"detail": "unauthorized"}, status_code=401)
-                return await call_next(request)
+    from starlette.middleware.base import BaseHTTPMiddleware
 
-        app.add_middleware(_AuthMiddleware)
+    class _AuthMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            auth = request.headers.get("authorization", "")
+            if not _hmac.compare_digest(auth, f"Bearer {mcp_token}"):
+                return _JSONResponse({"detail": "unauthorized"}, status_code=401)
+            return await call_next(request)
+
+    app.add_middleware(_AuthMiddleware)
 
     import uvicorn
     config_uvicorn = uvicorn.Config(app, host="127.0.0.1", port=port)

@@ -169,8 +169,8 @@ def main() -> int:
     fac = w3.eth.contract(address=fac_addr, abi=factory_art["abi"])
     pm = w3.eth.contract(address=pm_addr, abi=paymaster_art["abi"])
     try:
-        pred = fac.functions.getAddress(123456).call()
-        print(f"[check] getAddress(123456) pred: {pred}")
+        pred = fac.functions.getAddress(123456, owner).call()
+        print(f"[check] getAddress(123456, owner) pred: {pred}")
         entrypoint_ok = fac.functions.entryPoint().call().lower() == entrypoint.lower()
         pm_owner_ok = pm.functions.owner().call().lower() == owner.lower()
         print(f"[check] factory.entryPoint: {'OK' if entrypoint_ok else 'FAIL'}")

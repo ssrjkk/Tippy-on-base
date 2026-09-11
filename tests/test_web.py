@@ -44,6 +44,68 @@ def test_info(client):
     assert "bot_username" in r.json()
 
 
+def test_peer_trusted_matches_ip_cidr_and_hostname(monkeypatch):
+    from web import server
+
+    assert server._peer_trusted({"127.0.0.1"}, "127.0.0.1") is True
+    assert server._peer_trusted({"172.16.0.0/12"}, "172.31.5.4") is True
+    assert server._peer_trusted({"172.16.0.0/12", "127.0.0.1"}, "8.8.8.8") is False
+    assert server._peer_trusted({"cloudflared"}, "cloudflared") is True
+    assert server._peer_trusted(frozenset(), "unknown") is False
+
+
+def _fake_request(peer_ip, xff):
+    from starlette.requests import Request
+
+    headers = [(b"x-forwarded-for", str(xff).encode())] if xff else []
+    return Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/api/health",
+        "headers": headers,
+        "client": (peer_ip, 4242),
+    })
+
+
+def test_client_ip_never_trusts_xff_from_untrusted_peer(monkeypatch):
+    """A client forging X-Forwarded-For straight at the app socket (peer IP
+    not in TRUSTED_PROXY_PEERS) must be bucketed by its real peer IP — even
+    when TRUST_PROXY_XFF=1 — otherwise the rate limiter is fully spoofable."""
+    from bot import config as cfg
+    from web import server
+
+    monkeypatch.setattr(cfg, "TRUST_PROXY_XFF", True)
+    monkeypatch.setattr(cfg, "TRUSTED_PROXY_PEERS", frozenset({"127.0.0.1"}))
+
+    req = _fake_request("8.8.8.8", "1.2.3.4")
+    assert server._client_ip(req) == "8.8.8.8"
+
+
+def test_client_ip_trusts_xff_from_trusted_peer_rightmost(monkeypatch):
+    """When the direct peer IS a trusted proxy, the rightmost XFF entry (the
+    real client appended by the proxy) is used; the leftmost forged entries
+    are ignored."""
+    from bot import config as cfg
+    from web import server
+
+    monkeypatch.setattr(cfg, "TRUST_PROXY_XFF", True)
+    monkeypatch.setattr(cfg, "TRUSTED_PROXY_PEERS", frozenset({"172.16.0.0/12"}))
+
+    req = _fake_request("172.20.3.9", "7.7.7.7, 203.0.113.5")
+    assert server._client_ip(req) == "203.0.113.5"
+
+
+def test_client_ip_ignores_xff_when_flag_off(monkeypatch):
+    from bot import config as cfg
+    from web import server
+
+    monkeypatch.setattr(cfg, "TRUST_PROXY_XFF", False)
+    monkeypatch.setattr(cfg, "TRUSTED_PROXY_PEERS", frozenset({"127.0.0.1"}))
+
+    req = _fake_request("127.0.0.1", "1.2.3.4")
+    assert server._client_ip(req) == "127.0.0.1"
+
+
 def test_stats_zeros(client):
     r = client.get("/api/stats")
     assert r.status_code == 200
@@ -75,8 +137,17 @@ def test_wallet_shape(client, monkeypatch):
     assert data["balance_usdc"] is None  # RPC unavailable in tests
 
 
-def test_unknown_user_404(client):
-    assert client.get("/api/user/42424242").status_code == 404
+def test_unknown_user_returns_empty_public_shape(client):
+    # No 404 oracle: an unknown tg_id yields an all-zero public shape, so the
+    # endpoint cannot enumerate which ids exist.
+    r = client.get("/api/user/42424242")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["is_owner"] is False
+    assert data["username"] is None
+    assert data["tips_sent_usdc"] == 0.0
+    assert data["tips_received_usdc"] == 0.0
+    assert data.get("balance_usdc") is None  # public shape has no live balance
 
 
 def test_user_endpoint_with_data(client, ledger):
@@ -276,7 +347,7 @@ def test_x402_payment_credited_once(client, ledger, monkeypatch):
     ledger.credit(777, 1_000_000, "deposit")
     tx = "0x" + "ab" * 32
     monkeypatch.setattr(
-        x402, "_verify_payment", lambda h, amt: {"sender": "0x" + "11" * 20, "amount_micro": amt}
+        x402, "_verify_payment", lambda h, amt, addr: {"sender": "0x" + "11" * 20, "amount_micro": amt}
     )
     r = client.post(
         "/api/x402/tip?recipient=777&amount=5", headers={"x-402-payment": tx}
@@ -301,7 +372,7 @@ def test_x402_payment_by_username(client, ledger, monkeypatch):
     ledger.credit(777, 1_000_000, "deposit")
     ledger.ensure_user(777, "alice")
     monkeypatch.setattr(
-        x402, "_verify_payment", lambda h, amt: {"sender": "0x" + "11" * 20, "amount_micro": amt}
+        x402, "_verify_payment", lambda h, amt, addr: {"sender": "0x" + "11" * 20, "amount_micro": amt}
     )
     r = client.post(
         "/api/x402/tip?recipient=alice&amount=2", headers={"x-402-payment": "0x" + "cd" * 32}
@@ -314,7 +385,7 @@ def test_x402_unverified_payment_gets_invoice_again(client, ledger, monkeypatch)
     from web import x402
 
     ledger.credit(777, 1_000_000, "deposit")
-    monkeypatch.setattr(x402, "_verify_payment", lambda h, amt: None)
+    monkeypatch.setattr(x402, "_verify_payment", lambda h, amt, addr: None)
     r = client.post(
         "/api/x402/tip?recipient=777&amount=5", headers={"x-402-payment": "0x" + "ef" * 32}
     )
@@ -365,11 +436,16 @@ def test_x402_verifies_real_transfer_logs(client, ledger, monkeypatch):
     from web import x402
 
     ledger.credit(777, 1_000_000, "deposit")
-    receive = x402._x402_receive_address() or str(x402.hot_wallet())
-    pay_to = receive[2:].lower()
+
+    # 1) Get the invoice to learn the per-invoice pay address
+    r = client.post("/api/x402/tip?recipient=777&amount=5")
+    assert r.status_code == 402
+    pay_addr = r.json()["pay_to"]
+
+    # 2) Build transfer logs that credit THIS invoice's address
     logs = [
         _transfer_log("0x" + "99" * 20, 9_999_999),  # unrelated transfer — ignored
-        _transfer_log("0x" + pay_to, 5_000_000, from_addr="33" * 20),  # the payment
+        _transfer_log(pay_addr, 5_000_000, from_addr="33" * 20),  # the payment
     ]
     monkeypatch.setattr(
         x402.base.w3.eth, "get_transaction_receipt", lambda h: {"status": 1, "logs": logs}
@@ -418,7 +494,7 @@ def test_x402_paywall_purchase_returns_content(client, ledger, monkeypatch):
     item_id = ledger.create_paywall(777, "Мой отчёт", 5_000_000, "секретный контент")
     tx = "0x" + "cc" * 32
     monkeypatch.setattr(
-        x402, "_verify_payment", lambda h, amt: {"sender": "0x" + "22" * 20, "amount_micro": amt}
+        x402, "_verify_payment", lambda h, amt, addr: {"sender": "0x" + "22" * 20, "amount_micro": amt}
     )
     r = client.post(
         f"/api/x402/paywall?item={item_id}&amount=5", headers={"x-402-payment": tx}
@@ -456,7 +532,7 @@ def test_x402_paywall_replay_409(client, ledger, monkeypatch):
     item_id = ledger.create_paywall(777, "Мой отчёт", 5_000_000, "секретный контент")
     tx = "0x" + "dd" * 32
     monkeypatch.setattr(
-        x402, "_verify_payment", lambda h, amt: {"sender": "0x" + "22" * 20, "amount_micro": amt}
+        x402, "_verify_payment", lambda h, amt, addr: {"sender": "0x" + "22" * 20, "amount_micro": amt}
     )
     first = client.post(
         f"/api/x402/paywall?item={item_id}&amount=5", headers={"x-402-payment": tx}
@@ -748,6 +824,14 @@ def test_miniapp_webhook_always_200(client):
     assert r.status_code == 200  # never make the platform retry
 
 
+def test_miniapp_webhook_oversized_body_returns_200(client):
+    # An unbounded body read would let anyone park 100s of MB on the server
+    # for free; the cap must still answer 200 (no platform retries).
+    r = client.post('/api/webhook-miniaction', content=b'x' * 40_000,
+                    headers={'content-type': 'application/json'})
+    assert r.status_code == 200
+
+
 def test_csp_header_strict_no_unsafe_inline(client):
     r = client.get('/')
     csp = r.headers.get('content-security-policy', '')
@@ -755,6 +839,9 @@ def test_csp_header_strict_no_unsafe_inline(client):
     assert "script-src 'self' 'unsafe-inline'" not in csp
     assert 'nonce-' in csp
     assert 'frame-ancestors' in csp
+    # The Telegram login widget (/login) loads from telegram.org — a strict
+    # CSP that does not source-allow it silently breaks the widget.
+    assert 'https://telegram.org' in csp
 
 
 def test_csp_injects_nonce_into_inline_scripts(client):

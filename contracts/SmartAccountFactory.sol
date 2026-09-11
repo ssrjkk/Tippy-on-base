@@ -3,10 +3,13 @@ pragma solidity ^0.8.24;
 
 /// @title SmartAccountFactory — CREATE2 factory for deterministic SmartAccounts.
 /// @notice Each Telegram user (tg_id) gets a deterministic address:
-///         address = keccak256(0xff, factory, keccak256(abi.encode(tg_id)), initCodeHash).
+///         address = keccak256(0xff, factory, keccak256(decimal(tgId) || owner), initCodeHash).
 ///
-///         The bot can compute the address offline; deployment is idempotent.
-///         Follows the same salt pattern as Create2Factory.sol (decimal tg_id string).
+///         The owner is bound INTO the salt, so the counterfactual address of a
+///         user is only claimable by the intended owner. A permissionless caller
+///         cannot front-run `createAccount` with its own owner: that would yield
+///         a different (harmless) address, never the one the bot advertises as
+///         the deposit address. Deployment remains idempotent.
 interface ISmartAccount {
     function initialize(address owner) external;
 }
@@ -29,17 +32,28 @@ contract SmartAccountFactory {
     }
 
     /// @notice Deploy (idempotent) a SmartAccount for `tgId` controlled by `owner`.
+    ///
+    /// @dev The deterministic address binds the owner into the salt: only the
+    ///      intended owner's address produces the address an external party would
+    ///      fund, so account squatting with a foreign owner is not possible.
+    ///      Idempotent: if the exact (tgId, owner) account already exists it is
+    ///      returned; the account can only ever be initialized with its owner.
     function createAccount(uint256 tgId, address owner) external returns (address account) {
         require(owner != address(0), "Factory: zero owner");
-        bytes32 salt = _salt(tgId);
-        account = _deploy(salt);
+        account = getAddress(tgId, owner);
+        if (account.code.length > 0) {
+            // Already deployed for this (tgId, owner) — return idempotently.
+            return account;
+        }
+        account = _deploy(_salt(tgId, owner));
+        require(account == getAddress(tgId, owner), "Factory: address mismatch");
         ISmartAccount(account).initialize(owner);
         emit AccountCreated(account, tgId, owner);
     }
 
-    /// @notice Predict the deterministic address for a tg_id without deploying.
-    function getAddress(uint256 tgId) external view returns (address) {
-        bytes32 salt = _salt(tgId);
+    /// @notice Predict the deterministic address for a tg_id + owner without deploying.
+    function getAddress(uint256 tgId, address owner) public view returns (address) {
+        bytes32 salt = _salt(tgId, owner);
         bytes memory initCode = _getInitCode();
         return address(
             uint160(
@@ -52,22 +66,9 @@ contract SmartAccountFactory {
         );
     }
 
-    /// @notice Check if an account has been deployed for tg_id.
-    function isDeployed(uint256 tgId) external view returns (bool) {
-        bytes32 salt = _salt(tgId);
-        bytes memory initCode = _getInitCode();
-        address predicted = address(
-            uint160(
-                uint256(
-                    keccak256(
-                        abi.encodePacked(bytes1(0xff), address(this), salt, keccak256(initCode))
-                    )
-                )
-            )
-        );
-        uint256 codeSize;
-        assembly { codeSize := extcodesize(predicted) }
-        return codeSize > 0;
+    /// @notice Check if an account has been deployed for tg_id + owner.
+    function isDeployed(uint256 tgId, address owner) external view returns (bool) {
+        return getAddress(tgId, owner).code.length > 0;
     }
 
     /// @dev Deploy via CREATE2.
@@ -79,9 +80,10 @@ contract SmartAccountFactory {
         require(account != address(0), "Factory: create2 failed");
     }
 
-    /// @dev Salt derived from tg_id (same pattern as Create2Factory).
-    function _salt(uint256 tgId) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(_uintToString(tgId)));
+    /// @dev Salt derived from tg_id AND owner: the counterfactual address can
+    ///      only be claimed by the intended owner (see createAccount notes).
+    function _salt(uint256 tgId, address owner) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(_uintToString(tgId), owner));
     }
 
     /// @dev Runtime bytecode of the SmartAccount — must be set via deploy script.

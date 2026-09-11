@@ -34,6 +34,7 @@ import time
 from eth_account import Account
 from eth_account.messages import encode_typed_data
 from web3 import Web3
+from web3.exceptions import TimeExhausted
 
 from bot import config
 
@@ -71,7 +72,7 @@ def _asset() -> tuple[str, str]:
     )
 
 
-def invoice_accepts(amount_micro: int, resource: str, description: str) -> list[dict]:
+def invoice_accepts(amount_micro: int, resource: str, description: str, pay_to: str | None = None) -> list[dict]:
     name, version = _asset()
     return [
         {
@@ -81,7 +82,7 @@ def invoice_accepts(amount_micro: int, resource: str, description: str) -> list[
             "resource": resource,
             "description": description,
             "mimeType": "application/json",
-            "payTo": str(config.X402_RECEIVE_ADDRESS or "").strip(),
+            "payTo": str(pay_to or config.X402_RECEIVE_ADDRESS or "").strip(),
             "asset": config.USDC_ADDRESS,
             "maxTimeoutSeconds": MAX_TIMEOUT_SECONDS,
             "extra": {"name": name, "version": version},
@@ -89,14 +90,16 @@ def invoice_accepts(amount_micro: int, resource: str, description: str) -> list[
     ]
 
 
-def invoice_body(amount_micro: int, resource: str, description: str, error: str = "payment required") -> dict:
+def invoice_body(amount_micro: int, resource: str, description: str, error: str = "payment required",
+                 pay_to: str | None = None) -> dict:
     """Official-shaped 402 JSON body. Legacy detail keys (detail/pay_to/...)
     are kept alongside so first-generation clients keep working."""
+    receive = str(pay_to or config.X402_RECEIVE_ADDRESS or "").strip()
     return {
         "x402Version": X402_VERSION,
         "error": error,
-        "accepts": invoice_accepts(amount_micro, resource, description),
-        "x402_pay_to": str(config.X402_RECEIVE_ADDRESS or "").strip(),
+        "accepts": invoice_accepts(amount_micro, resource, description, pay_to),
+        "x402_pay_to": receive,
         "x402_amount_micro": str(amount_micro),
     }
 
@@ -123,7 +126,10 @@ def decode_payment_header(raw: str) -> dict:
     if not isinstance(auth, dict):
         raise ValueError("missing payload.authorization")
     signature = payload.get("signature")
-    if not isinstance(signature, str) or not signature.startswith("0x") or len(signature) < 130:
+    # A valid compact EIP-3009 signature is EXACTLY "0x" + 130 hex (r 64, s 64,
+    # v 2). Any other length can make _r/_s/_v slice garbage (or an empty v ->
+    # int() crash), so reject it strictly here instead of mid-settlement.
+    if not isinstance(signature, str) or not signature.startswith("0x") or len(signature) != 132:
         raise ValueError("missing or malformed payload.signature")
     for field in ("from", "to", "nonce"):
         if not isinstance(auth.get(field), str) or not auth[field]:
@@ -196,10 +202,6 @@ def verify_eip3009(auth: dict, signature: str, pay_to: str, expected_micro: int)
     return signer
 
 
-def _normalize_signature(signature: str) -> str:
-    return signature if signature.startswith("0x") else "0x" + signature
-
-
 # transferWithAuthorization(v,r,s) — the FiatTokenV2 overload. Not part of
 # the bot's ERC20_ABI, so the settlement builds its own handle.
 EIP3009_ABI = [
@@ -241,8 +243,10 @@ def settle_eip3009(auth: dict, signature: str, pay_to: str) -> dict:
     burning the nonce on-chain.
 
     Returns {"tx": settlement_hash, "value": actually_transferred_micro}.
-    `value` can exceed the invoice amount (hand-rolled clients may overpay) —
-    the caller must credit the ACTUAL transferred amount, never less.
+    `value` can exceed the quoted invoice amount (hand-rolled clients may
+    overpay): the caller caps the credited amount at the QUOTE — the excess
+    stays in the receive pool instead of over-crediting the recipient — and
+    must never credit more than the actual transferred value.
 
     Raises UncertainSettlement when the broadcast result is ambiguous (the
     caller must keep the reservation and reconcile), and RuntimeError on a
@@ -260,41 +264,71 @@ def settle_eip3009(auth: dict, signature: str, pay_to: str) -> dict:
         address=Web3.to_checksum_address(config.USDC_ADDRESS), abi=EIP3009_ABI
     )
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
-    nonce = w3.eth.get_transaction_count(acct.address, "pending")
-    base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
-    priority = w3.to_wei("0.01", "gwei")
-    tx = usdc.functions.transferWithAuthorization(
-        Web3.to_checksum_address(auth["from"]),
-        Web3.to_checksum_address(auth["to"]),
-        int(auth["value"]),
-        int(auth["validAfter"]),
-        int(auth["validBefore"]),
-        "0x" + auth["nonce"].hex(),
-        # The signature is a packed 65-byte rsv string; split for the (v,r,s)
-        # FiatTokenV2 overload. EIP-155 v is normalised to 27/28 for ecrecover.
-        _v(signature),
-        _r(signature),
-        _s(signature),
-    ).build_transaction({
-        "from": acct.address,
-        "nonce": nonce,
-        "gas": 120_000,
-        "maxFeePerGas": base_fee * 2 + priority,
-        "maxPriorityFeePerGas": priority,
-        "chainId": w3.eth.chain_id,
-    })
-    signed = acct.sign_transaction(tx)
-    # Pre-compute the hash from the signed payload: deterministically known
-    # even if the broadcast result is not.
-    tx_hash = "0x" + Web3.keccak(signed.raw_transaction).hex()
+    # The nonce read, tx build AND broadcast must all happen under the shared
+    # hot-wallet _send_lock: every other hot-wallet send (withdrawal, batch
+    # flush, gas drip, x402 sweep, CREATE2, owner op) reads the nonce and
+    # broadcasts under the SAME lock. Reading the nonce outside the lock but
+    # broadcasting inside lets a concurrent send consume that nonce first, so
+    # this settlement would broadcast a stale nonce that replaces/drops the
+    # other tx — the other tx's pre-persisted hash then never confirms and its
+    # pending-watcher refunds it, while this settlement (real money) landed:
+    # a double-pay. Building inside the lock makes nonce and broadcast atomic.
     from bot.base import _send_lock  # shared hot-wallet send lock
 
     with _send_lock:
+        nonce = w3.eth.get_transaction_count(acct.address, "pending")
+        base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
+        priority = w3.to_wei("0.01", "gwei")
+        tx = usdc.functions.transferWithAuthorization(
+            Web3.to_checksum_address(auth["from"]),
+            Web3.to_checksum_address(auth["to"]),
+            int(auth["value"]),
+            int(auth["validAfter"]),
+            int(auth["validBefore"]),
+            "0x" + auth["nonce"].hex(),
+            # The signature is a packed 65-byte rsv string; split for the (v,r,s)
+            # FiatTokenV2 overload. EIP-155 v is normalised to 27/28 for ecrecover.
+            _v(signature),
+            _r(signature),
+            _s(signature),
+        ).build_transaction({
+            "from": acct.address,
+            "nonce": nonce,
+            "gas": 120_000,
+            "maxFeePerGas": base_fee * 2 + priority,
+            "maxPriorityFeePerGas": priority,
+            "chainId": w3.eth.chain_id,
+        })
+        signed = acct.sign_transaction(tx)
+        # Pre-compute the hash from the signed payload: deterministically known
+        # even if the broadcast result is not.
+        tx_hash = "0x" + Web3.keccak(signed.raw_transaction).hex()
         try:
             w3.eth.send_raw_transaction(signed.raw_transaction)
-        except Exception:
-            raise UncertainSettlement(tx_hash) from None
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+        except Exception as e:
+            # Deterministic rejections: the tx never entered the mempool,
+            # so no on-chain state changed. The caller may free the auth
+            # reservation immediately (no reconciliation needed).
+            err = str(e).lower()
+            _DETERMINISTIC = (
+                'nonce already', 'nonce too low', 'nonce has',
+                'replacement transaction underpriced',
+                'insufficient funds', 'insufficient eth',
+                'execution reverted',
+            )
+            if any(s in err for s in _DETERMINISTIC):
+                raise RuntimeError(f'broadcast rejected: {e}') from e
+            # Ambiguous: connection drop after node accepted, timeout,
+            # or unknown error — the tx may or may not have landed.
+            raise UncertainSettlement(tx_hash) from e
+    try:
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+    except (TimeExhausted, TimeoutError) as e:
+        # The broadcast was accepted but the tx never confirmed in time — it
+        # may still be pending or land later. Ambiguous, exactly like an
+        # uncertain broadcast: the reservation MUST stay and the reconcile
+        # sweep finalizes or releases it by the on-chain nonce state.
+        raise UncertainSettlement(tx_hash) from e
     if not receipt.get("status"):
         raise RuntimeError("settlement reverted (nonce already used, or blacklisted payer)")
     # The settled value is what the token actually moved to the receive

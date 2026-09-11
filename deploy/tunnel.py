@@ -33,6 +33,14 @@ def main():
         proc.kill()
         sys.exit(1)
 
+    # Per-IP rate limiting collapses to one bucket while every client arrives
+    # from the local cloudflared (peer 127.0.0.1). Tell the operator to flip
+    # TRUST_PROXY_XFF=1 so the app uses Cloudflare's X-Forwarded-For REAL
+    # client IPs instead — the app only honours XFF from trusted peers
+    # (127.0.0.1 is trusted by default), so direct-socket spoofing stays dead.
+    print("NOTE: set TRUST_PROXY_XFF=1 in .env so this tunnel's clients are",
+          "rate-limited per real IP, and set METRICS_TOKEN to protect /metrics.")
+
     print(f"TUNNEL_URL={url}")
     print(f"MINI_APP={url}/app")
     print(f"Dashboard: {url}")

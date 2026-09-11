@@ -27,6 +27,7 @@ from eth_account.messages import encode_defunct
 from web3 import Web3
 
 from . import config
+from .chain.transfers import _send_lock  # shared hot-wallet nonce/send lock
 
 log = logging.getLogger("tipbot.smart_wallet")
 
@@ -105,8 +106,8 @@ _SMART_ACCOUNT_ABI = json.loads("""[
 
 _SMART_ACCOUNT_FACTORY_ABI = json.loads("""[
     {"inputs":[{"name":"tgId","type":"uint256"},{"name":"owner","type":"address"}],"name":"createAccount","outputs":[{"name":"account","type":"address"}],"stateMutability":"nonpayable","type":"function"},
-    {"inputs":[{"name":"tgId","type":"uint256"}],"name":"getAddress","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
-    {"inputs":[{"name":"tgId","type":"uint256"}],"name":"isDeployed","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"tgId","type":"uint256"},{"name":"owner","type":"address"}],"name":"getAddress","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"},
+    {"inputs":[{"name":"tgId","type":"uint256"},{"name":"owner","type":"address"}],"name":"isDeployed","outputs":[{"name":"","type":"bool"}],"stateMutability":"view","type":"function"},
     {"inputs":[],"name":"entryPoint","outputs":[{"name":"","type":"address"}],"stateMutability":"view","type":"function"}
 ]""")
 
@@ -195,17 +196,34 @@ def _usdc():
 # Address prediction
 # ---------------------------------------------------------------------------
 
+def _owner() -> str:
+    """The SmartAccount owner: the bot hot wallet that signs UserOperations.
+
+    Bound INTO the CREATE2 salt (see SmartAccountFactory.sol), so the
+    counterfactual address a user is told to fund can only ever be claimed by
+    this owner. Deterministic — no network involved.
+    """
+    return Web3.to_checksum_address(
+        Account.from_key(config.HOT_WALLET_KEY).address
+    )
+
+
 def predict_address(tg_id: int) -> str:
-    """Compute the deterministic SmartAccount address for tg_id (no on-chain call)."""
+    """Compute the deterministic SmartAccount address for tg_id (no on-chain call).
+
+    Owner is the bot hot wallet, bound into the salt: an attacker front-running
+    ``createAccount`` with their own owner gets a different address — never the
+    one advertised to the user as the deposit address.
+    """
     f = _factory()
-    addr = f.functions.getAddress(tg_id).call()
+    addr = f.functions.getAddress(tg_id, _owner()).call()
     return Web3.to_checksum_address(addr)
 
 
 def is_deployed(tg_id: int) -> bool:
     """Check if the SmartAccount is already deployed on-chain."""
     f = _factory()
-    return f.functions.isDeployed(tg_id).call()
+    return f.functions.isDeployed(tg_id, _owner()).call()
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +240,11 @@ def create_account_sync(tg_id: int) -> str:
     f = _factory()
     # The SmartAccount owner is the relayer (bot hot wallet) that signs
     # UserOperations and executes handleOps. NOT the EntryPoint.
-    owner_addr = Web3.to_checksum_address(acct.address)
+    owner_addr = _owner()
+
+    # Idempotent: if the (tgId, owner)-bound account already exists, return it.
+    if is_deployed(tg_id):
+        return predict_address(tg_id)
 
     base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
     priority = w3.to_wei("0.01", "gwei")
@@ -239,16 +261,22 @@ def create_account_sync(tg_id: int) -> str:
         gas_limit = int(gas_est * 1.2)
     except Exception:
         gas_limit = 1_000_000
-    tx = f.functions.createAccount(tg_id, owner_addr).build_transaction({
-        "from": acct.address,
-        "nonce": w3.eth.get_transaction_count(acct.address, "pending"),
-        "gas": gas_limit,
-        "maxFeePerGas": max_fee,
-        "maxPriorityFeePerGas": priority,
-        "chainId": w3.eth.chain_id,
-    })
-    signed = acct.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    # Nonce read + build + signature + broadcast under the shared hot-wallet
+    # lock: createAccount is sent FROM the hot wallet, whose nonce sequence the
+    # withdraw/batch/x402 paths also consume. A nonce read outside the lock
+    # could collide and silently replace a withdrawal tx (or vice versa).
+    with _send_lock:
+        nonce = w3.eth.get_transaction_count(acct.address, "pending")
+        tx = f.functions.createAccount(tg_id, owner_addr).build_transaction({
+            "from": acct.address,
+            "nonce": nonce,
+            "gas": gas_limit,
+            "maxFeePerGas": max_fee,
+            "maxPriorityFeePerGas": priority,
+            "chainId": w3.eth.chain_id,
+        })
+        signed = acct.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
     if receipt["status"] != 1:
         raise RuntimeError(f"SmartAccount deploy reverted: {tx_hash.hex()}")
@@ -475,19 +503,24 @@ def approve_and_trade_sync(
     ep = _entrypoint()
     base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
     priority = w3.to_wei("0.01", "gwei")
-    tx = ep.functions.handleOps(
-        [_pack_user_op(user_op)],
-        acct.address,
-    ).build_transaction({
-        "from": acct.address,
-        "nonce": w3.eth.get_transaction_count(acct.address, "pending"),
-        "gas": 1_000_000,
-        "maxFeePerGas": base_fee * 2 + priority,
-        "maxPriorityFeePerGas": priority,
-        "chainId": w3.eth.chain_id,
-    })
-    signed = acct.sign_transaction(tx)
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    # Nonce read + build + sign + broadcast under the shared hot-wallet lock:
+    # handleOps is sent FROM the hot wallet, whose nonce the withdraw/batch/
+    # x402 paths also consume — a nonce read outside the lock could collide
+    # and silently replace a withdrawal tx.
+    with _send_lock:
+        tx = ep.functions.handleOps(
+            [_pack_user_op(user_op)],
+            acct.address,
+        ).build_transaction({
+            "from": acct.address,
+            "nonce": w3.eth.get_transaction_count(acct.address, "pending"),
+            "gas": 1_000_000,
+            "maxFeePerGas": base_fee * 2 + priority,
+            "maxPriorityFeePerGas": priority,
+            "chainId": w3.eth.chain_id,
+        })
+        signed = acct.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
     if receipt["status"] != 1:
         raise RuntimeError(f"UserOp reverted: {tx_hash.hex()}")

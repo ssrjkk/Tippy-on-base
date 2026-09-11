@@ -1,10 +1,13 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     environment:
       POSTGRES_USER: tippy
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tippy}
+      # No default password: a fresh stack with a trivially-guessable "tippy"
+      # DB credential would be worse than a refusal to start. compose fails
+      # fast if POSTGRES_PASSWORD is unset/empty.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: tippy
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -13,6 +16,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
 
   app:
     build: .
@@ -22,13 +31,16 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://tippy:${POSTGRES_PASSWORD:-tippy}@db:5432/tippy
+      DATABASE_URL: postgresql://tippy:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@db:5432/tippy
       PYTHONUTF8: 1
       # The only entry to this stack is the tunnel/edge (which reaches the app
       # over the compose network), so the real client IP is the rightmost XFF
-      # appended by that trusted proxy. Secure by default: this flag stays OFF
-      # for any directly-exposed deployment.
+      # appended by that trusted proxy. The peer guard below matches the whole
+      # compose private network (cloudflared's container IP is dynamic);
+      # a request forging XFF straight at the app socket is never trusted
+      # because its peer is outside this range.
       TRUST_PROXY_XFF: "1"
+      TRUSTED_PROXY_PEERS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,127.0.0.1"
     # No host "ports" mapping on purpose: the app must not be directly
     # reachable on the VM's public IP — only through the cloudflared tunnel /
     # Koyeb edge. The healthcheck below runs inside the container against
@@ -39,9 +51,20 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          # Web + bot + web3 in one process: 2 GiB cap stops the platform from
+          # OOM-killing the host; the reservation protects it from being
+          # oversubscribed by other tenants.
+          memory: 2G
+          cpus: "1.0"
+        reservations:
+          memory: 512M
+          cpus: "0.25"
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:latest@sha256:ff69a2225ad7c6f85ed84fbd5f3087df46202426b2388ec60214098e0adf05e9
     restart: unless-stopped
     command: tunnel run
     environment:
@@ -49,6 +72,12 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 32M
 
 volumes:
   pgdata:

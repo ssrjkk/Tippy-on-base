@@ -92,6 +92,39 @@ def _send_token_sync(to_address: str, amount_raw: int, token_address: str | None
     return _build_and_send(build)
 
 
+def _send_token_as_sync(signer_key: str, to_address: str, amount_raw: int,
+                        token_address: str | None = None) -> str:
+    """Send an ERC-20 from an ARBITRARY signer (not the hot wallet).
+
+    Used by the x402 sweep: per-invoice pay addresses hold USDC that must be
+    consolidated to the x402 receive address, but they are not the hot wallet,
+    so they have their own nonce. Runs under the SAME _send_lock as every
+    other send so the hot-wallet nonce and the derived-address nonce cannot be
+    read/stamped concurrently."
+
+    Raises on failure (the caller decides whether to mark the invoice swept).
+    """
+    network.assert_base_chain_sync()
+    acct = core.w3.eth.account.from_key(signer_key)
+    with _send_lock:
+        n = core.get_transaction_count(acct.address)
+        base_fee = core.get_latest_base_fee()
+        priority = core.w3.to_wei("0.01", "gwei")
+        max_fee = base_fee * 2 + priority
+        tok = Web3.to_checksum_address(token_address) if token_address else core.USDC
+        contract = core.w3.eth.contract(address=tok, abi=config.ERC20_ABI)
+        tx = contract.functions.transfer(Web3.to_checksum_address(to_address), int(amount_raw)).build_transaction({
+            "from": acct.address,
+            "nonce": n,
+            "maxPriorityFeePerGas": priority,
+            "maxFeePerGas": max_fee,
+            "chainId": core.w3.eth.chain_id,
+        })
+        signed = acct.sign_transaction(tx)
+        raw = core.send_raw_transaction(signed.raw_transaction)
+        return "0x" + raw.hex()
+
+
 async def send_token(to_address: str, amount_raw: int, token_address: str | None = None) -> str:
     """Async: generic ERC-20 send from the hot wallet (off the event loop)."""
     return await asyncio.to_thread(_send_token_sync, to_address, amount_raw, token_address)

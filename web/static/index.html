@@ -18,7 +18,7 @@
         <span class="brand-name"><b>Tippy</b></span>
       </a>
       <div class="nav-actions">
-        <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+        <button class="theme-toggle" data-act="toggleTheme" aria-label="Toggle theme">
           <span class="icon-moon">🌙</span>
           <span class="icon-sun">☀️</span>
         </button>
@@ -188,6 +188,10 @@
       if (isDark) { document.documentElement.removeAttribute('data-theme'); localStorage.setItem('theme', 'light'); }
       else { document.documentElement.setAttribute('data-theme', 'dark'); localStorage.setItem('theme', 'dark'); }
     }
+    document.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-act]');
+      if (el && el.dataset.act === 'toggleTheme') toggleTheme();
+    });
   </script>
   <script src="/app.js"></script>
 </body>

@@ -39,7 +39,7 @@
         <span class="base-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="17" font-size="15" font-weight="800" text-anchor="middle" fill="white">b</text></svg></span>
         <span class="brand-name"><b>Tippy</b></span>
       </a>
-      <a class="btn btn-ghost" href="/logout">Log out</a>
+      <a class="btn btn-ghost" href="#" id="logout">Log out</a>
     </div>
   </header>
 
@@ -82,6 +82,11 @@ async function load() {
       <a class="btn btn-ghost" href="/">Public dashboard</a>
     </div>`;
 }
+document.getElementById('logout').onclick = async (e) => {
+  e.preventDefault();
+  await fetch('/logout', { method: 'POST' });
+  location.href = '/';
+};
 load();
 </script>
 </body>

@@ -69,6 +69,52 @@ class TestSolvencyChaos:
             mock_bot.send_message.assert_not_called()
 
 
+class TestHandlerErrorsChaos:
+    """The global @router.errors() safety net."""
+
+    @pytest.mark.asyncio
+    async def test_private_chat_error_informs_user(self, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from aiogram.types import Chat, ErrorEvent, Message, Update, User
+
+        from bot.handlers import _common
+
+        chat = Chat(id=42, type="private")
+        user = User(id=7, is_bot=False, first_name="T")
+        msg = Message(message_id=1, date=0, text="/boom", chat=chat, from_user=user)
+        up = Update(update_id=1, message=msg)
+        bot = AsyncMock()
+        up._bot = bot
+
+        monkeypatch.setattr(_common, "user_lang", AsyncMock(return_value="ru"))
+        monkeypatch.setattr(_common.config, "ADMIN_TG_ID", "")
+
+        await _common._on_error(ErrorEvent(update=up, exception=ValueError("boom")))
+
+        assert bot.send_message.await_count == 1
+        chat_id, text = bot.send_message.await_args.args
+        assert chat_id == 42
+        assert text == _common.i18n.t("ru", "error_generic")
+
+    @pytest.mark.asyncio
+    async def test_error_handling_never_raises(self, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from aiogram.types import ErrorEvent, Update
+
+        from bot.handlers import _common
+
+        monkeypatch.setattr(_common, "user_lang", AsyncMock(return_value="ru"))
+        monkeypatch.setattr(_common.config, "ADMIN_TG_ID", "")
+
+        # Update with nothing inside — the handler must not raise.
+        up = Update(update_id=1)
+        up._bot = AsyncMock()
+        await _common._on_error(ErrorEvent(update=up, exception=RuntimeError("x")))
+        assert up.bot.send_message.await_count == 0  # no user chat -> nothing sent
+
+
 class TestCreate2Chaos:
     """Test CREATE2 address derivation."""
 

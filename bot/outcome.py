@@ -97,16 +97,18 @@ def oracle_resolve(w3: Web3, market_id: int, winning_outcome: int) -> str:
     c = _contract(w3)
     if c is None:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
-    tx = c.functions.oracleResolve(market_id, winning_outcome).build_transaction({
-        "from": config.ORACLE_ADDRESS,
-        "nonce": w3.eth.get_transaction_count(config.ORACLE_ADDRESS, "pending"),
-        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
-        "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
-        "chainId": w3.eth.chain_id,
-    })
     acct = w3.eth.account.from_key(config.ORACLE_PRIVATE_KEY)
-    signed = acct.sign_transaction(tx)
+    # Nonce read + build + sign + broadcast under the shared lock: concurrent
+    # oracle resolutions must never read the same ORACLE nonce (replacement).
     with _send_lock:
+        tx = c.functions.oracleResolve(market_id, winning_outcome).build_transaction({
+            "from": config.ORACLE_ADDRESS,
+            "nonce": w3.eth.get_transaction_count(config.ORACLE_ADDRESS, "pending"),
+            "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+            "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
+            "chainId": w3.eth.chain_id,
+        })
+        signed = acct.sign_transaction(tx)
         return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
 
 
@@ -115,16 +117,16 @@ def owner_resolve(w3: Web3, market_id: int, winning_outcome: int) -> str:
     c = _contract(w3)
     if c is None:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
-    tx = c.functions.ownerResolve(market_id, winning_outcome).build_transaction({
-        "from": _HOT_WALLET,
-        "nonce": w3.eth.get_transaction_count(_HOT_WALLET, "pending"),
-        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
-        "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
-        "chainId": w3.eth.chain_id,
-    })
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
-    signed = acct.sign_transaction(tx)
     with _send_lock:
+        tx = c.functions.ownerResolve(market_id, winning_outcome).build_transaction({
+            "from": _HOT_WALLET,
+            "nonce": w3.eth.get_transaction_count(_HOT_WALLET, "pending"),
+            "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+            "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
+            "chainId": w3.eth.chain_id,
+        })
+        signed = acct.sign_transaction(tx)
         return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
 
 
@@ -133,16 +135,16 @@ def dispute_resolution(w3: Web3, market_id: int) -> str:
     c = _contract(w3)
     if c is None:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
-    tx = c.functions.disputeResolution(market_id).build_transaction({
-        "from": _HOT_WALLET,
-        "nonce": w3.eth.get_transaction_count(_HOT_WALLET, "pending"),
-        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
-        "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
-        "chainId": w3.eth.chain_id,
-    })
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
-    signed = acct.sign_transaction(tx)
     with _send_lock:
+        tx = c.functions.disputeResolution(market_id).build_transaction({
+            "from": _HOT_WALLET,
+            "nonce": w3.eth.get_transaction_count(_HOT_WALLET, "pending"),
+            "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+            "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
+            "chainId": w3.eth.chain_id,
+        })
+        signed = acct.sign_transaction(tx)
         return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()
 
 
@@ -151,14 +153,14 @@ def cancel_expired(w3: Web3, market_id: int) -> str:
     c = _contract(w3)
     if c is None:
         raise RuntimeError("OUTCOME_MARKET_ADDRESS not set")
-    tx = c.functions.cancelExpired(market_id).build_transaction({
-        "from": _HOT_WALLET,
-        "nonce": w3.eth.get_transaction_count(_HOT_WALLET, "pending"),
-        "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
-        "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
-        "chainId": w3.eth.chain_id,
-    })
     acct = w3.eth.account.from_key(config.HOT_WALLET_KEY)
-    signed = acct.sign_transaction(tx)
     with _send_lock:
+        tx = c.functions.cancelExpired(market_id).build_transaction({
+            "from": _HOT_WALLET,
+            "nonce": w3.eth.get_transaction_count(_HOT_WALLET, "pending"),
+            "maxPriorityFeePerGas": w3.to_wei("0.01", "gwei"),
+            "maxFeePerGas": w3.eth.get_block("latest")["baseFeePerGas"] * 2,
+            "chainId": w3.eth.chain_id,
+        })
+        signed = acct.sign_transaction(tx)
         return "0x" + w3.eth.send_raw_transaction(signed.raw_transaction).hex()

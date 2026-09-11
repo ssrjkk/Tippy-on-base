@@ -1,10 +1,12 @@
 """Tests for the multi-relayer pool."""
 
 import time
+from pathlib import Path
 
+import pytest
 from web3 import Web3
 
-from bot.chain.relayers import Relayer, RelayerPool
+from bot.chain.relayers import Relayer, RelayerPool, _load_usage, _save_usage
 
 
 def _make_relayer(addr_suffix: str = "aa", daily_limit: int = 10_000_000) -> Relayer:
@@ -34,6 +36,37 @@ class TestRelayer:
         # Simulate new day
         r._day_start = int(time.time()) // 86400 - 1
         assert r.remaining() == 1_000_000
+
+
+class TestRelayerPersistence:
+    @pytest.fixture(autouse=True)
+    def _isolate_state_file(self, monkeypatch, tmp_path):
+        state_file = tmp_path / "relayer_usage.json"
+        monkeypatch.setattr("bot.chain.relayers._STATE_FILE_PATH", str(state_file))
+        yield
+        Path(state_file).unlink(missing_ok=True)
+
+    def test_record_send_persists_for_production_relayer(self):
+        r = _make_relayer(daily_limit=1_000_000)
+        r._persist = True
+        r.record_send(400_000)
+        usage = _load_usage()
+        day = str(int(time.time()) // 86400)
+        assert usage.get(f"{day}:{r.address.lower()}") == 400_000
+
+    def test_non_production_relayer_does_not_persist(self):
+        r = _make_relayer(daily_limit=1_000_000)
+        r.record_send(400_000)
+        assert _load_usage() == {}
+
+    def test_from_config_restores_spent_after_restart(self, monkeypatch):
+        from bot import config as bot_config
+        monkeypatch.setattr(bot_config, "RELAYER_PRIVATE_KEYS", "0x" + ("01" * 32))
+        addr = Web3.to_checksum_address(Web3().eth.account.from_key("0x" + ("01" * 32)).address)
+        day = str(int(time.time()) // 86400)
+        _save_usage({f"{day}:{addr.lower()}": 300_000})
+        pool = RelayerPool.from_config()
+        assert pool.relayers[0].spent_today_persisted() == 300_000
 
 
 class TestRelayerPool:

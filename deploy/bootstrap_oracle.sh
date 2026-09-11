@@ -26,6 +26,28 @@ set -euo pipefail
 log() { printf '[bootstrap] %s\n' "$*"; }
 fatal() { printf '[bootstrap] ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Set KEY=VALUE in a dotenv file WITHOUT shell metacharacter injection.
+# Values may contain '|', '&', '\', '$' etc.; a plain `sed -i "s|k=.|k=$v|"`
+# would interpret those as substitution metacharacters and corrupt or
+# inject into the secrets file.
+set_kv() {
+    local k="$1" v="$2" f="$3"
+    if [ "$(printf '%s' "$v" | grep -c $'\n' || true)" -gt 0 ]; then
+        fatal "refusing to write ${k}: values with newlines are not supported"
+    fi
+    if grep -q "^${k}=" "$f"; then
+        awk -v k="$k" -v v="$v" 'BEGIN { FS="="; OFS="=" }
+            $1 == k { print k, v; rewritten = 1; next }
+            { print }
+            END { if (!rewritten) print k, v }' "$f" > "${f}.tmp"
+    else
+        cp "$f" "${f}.tmp"
+        printf '%s=%s\n' "$k" "$v" >> "${f}.tmp"
+    fi
+    mv "${f}.tmp" "$f"
+    chmod 600 "$f"
+}
+
 : "${REPO_URL:=https://github.com/ssrjkk/Tippy-on-base.git}"
 : "${APP_DIR:=/opt/tippy}"
 : "${BRANCH:=main}"
@@ -79,9 +101,11 @@ fi
 cd "$APP_DIR"
 if [ ! -f .env ]; then
     cp deploy/prod.env.example .env
+    chmod 600 .env
     log "Created .env from deploy/prod.env.example."
 else
-    log "Existing .env found; leaving it untouched."
+    log "Existing .env found; leaving it untouched (fixing permissions)."
+    chmod 600 .env
 fi
 
 # Merge env vars that were pre-seeded (exported before running).
@@ -92,11 +116,7 @@ changed=0
 for v in $vars; do
     eval "val=\${$v:-}"
     if [ -n "${val}" ]; then
-        if grep -q "^${v}=" .env; then
-            sed -i "s|^${v}=.*|${v}=${val}|" .env
-        else
-            printf '%s=%s\n' "$v" "$val" >> .env
-        fi
+        set_kv "$v" "${val}" .env
         changed=1
     fi
 done
@@ -110,11 +130,7 @@ case "$gen_key" in
     0x0000000000000000000000000000000000000000000000000000000000000000|"")
         raw=$(openssl rand -hex 32)
         key="0x${raw}"
-        if grep -q '^HOT_WALLET_KEY=' .env; then
-            sed -i "s|^HOT_WALLET_KEY=.*|HOT_WALLET_KEY=${key}|" .env
-        else
-            printf 'HOT_WALLET_KEY=%s\n' "$key" >> .env
-        fi
+        set_kv "HOT_WALLET_KEY" "$key" .env
         log "Generated a fresh hot-wallet private key (stored only in $APP_DIR/.env)."
         ;;
 esac
@@ -123,12 +139,19 @@ esac
 wek=$(grep -E '^WALLET_ENC_KEY=' .env | tail -1 | cut -d= -f2- || true)
 if [ -z "$wek" ] || [ "${#wek}" -lt 32 ]; then
     enc=$(openssl rand -hex 32)
-    if grep -q '^WALLET_ENC_KEY=' .env; then
-        sed -i "s|^WALLET_ENC_KEY=.*|WALLET_ENC_KEY=${enc}|" .env
-    else
-        printf 'WALLET_ENC_KEY=%s\n' "$enc" >> .env
-    fi
+    set_kv "WALLET_ENC_KEY" "$enc" .env
     log "Generated WALLET_ENC_KEY (stored only in $APP_DIR/.env)."
+fi
+
+# SECRET_KEY: signs web session cookies and HMACs payloads. config.validate()
+# REFUSES to start without it, so a missing key crash-loops the container.
+# Auto-generate when absent; the app also refuses to run with the old
+# BOT_TOKEN-derived fallback in production (see config.py).
+skey=$(grep -E '^SECRET_KEY=' .env | tail -1 | cut -d= -f2- || true)
+if [ -z "$skey" ]; then
+    sec=$(openssl rand -hex 32)
+    set_kv "SECRET_KEY" "$sec" .env
+    log "Generated SECRET_KEY (stored only in $APP_DIR/.env)."
 fi
 
 # --- sanity: bot token must be real before the app can run --------------------

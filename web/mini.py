@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json as _json
 import logging
+import os
 import time
 import urllib.parse
 
@@ -26,6 +27,7 @@ router = APIRouter()
 log = logging.getLogger('web.mini')
 MICRO = 10 ** config.USDC_DECIMALS
 INIT_DATA_TTL = 24 * 3600
+INIT_DATA_FUTURE_SKEW = 300
 
 def verify_init_data(init_data: str) -> int:
     """Validate Telegram Mini App initData, return tg_id."""
@@ -45,6 +47,8 @@ def verify_init_data(init_data: str) -> int:
         auth_date = int(data.get('auth_date', '0'))
     except ValueError:
         raise HTTPException(403, 'bad auth_date') from None
+    if auth_date > int(time.time()) + INIT_DATA_FUTURE_SKEW:
+        raise HTTPException(403, 'auth_date in the future')
     if time.time() - auth_date > INIT_DATA_TTL:
         raise HTTPException(403, 'stale initData')
     try:
@@ -68,6 +72,40 @@ async def _user(request: Request) -> int:
 
 def _fmt(micro: int) -> float:
     return round(micro / MICRO, 2)
+
+
+def _cap_micro(usdc: float) -> int:
+    """USDC-decimal cap (config) in micro units, capped at 0."""
+    return max(0, round(usdc * MICRO))
+
+
+_money_last: dict[tuple[int, str], float] = {}
+
+
+def _throttle(tg_id: int, action: str) -> None:
+    """Per-user cooldown for money actions, mirroring the Telegram handlers.
+
+    The Mini App otherwise bypasses MONEY_CMD_COOLDOWN_SECONDS (it only had the
+    per-IP limiter), letting one user hammer money endpoints far faster than a
+    legit human could. Returns HTTP 429 when a money action is on cooldown.
+    Disabled under TESTING=1 (same as the web rate limiter) so test clients
+    that reuse one tg_id across cases are not throttled.
+    """
+    if os.environ.get('TESTING') == '1':
+        return
+    cooldown = config.MONEY_CMD_COOLDOWN_SECONDS
+    if cooldown <= 0:
+        return
+    key = (tg_id, action)
+    now = time.time()
+    last = _money_last.get(key, 0.0)
+    if now - last < cooldown:
+        raise HTTPException(429, f'please wait {int(cooldown - (now - last)) + 1}s')
+    if len(_money_last) > 100_000:
+        cutoff = now - 3600
+        for k in [k for k, v in _money_last.items() if v < cutoff]:
+            _money_last.pop(k, None)
+    _money_last[key] = now
 
 @router.post('/api/mini/auth', tags=['auth'])
 async def mini_auth(body: InitAuth, request: Request):
@@ -172,9 +210,27 @@ async def mini_smartbuy(body: SmartBuyBody, request: Request) -> dict:
     deployed (it must already hold USDC).
     """
     tg_id = await _user(request)
+    _throttle(tg_id, 'smartbuy')
     if not _smart_wallet_enabled():
         raise HTTPException(503, 'smart wallet not enabled')
     from bot import smart_wallet as sw
+
+    # Server-side market validation BEFORE signing a sponsored UserOp: raw
+    # market_id/outcome values would otherwise burn the paymaster's gas on a
+    # revert (internal re: turns a failed buy into a fee the operator pays).
+    m = await ledger.get_onchain_market(body.market_id)
+    if not m:
+        raise HTTPException(400, 'unknown on-chain market')
+    options = _json.loads(m['options'])
+    if body.outcome < 0 or body.outcome >= len(options):
+        raise HTTPException(400, 'invalid outcome')
+    from bot import onchain_market as om
+    try:
+        info = await om.get_market_info(body.market_id)
+    except Exception:
+        raise HTTPException(503, 'chain read failed') from None
+    if info.get('resolved') or info.get('cancelled') or info.get('disputed'):
+        raise HTTPException(400, 'market settled')
 
     if not await asyncio.to_thread(sw.is_deployed, tg_id):
         raise HTTPException(400, 'smart account not deployed — deposit USDC first')
@@ -198,9 +254,13 @@ _ERR_MSG = {'closed': 'market closed', 'deadline': 'deadline passed', 'badopt': 
 @router.post('/api/mini/tip', tags=['users'])
 async def mini_tip(body: TipBody, request: Request) -> dict:
     tg_id = await _user(request)
+    _throttle(tg_id, 'tip')
     micro = round(body.amount * MICRO)
     if micro <= 0:
         raise HTTPException(400, 'amount must be positive')
+    max_micro = _cap_micro(config.MAX_TIP_USDC)
+    if micro > max_micro:
+        raise HTTPException(400, f'tip exceeds the {_fmt(max_micro)} USDC cap')
     to = body.to.strip().lstrip('@')
     # Basenames first (name.base.eth -> on-chain address -> tg_id), then the
     # Telegram-username path, then a raw numeric tg_id.
@@ -231,9 +291,13 @@ class TradeBody(BaseModel):
 @router.post('/api/mini/trade', tags=['markets'])
 async def mini_trade(body: TradeBody, request: Request) -> dict:
     tg_id = await _user(request)
+    _throttle(tg_id, 'trade')
     micro = round(body.amount * MICRO)
     if micro <= 0:
         raise HTTPException(400, 'amount must be positive')
+    max_micro = _cap_micro(config.MARKET_MAX_TRADE_USDC)
+    if micro > max_micro:
+        raise HTTPException(400, f'trade exceeds the {_fmt(max_micro)} USDC cap')
     status, info = await ledger.buy_shares(body.market_id, tg_id, body.option, micro)
     if status != 'ok':
         raise HTTPException(400, _ERR_MSG.get(status, status))
@@ -249,9 +313,13 @@ class BetPlaceBody(BaseModel):
 @router.post('/api/mini/betplace', tags=['markets'])
 async def mini_betplace(body: BetPlaceBody, request: Request) -> dict:
     tg_id = await _user(request)
+    _throttle(tg_id, 'betplace')
     micro = round(body.amount * MICRO)
     if micro <= 0:
         raise HTTPException(400, 'amount must be positive')
+    max_micro = _cap_micro(config.MAX_BET_USDC)
+    if micro > max_micro:
+        raise HTTPException(400, f'bet exceeds the {_fmt(max_micro)} USDC cap')
     res = await ledger.place_bet(body.bet_id, tg_id, body.option, micro)
     if res != 'ok':
         raise HTTPException(400, _ERR_MSG.get(res, res))
@@ -316,6 +384,7 @@ def _parse_deadline(hours: float | None) -> int | None:
 @router.post('/api/mini/create', tags=['markets'])
 async def mini_create(body: CreateBody, request: Request) -> dict:
     tg_id = await _user(request)
+    _throttle(tg_id, 'create')
     question = body.question.strip()
     options = [o.strip() for o in body.options if o.strip()]
     if len(question) < 5 or len(options) < 2:
@@ -327,8 +396,12 @@ async def mini_create(body: CreateBody, request: Request) -> dict:
     close_at = _parse_deadline(body.hours)
     if body.kind == 'market':
         subsidy_micro = round(body.subsidy_usdc * MICRO)
-        if subsidy_micro < 1:
-            raise HTTPException(400, 'subsidy too small')
+        min_micro = _cap_micro(config.MARKET_MIN_SUBSIDY_USDC)
+        max_micro = _cap_micro(config.MARKET_MAX_SUBSIDY_USDC)
+        if subsidy_micro < min_micro:
+            raise HTTPException(400, f'subsidy below the {_fmt(min_micro)} USDC minimum')
+        if subsidy_micro > max_micro:
+            raise HTTPException(400, f'subsidy above the {_fmt(max_micro)} USDC maximum')
         mid = await ledger.create_market(tg_id, question, options, subsidy_micro, close_at=close_at)
         return {'ok': True, 'id': mid}
     if body.kind == 'bet':
