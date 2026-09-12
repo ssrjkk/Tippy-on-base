@@ -31,7 +31,7 @@ async def single_cycle() -> bool:
         return False
 
     # 2. Perceive — fetch news
-    news = fetch_news(max_items=3)
+    news = await asyncio.to_thread(fetch_news, max_items=3)
     if not news:
         print("  No new relevant news found")
         return False
@@ -42,7 +42,7 @@ async def single_cycle() -> bool:
     # 3. Decide — LLM analysis
     balance = await get_balance()
     news_prompts = [n.to_prompt() for n in news]
-    decision = decide(news_prompts, balance)
+    decision = await asyncio.to_thread(decide, news_prompts, balance)
     if decision is None:
         print("  LLM decided: no market to create")
         return False
@@ -67,7 +67,7 @@ async def single_cycle() -> bool:
     print(f"  Market created: #{market_id}")
 
     # 5. Attest — EAS on-chain attestation for market creation
-    _attest_action("create_market", market_id, 10_000_000, decision.confidence, decision.reasoning)
+    await _attest_action("create_market", market_id, 10_000_000, decision.confidence, decision.reasoning)
 
     # 6. Act — place bet
     if decision.bet_amount_usdc > 0:
@@ -80,7 +80,7 @@ async def single_cycle() -> bool:
             print(f"  ERROR placing bet: {bet_result['error']}")
         else:
             print(f"  Bet placed! New balance: ${bet_result.get('new_balance_usdc', 0):.2f}")
-            _attest_action(
+            await _attest_action(
                 "place_bet",
                 market_id,
                 int(decision.bet_amount_usdc * 1_000_000),
@@ -96,7 +96,7 @@ async def single_cycle() -> bool:
     )
     if "error" not in signal_result:
         print(f"  Signal sold: paywall item #{signal_result['item_id']}")
-        _attest_action("sell_signal", market_id, 1_000_000, decision.confidence, decision.reasoning)
+        await _attest_action("sell_signal", market_id, 1_000_000, decision.confidence, decision.reasoning)
     else:
         print(f"  Signal creation failed: {signal_result['error']}")
 
@@ -107,8 +107,12 @@ async def single_cycle() -> bool:
     return True
 
 
-def _attest_action(action_type: str, market_id: int, amount_micro: int, confidence: float, reasoning: str) -> None:
-    """Submit EAS attestation (local fallback if no key)."""
+async def _attest_action(action_type: str, market_id: int, amount_micro: int, confidence: float, reasoning: str) -> None:
+    """Submit EAS attestation (local fallback if no key).
+
+    Runs off the event loop: EAS proof, gas push and receipt wait are all
+    blocking RPC work — in a loop that also sleeps any network stall here
+    would freeze the whole cycle."""
     data = AttestationData(
         action_type=action_type,
         market_id=market_id,
@@ -116,7 +120,7 @@ def _attest_action(action_type: str, market_id: int, amount_micro: int, confiden
         confidence=int(confidence * 100),
         reasoning=reasoning[:200],
     )
-    tx_hash = attest_action(data)
+    tx_hash = await asyncio.to_thread(attest_action, data)
     if tx_hash:
         print(f"    EAS attestation: {tx_hash}")
     # Local audit trail always written by eas.py
