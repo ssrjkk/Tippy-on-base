@@ -7,7 +7,6 @@ shared lock + pending-nonce read so concurrent sends can't race.
 
 import asyncio
 import threading
-from decimal import ROUND_CEILING, Decimal
 
 from web3 import Web3
 
@@ -23,8 +22,10 @@ def _build_and_send(build_fn) -> str:
     """Shared signing path: build an EIP-1559 tx under the send lock, sign, broadcast.
 
     `build_fn(nonce, max_fee_wei, priority_wei)` must return a transaction
-    dict (web3 build_transaction output). Verifies the chain id first — one
-    bad RPC URL must never move hot-wallet funds onto another network.
+    dict (web3 build_transaction output). The fee fields are
+    `maxPriorityFeePerGas` (in wei) and `maxFeePerGas` (in wei). Verifies the
+    chain id first — one bad RPC URL must never move hot-wallet funds onto
+    another network.
     """
     network.assert_base_chain_sync()
     acct = core.w3.eth.account.from_key(config.HOT_WALLET_KEY)
@@ -125,11 +126,6 @@ def _send_token_as_sync(signer_key: str, to_address: str, amount_raw: int,
         return "0x" + raw.hex()
 
 
-async def send_token(to_address: str, amount_raw: int, token_address: str | None = None) -> str:
-    """Async: generic ERC-20 send from the hot wallet (off the event loop)."""
-    return await asyncio.to_thread(_send_token_sync, to_address, amount_raw, token_address)
-
-
 def _approve_token_sync(spender: str, amount_raw: int, token_address: str | None = None) -> str:
     """Approve `spender` to pull `amount_raw` of a token from the hot wallet."""
 
@@ -145,32 +141,3 @@ def _approve_token_sync(spender: str, amount_raw: int, token_address: str | None
         })
 
     return _build_and_send(build)
-
-
-async def approve_token(spender: str, amount_raw: int, token_address: str | None = None) -> str:
-    """Async: ERC-20 approve off the event loop."""
-    return await asyncio.to_thread(_approve_token_sync, spender, amount_raw, token_address)
-
-
-def _send_usdc_sync(to_address: str, amount_micro: int) -> str:
-    """Internal sync send USDC from hot wallet. Returns tx hash. Raises on failure.
-
-    Thin wrapper over the generic ERC-20 send (same lock, same fee logic).
-    """
-    return _send_token_sync(to_address, amount_micro, None)
-
-
-async def send_usdc(to_address: str, amount_micro: int) -> str:
-    """Async wrapper: send USDC from hot wallet without blocking the event loop.
-
-    Runs the synchronous web3 transaction building + signing + sending in a
-    separate thread via asyncio.to_thread, so the bot's event loop stays
-    responsive during the ~10s RPC call.
-    """
-    return await asyncio.to_thread(_send_usdc_sync, to_address, amount_micro)
-
-
-def withdraw_fee(amount_micro: int) -> int:
-    """Withdrawal fee (config, default 1%), at least 1 micro-unit."""
-    fee = (Decimal(amount_micro) * config.WITHDRAW_FEE_PCT).to_integral_value(rounding=ROUND_CEILING)
-    return max(int(fee), 1)

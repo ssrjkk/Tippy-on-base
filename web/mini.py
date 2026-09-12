@@ -130,8 +130,10 @@ async def mini_state(request: Request) -> dict:
     """Everything the main screen needs, in one call."""
     tg_id = await _user(request)
     markets = []
-    for m in await ledger.open_markets(6):
-        view = await ledger.amm_market_view(int(m['id']))
+    market_rows = await ledger.open_markets(6)
+    market_views = await ledger.bulk_amm_market_views([int(m['id']) for m in market_rows])
+    for m in market_rows:
+        view = market_views.get(int(m['id']))
         if view:
             markets.append({'id': view['id'], 'question': view['question'], 'close_at': view['close_at'], 'traders': view['traders'], 'options': [{'index': o['index'], 'label': o['label'], 'price_pct': o['price_pct']} for o in view['options']]})
     bets = []
@@ -198,7 +200,7 @@ class SmartBuyBody(BaseModel):
     market_id: int
     outcome: int
     shares: int = Field(gt=0)
-    max_cost_usdc: float = Field(gt=0)
+    max_cost_usdc: float = Field(gt=0, allow_inf_nan=False)
 
 @router.post('/api/mini/smartbuy', tags=['wallet'])
 async def mini_smartbuy(body: SmartBuyBody, request: Request) -> dict:

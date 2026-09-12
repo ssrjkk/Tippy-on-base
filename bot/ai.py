@@ -153,12 +153,8 @@ async def _fetch_open_markets(limit: int = 10) -> list[dict]:
     from .ledger import async_ledger as ledger
 
     rows = await ledger.open_markets(limit)
-    out = []
-    for r in rows:
-        view = await ledger.amm_market_view(int(r["id"]))
-        if view:
-            out.append(view)
-    return out
+    views = await ledger.bulk_amm_market_views([int(r["id"]) for r in rows])
+    return [v for r in rows if (v := views.get(int(r["id"]))) is not None]
 
 
 async def _fetch_market_odds(market_id: int, onchain: bool = False) -> dict:

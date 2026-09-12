@@ -766,7 +766,6 @@ wait_for_tx = transactions.wait_for_tx
 _send_token_sync = transfers._send_token_sync
 _approve_token_sync = transfers._approve_token_sync
 _send_eth_sync = transfers._send_eth_sync
-send_usdc_sync = transfers._send_usdc_sync
 
 token_meta_sync = tokens.token_meta_sync
 _token_meta_cache = tokens._token_meta_cache
@@ -800,5 +799,3 @@ basename_available_sync = basenames.basename_available_sync
 aerodrome_quote_sync = dex.aerodrome_quote_sync
 usdc_to_eth_quote_sync = dex.usdc_to_eth_quote_sync
 usdc_to_eth_quote = dex.usdc_to_eth_quote_sync
-
-hot_wallet_chain = core.hot_wallet

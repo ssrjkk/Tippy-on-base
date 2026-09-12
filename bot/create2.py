@@ -220,18 +220,6 @@ def _sweep_proxy_sync(tg_id: int) -> str | None:
     return _build_and_send(build)
 
 
-async def sweep_proxy(tg_id: int) -> str | None:
-    """Call ``forward()`` on a user's proxy, moving USDC+ETH to hot wallet.
-
-    Returns the tx hash, or None if CREATE2 is disabled / proxy has no code.
-    Amounts are reconciled by the deposit scanner on the hot-wallet side.
-    """
-    if not is_create2_enabled():
-        return None
-    import asyncio
-    return await asyncio.to_thread(_sweep_proxy_sync, tg_id)
-
-
 def ensure_proxy_deployed(tg_id: int) -> str | None:
     """Create (idempotently) the deposit proxy for a tg_id on-chain.
 

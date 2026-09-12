@@ -35,8 +35,7 @@ async def collect_metrics() -> str:
     # Solvency
     try:
         liabilities = await ledger.total_liabilities()
-        pending = await ledger.pending_deposit_total()
-        m["liabilities_usdc"] = (liabilities + pending) / _MICRO
+        m["liabilities_usdc"] = liabilities / _MICRO
     except Exception:
         m["liabilities_usdc"] = -1
 

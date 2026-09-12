@@ -1,6 +1,4 @@
-"""ERC-20 toolkit: balances, metadata, supply; hot-wallet & vault reserves."""
-
-import asyncio
+"""ERC-20 toolkit: balances, metadata, supply."""
 
 from web3 import Web3
 
@@ -21,11 +19,6 @@ def token_balance_sync(address: str, token_address: str | None = None) -> int:
         return core._rpc_call(lambda c, a=addr: c.functions.balanceOf(a).call(), token_address=token_address)
 
 
-async def token_balance(address: str, token_address: str | None = None) -> int:
-    """Async: ERC-20 balance off the event loop."""
-    return await asyncio.to_thread(token_balance_sync, address, token_address)
-
-
 def token_allowance_sync(owner: str, spender: str, token_address: str | None = None) -> int:
     """ERC-20 allowance of `spender` to spend `owner`'s tokens."""
     tok = token_address or config.USDC_ADDRESS
@@ -39,11 +32,6 @@ def token_allowance_sync(owner: str, spender: str, token_address: str | None = N
         ).call()
     except Exception:
         return 0
-
-
-async def token_allowance(owner: str, spender: str, token_address: str | None = None) -> int:
-    """Async: ERC-20 allowance off the event loop."""
-    return await asyncio.to_thread(token_allowance_sync, owner, spender, token_address)
 
 
 def token_meta_sync(token_address: str) -> dict:
@@ -67,11 +55,6 @@ def token_meta_sync(token_address: str) -> dict:
     return dict(meta)
 
 
-async def token_meta(token_address: str) -> dict:
-    """Async: token metadata off the event loop."""
-    return await asyncio.to_thread(token_meta_sync, token_address)
-
-
 def erc20_total_supply_sync(token_address: str | None = None) -> int:
     """Total supply of an ERC-20 in raw units (USDC by default)."""
     tok = Web3.to_checksum_address(token_address or core.USDC)
@@ -83,42 +66,3 @@ def erc20_total_supply_sync(token_address: str | None = None) -> int:
             lambda c: c.functions.totalSupply().call(),
             token_address=token_address,
         )
-
-
-async def erc20_total_supply(token_address: str | None = None) -> int:
-    """Async: total supply off the event loop."""
-    return await asyncio.to_thread(erc20_total_supply_sync, token_address)
-
-
-def _hot_balance_sync() -> float:
-    try:
-        micro = core.usdc.functions.balanceOf(core.HOT_WALLET).call()
-    except Exception:
-        # Fallback: try all providers
-        micro = core._rpc_call(lambda c: c.functions.balanceOf(core.HOT_WALLET).call())
-    return micro / 10**config.USDC_DECIMALS
-
-
-async def hot_balance() -> float:
-    """Async: hot-wallet USDC balance (off the event loop)."""
-    return await asyncio.to_thread(_hot_balance_sync)
-
-
-def _vault_balance_sync() -> float | None:
-    """On-chain USDC held by the TipBotVault treasury, or None if not deployed.
-
-    This is the on-chain proof-of-reserves: anyone can re-verify it directly
-    on Base (USDC.balanceOf(vault) == totalReserves()).
-    """
-    if not config.VAULT_ADDRESS:
-        return None
-    try:
-        micro = core.usdc.functions.balanceOf(Web3.to_checksum_address(config.VAULT_ADDRESS)).call()
-    except Exception:
-        micro = core._rpc_call(lambda c: c.functions.balanceOf(Web3.to_checksum_address(config.VAULT_ADDRESS)).call())
-    return micro / 10**config.USDC_DECIMALS
-
-
-async def vault_balance() -> float | None:
-    """Async: on-chain vault balance (off the event loop)."""
-    return await asyncio.to_thread(_vault_balance_sync)

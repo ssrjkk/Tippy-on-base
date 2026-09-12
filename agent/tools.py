@@ -137,12 +137,8 @@ async def list_open_markets(limit: int = 10) -> list[dict]:
     """Read-only: list open markets."""
     try:
         markets = await ledger.open_markets(limit)
-        out = []
-        for m in markets:
-            view = await ledger.amm_market_view(int(m["id"]))
-            if view:
-                out.append(view)
-        return out
+        views = await ledger.bulk_amm_market_views([int(m["id"]) for m in markets])
+        return [v for m in markets if (v := views.get(int(m["id"]))) is not None]
     except Exception:
         return []
 

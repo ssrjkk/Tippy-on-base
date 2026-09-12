@@ -261,6 +261,12 @@ CREATE TABLE IF NOT EXISTS users (
                 );
                 CREATE INDEX IF NOT EXISTS idx_tx_log_tg ON tx_log (tg_id);
                 CREATE INDEX IF NOT EXISTS idx_tx_log_kind ON tx_log (kind);
+                -- Composite indexes for the reporting/aggregate queries that
+                -- group/filter on (kind, time) / (kind, counterparty): without
+                -- them volume_history / user_stats / top_tippers scan the
+                -- append-only tx_log table per request.
+                CREATE INDEX IF NOT EXISTS idx_tx_log_kind_ct ON tx_log (kind, created_at);
+                CREATE INDEX IF NOT EXISTS idx_tx_log_kind_cp ON tx_log (kind, counterparty);
                 CREATE TABLE IF NOT EXISTS pending_deposits (
                     tx_hash      TEXT PRIMARY KEY,
                     sender       TEXT NOT NULL,
@@ -2408,6 +2414,69 @@ class Ledger:
     def open_amm_markets(self, limit: int = 20) -> list[dict]:
         return self.open_markets(limit)
 
+    def bulk_amm_market_views(self, market_ids: list[int]) -> dict[int, dict]:
+        """Batch :meth:`amm_market_view` for many markets — replaces the N+1
+        query pattern (get_market + quantities + trader count per market) with
+        a fixed set of batched queries against the single serialized
+        connection."""
+        if not market_ids:
+            return {}
+        ids = list(dict.fromkeys(int(i) for i in market_ids))
+        placeholders = ",".join(["%s"] * len(ids))
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM markets WHERE id IN ({placeholders})", ids
+            ).fetchall()
+            share_rows = self._conn.execute(
+                f"SELECT market_id, option_idx, SUM(shares) AS s FROM market_shares "
+                f"WHERE market_id IN ({placeholders}) GROUP BY market_id, option_idx",
+                ids,
+            ).fetchall()
+            trader_rows = self._conn.execute(
+                f"SELECT market_id, COUNT(DISTINCT tg_id) AS n FROM market_shares "
+                f"WHERE market_id IN ({placeholders}) AND shares > 0 "
+                f"GROUP BY market_id",
+                ids,
+            ).fetchall()
+        by_id = {int(r["id"]): r for r in rows}
+        quantities_by_id: dict[int, dict[int, int]] = {}
+        for r in share_rows:
+            quantities_by_id.setdefault(int(r["market_id"]), {})[
+                int(r["option_idx"])
+            ] = int(r["s"])
+        traders_by_id = {int(r["market_id"]): int(r["n"]) for r in trader_rows}
+        out: dict[int, dict] = {}
+        for mid in ids:
+            m = by_id.get(mid)
+            if not m:
+                continue
+            options = json.loads(m["options"])
+            totals = quantities_by_id.get(mid, {})
+            q = [totals.get(i, 0) for i in range(len(options))]
+            prices = lmsr_prices(q, int(m["b_micro"]))
+            out[mid] = {
+                "id": int(m["id"]),
+                "question": m["question"],
+                "status": m["status"],
+                "winner": m["winner"],
+                "close_at": m["close_at"],
+                "creator": int(m["creator"]),
+                "liquidity_micro": int(m["escrow_micro"]),
+                "subsidy_micro": int(m["subsidy_micro"]),
+                "traders": traders_by_id.get(mid, 0),
+                "volume_micro": sum(q),
+                "options": [
+                    {
+                        "index": i,
+                        "label": o,
+                        "price_pct": float(round(prices[i] * 100, 2)),
+                        "shares": q[i],
+                    }
+                    for i, o in enumerate(options)
+                ],
+            }
+        return out
+
     def _market_share_rows(self, market_id: int) -> list[dict]:
         with self._lock:
             return self._conn.execute(
@@ -3053,8 +3122,12 @@ class Ledger:
     # ---------- user settings ----------
 
     def get_settings(self, tg_id: int) -> dict:
+        # Read-only: no ensure_user() here. The hot path (every /tip, /rain,
+        # menu render) calls this to READ preferences; a write-and-commit per
+        # read would double the round-trips on the single serialized
+        # connection and needlessly allocate user rows. The users row is
+        # created on first real write (set_setting / ensure_user).
         with self._lock:
-            self.ensure_user(tg_id, None)
             row = self._conn.execute(
                 "SELECT reaction_tips, notify_deposits, lang FROM user_settings WHERE tg_id = %s",
                 (tg_id,),

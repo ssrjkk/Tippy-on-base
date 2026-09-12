@@ -135,7 +135,6 @@ ADMIN_TG_ID: int | None = int(os.environ.get("ADMIN_TG_ID", "0") or "0") or None
 # Group rain (/rain <amount> [count]) — giveaway, pure transfers
 RAIN_MAX_USDC: Decimal = Decimal(os.environ.get("RAIN_MAX_USDC", "100"))
 RAIN_MAX_RECIPIENTS: int = int(os.environ.get("RAIN_MAX_RECIPIENTS", "25"))
-RAIN_MIN_RECIPIENTS: int = int(os.environ.get("RAIN_MIN_RECIPIENTS", "3"))
 
 # Deposit scanning robustness
 DEPOSIT_SCAN_LOOKBACK_BLOCKS: int = int(os.environ.get("DEPOSIT_SCAN_LOOKBACK_BLOCKS", "2000"))

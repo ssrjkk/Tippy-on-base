@@ -262,7 +262,9 @@ async def _run_spec_payment(request, tg_id: int, amount_micro: int, resource: st
     # authorizationState call during the reconcile sweep — an unauthenticated
     # endpoint must not let anyone spray that state).
     try:
-        sender = x402_spec.verify_eip3009(auth, signature, receive, amount_micro)
+        sender = await asyncio.to_thread(
+            x402_spec.verify_eip3009, auth, signature, receive, amount_micro
+        )
     except ValueError as e:
         body = x402_spec.invoice_body(amount_micro, resource, resource, error=str(e), pay_to=receive)
         return 402, body, {}
@@ -443,7 +445,7 @@ async def x402_tip(request: Request) -> JSONResponse:
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
     if await ledger.pending_deposit_exists(tx_hash):
         return JSONResponse(status_code=400, content={'detail': 'transaction is a deposit, not an x402 payment'})
-    verified = _verify_payment(tx_hash, amount_micro, pay_addr)
+    verified = await asyncio.to_thread(_verify_payment, tx_hash, amount_micro, pay_addr)
     if verified is None:
         # Reject payments sent to the deposit hot wallet — those are regular
         # deposits, not x402 payments. Redirection to the shared receive
@@ -451,7 +453,7 @@ async def x402_tip(request: Request) -> JSONResponse:
         # per-invoice address.
         hot = hot_wallet().lower()
         try:
-            receipt = base.w3.eth.get_transaction_receipt(tx_hash)
+            receipt = await asyncio.to_thread(base.w3.eth.get_transaction_receipt, tx_hash)
             for entry in (receipt or {}).get('logs', []):
                 if str(entry.get('address', '')).lower() == config.USDC_ADDRESS.lower():
                     try:
@@ -542,7 +544,7 @@ async def x402_paywall(request: Request) -> JSONResponse:
         return JSONResponse(status_code=409, content={'detail': 'payment already processed'})
     if await ledger.pending_deposit_exists(tx_hash):
         return JSONResponse(status_code=400, content={'detail': 'transaction is a deposit, not an x402 payment'})
-    verified = _verify_payment(tx_hash, price_micro, pay_addr)
+    verified = await asyncio.to_thread(_verify_payment, tx_hash, price_micro, pay_addr)
     if verified is None:
         return _payment_rejected_response(price_micro, resource=resource, pay_addr=pay_addr, invoice_id=invoice_id)
     res = await ledger.x402_paywall_purchase(owner_tg, int(raw_item), tx_hash, price_micro, verified['sender'], pay_addr)

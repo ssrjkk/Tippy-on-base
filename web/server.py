@@ -2,6 +2,7 @@
 
 Run:  python -m web.server
 """
+import asyncio
 import base64
 import ipaddress
 import json
@@ -67,9 +68,15 @@ WEB_RATE_WINDOW: int = int(os.environ.get('WEB_RATE_WINDOW', '60'))
 WEB_RATE_MAX_CLIENTS: int = int(os.environ.get('WEB_RATE_MAX_CLIENTS', '10000'))
 _rl_state: dict[str, list[float]] = {}
 _RL_DISABLED: bool = os.environ.get('TESTING', '') == '1'
+_rl_last_sweep: float = 0.0
 _ask_cooldown: dict[str, float] = {}
 _ask_day: str = ''
 _ask_served_today: int = 0
+# /api/stats runs 8 full-table aggregates against the shared DB connection —
+# cache the result briefly so dashboards/pagers don't re-run them per hit.
+_stats_cache: dict | None = None
+_stats_ts: float = 0.0
+_STATS_TTL = 10  # seconds
 _ask_lock = __import__('threading').Lock()
 
 
@@ -140,6 +147,7 @@ def _nonce_inject(html: str, nonce: str) -> str:
 
 @app.middleware('http')
 async def rate_limit(request: Request, call_next):
+    global _rl_last_sweep
     path = request.url.path
     if not _RL_DISABLED and (path.startswith('/api/') or path in ('/qr', '/metrics', '/tos', config.WEBHOOK_PATH)):
         client = _client_ip(request)
@@ -158,10 +166,13 @@ async def rate_limit(request: Request, call_next):
                 },
             )
         _rl_state[client].append(now)
-        if len(_rl_state) > WEB_RATE_MAX_CLIENTS:
+        # Full-state eviction is O(distinct clients); run it at most once per
+        # window instead of on every request once the cap is breached.
+        if len(_rl_state) > WEB_RATE_MAX_CLIENTS and now - _rl_last_sweep > WEB_RATE_WINDOW:
             for ip, hits in list(_rl_state.items()):
                 if not any(t > cutoff for t in hits):
                     del _rl_state[ip]
+            _rl_last_sweep = now
     response = await call_next(request)
     # No X-Frame-Options here on purpose: the Mini App runs inside Telegram's
     # iframe and must stay framable. These four are safe everywhere.
@@ -228,8 +239,19 @@ async def _safe_vault_balance() -> float | None:
 
 @app.get('/api/stats', tags=['stats'])
 async def api_stats() -> dict:
+    # TESTING mode bypasses the TTL so tests that write then read see fresh
+    # aggregates (same TESTING escape hatch the rate limiter uses).
+    if not _RL_DISABLED:
+        global _stats_cache, _stats_ts
+        now = time.time()
+        if _stats_cache is not None and now - _stats_ts < _STATS_TTL:
+            return _stats_cache
     s = await ledger.global_stats()
-    return {**s, 'volume_usdc': _usdc(s['volume_micro']), 'volume_30d_usdc': _usdc(s['volume_30d_micro']), 'tips_usdc': _usdc(s['tips_micro']), 'deposits_usdc': _usdc(s['deposits_micro']), 'bets_usdc': _usdc(s['bets_micro']), 'fees_usdc': _usdc(s['fees_micro'])}
+    view = {**s, 'volume_usdc': _usdc(s['volume_micro']), 'volume_30d_usdc': _usdc(s['volume_30d_micro']), 'tips_usdc': _usdc(s['tips_micro']), 'deposits_usdc': _usdc(s['deposits_micro']), 'bets_usdc': _usdc(s['bets_micro']), 'fees_usdc': _usdc(s['fees_micro'])}
+    if not _RL_DISABLED:
+        _stats_cache = view
+        _stats_ts = time.time()
+    return view
 
 @app.get('/api/volume_history', tags=['stats'])
 async def api_volume_history(days: int=14) -> list[dict]:
@@ -276,9 +298,13 @@ async def api_market(bet_id: int) -> dict:
 @app.get('/api/predictions', tags=['markets'])
 async def api_predictions(status: str='open') -> list[dict]:
     """LMSR AMM prediction markets with live odds (Polymarket-style)."""
+    if status != 'open':
+        return []
+    markets = await ledger.open_markets(20)
+    views = await ledger.bulk_amm_market_views([int(m['id']) for m in markets])
     out = []
-    for m in await ledger.open_markets(20) if status == 'open' else []:
-        view = await ledger.amm_market_view(int(m['id']))
+    for m in markets:
+        view = views.get(int(m['id']))
         if view:
             view['liquidity_usdc'] = _usdc(view['liquidity_micro'])
             for o in view['options']:
@@ -474,7 +500,7 @@ async def api_health() -> dict:
     """Liveness + deposit-scanner health + DB connectivity."""
     head = None
     try:
-        head = base.w3.eth.block_number
+        head = await asyncio.to_thread(lambda: base.w3.eth.block_number)
     except Exception:
         pass
     last = await ledger.last_block()
@@ -524,7 +550,7 @@ async def api_solvency() -> dict:
     """
     liabilities = await ledger.total_liabilities()
     pending = await ledger.pending_deposit_total()
-    owed_usdc = _usdc(liabilities + pending)
+    owed_usdc = _usdc(liabilities)
     bal = await _safe_hot_balance()
     vault_bal = await _safe_vault_balance()
     vault_addr = config.VAULT_ADDRESS

@@ -43,8 +43,7 @@ class MockConfig:
 
 
 class MagicMockishLedger:
-    total_liabilities = AsyncMock(return_value=50_000_000)
-    pending_deposit_total = AsyncMock(return_value=10_000_000)
+    total_liabilities = AsyncMock(return_value=60_000_000)
     open_markets = AsyncMock(return_value=[])
     global_stats = AsyncMock(return_value={"users": 2, "volume_micro": 10_000_000, "tips_micro": 4_000_000, "deposits_micro": 10_000_000})
 

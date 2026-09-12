@@ -25,6 +25,7 @@ from .chain.transfers import _send_lock  # noqa: F401
 # budget — an attacker with 100 wallets must not be able to farm the hot
 # wallet's ETH even at one drip each.
 _DRIP_COOLDOWN_SECONDS = 3600
+_DRIP_TRACK_MAX = 4096
 _last_drip: dict[str, float] = {}
 
 # Short-lived read caches: priceOf / markets() are state-changing only when a
@@ -113,6 +114,8 @@ async def _ensure_gas(w3: Web3, user_addr: str, needed_wei: int) -> None:
     if not await ledger.try_book_gas_drip(daily_max):
         raise RuntimeError("daily gas top-up budget exhausted — try tomorrow")
     await send_eth(user_addr, drip_wei)
+    if len(_last_drip) >= _DRIP_TRACK_MAX:
+        _last_drip.clear()  # crude bound; entries repopulate on demand
     _last_drip[user_addr.lower()] = now
 
 # Minimal ERC20 ABI — only the functions we need (approve/allowance/balanceOf).
@@ -576,8 +579,9 @@ async def owner_resolve(market_id: int, winning_outcome: int,
     _check_chain()
     w3 = _w3()
     contract = _market_contract(w3)
-    return _resolve_like(contract, w3, "ownerResolve",
-                         (market_id, winning_outcome), private_key, 100000)
+    return await asyncio.to_thread(
+        _resolve_like, contract, w3, "ownerResolve",
+        (market_id, winning_outcome), private_key, 100000)
 
 
 async def cancel_expired(market_id: int, private_key: str) -> str:
@@ -586,8 +590,9 @@ async def cancel_expired(market_id: int, private_key: str) -> str:
     _check_chain()
     w3 = _w3()
     contract = _market_contract(w3)
-    return _resolve_like(contract, w3, "cancelExpired",
-                         (market_id,), private_key, 200000)
+    return await asyncio.to_thread(
+        _resolve_like, contract, w3, "cancelExpired",
+        (market_id,), private_key, 200000)
 
 
 async def market_views(limit: int = 12) -> list[dict]:

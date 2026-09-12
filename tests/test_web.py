@@ -38,6 +38,20 @@ def _reset_rate_limit():
     server._rl_state.clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_stats_cache():
+    """api_stats caches the aggregate totals (TTL in seconds); tests write to
+    the ledger then immediately read /api/stats, so the cache must not carry
+    a stale value across tests. Same reset pattern as web/metrics.py tests."""
+    from web import server
+
+    server._stats_cache = None
+    server._stats_ts = 0.0
+    yield
+    server._stats_cache = None
+    server._stats_ts = 0.0
+
+
 def test_info(client):
     r = client.get("/api/info")
     assert r.status_code == 200
@@ -265,7 +279,7 @@ def test_solvency_tracks_liabilities(client, ledger):
     ledger.credit(778, 3_000_000, "deposit")
     ledger.record_pending("0x" + "5" * 64, "0xowner", 7_000_000)
     r = client.get("/api/solvency").json()
-    assert r["liabilities_usdc"] == 15.0
+    assert r["liabilities_usdc"] == 22.0
     assert r["pending_deposits_usdc"] == 7.0
     assert r["owed_usdc"] == 22.0
 

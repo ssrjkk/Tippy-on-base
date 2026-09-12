@@ -47,7 +47,7 @@ if enc and enc == os.environ.get("HOT_WALLET_KEY", "").strip():
     ERRORS.append("SECURITY: WALLET_ENC_KEY must NOT equal HOT_WALLET_KEY")
 
 require("DATABASE_URL", msg="PostgreSQL connection string")
-require("ADMIN_TG_ID", r"\d+", msg="must be a numeric Telegram user ID")
+optional("ADMIN_TG_ID", r"\d+", msg="must be a numeric Telegram user ID")
 
 # --- RPC ---
 require("BASE_RPC_URL", msg="Base mainnet RPC endpoint")

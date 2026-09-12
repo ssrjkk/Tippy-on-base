@@ -180,7 +180,7 @@
           const html = u.history.map((h, i) => {
             const isRain = h.kind === "tip" && h.note === "rain";
             const icon = isRain ? "🌧️" : (icons[h.kind] || "•");
-            const name = isRain ? "Дождь" : (names[h.kind] || h.kind);
+            const name = isRain ? "Дождь" : (names[h.kind] || esc(h.kind));
             return `
             <div class="lb-row" style="animation-delay:${Math.min(i * 50, 400)}ms">
               <span class="lb-place">${icon}</span>

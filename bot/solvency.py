@@ -35,9 +35,7 @@ async def solvency_watcher(bot, interval: int = 60) -> None:
 async def _check_solvency(bot) -> None:
     global _last_alert_ts
     try:
-        liabilities = await ledger.total_liabilities()
-        pending = await ledger.pending_deposit_total()
-        owed = liabilities + pending
+        owed = await ledger.total_liabilities()
     except Exception as e:
         log.warning("solvency: failed to read liabilities: %s", e)
         return
@@ -87,7 +85,6 @@ async def _check_solvency(bot) -> None:
     except Exception as e:
         log.warning("solvency: x402 pool read failed: %s", e)
 
-    owed = liabilities + pending
     delta = reserves_micro - owed
     solvent = reserves_micro >= owed
 

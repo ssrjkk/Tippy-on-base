@@ -376,8 +376,9 @@ async def _market_watcher(bot, ledger):
     """Once per cycle: remind creators to resolve markets whose deadline passed
     (both parimutuel bets and LMSR AMM markets), plus a second, final nudge
     shortly before the grace period ends (after that anyone can refund)."""
-    from bot import config, i18n
     import time as _time
+
+    from bot import config, i18n
     while True:
         try:
             for bet in await ledger.open_bets_past_deadline():

@@ -12,6 +12,7 @@ Two ways to prove identity, both verified with real crypto:
 Sessions are stateless signed cookies: ``base64(tg_id:expiry).hmac``. No
 server-side session store; tampering breaks the HMAC; expiry bounds replay.
 """
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -106,7 +107,10 @@ async def verify_wallet(body: WalletLogin) -> int:
     from eth_account import Account
     from eth_account.messages import encode_defunct
     try:
-        recovered = Account.recover_message(encode_defunct(text=body.message), signature=body.signature)
+        recovered = await asyncio.to_thread(
+            Account.recover_message,
+            encode_defunct(text=body.message), signature=body.signature,
+        )
     except Exception:
         raise HTTPException(403, 'bad signature') from None
     if recovered.lower() != body.address.lower():
