@@ -1393,25 +1393,34 @@ class Ledger:
             # would GAIN money) and mint it from thin air.
             return False
         with self._lock:
-            self.ensure_user(to_id, None)
-            cur = self._conn.execute(
-                "UPDATE users SET balance = balance - %s WHERE tg_id = %s AND balance >= %s",
-                (amount_micro, from_id, amount_micro),
-            )
-            if cur.rowcount == 0:
-                self._conn.rollback()
-                return False
-            self._conn.execute(
-                "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
-                (amount_micro, to_id),
-            )
-            self._conn.execute(
-                "INSERT INTO tx_log (kind, tg_id, counterparty, amount) VALUES ('tip', %s, %s, %s)",
-                (from_id, str(to_id), amount_micro),
-            )
-            self._conn.commit()
-            audit_log.info(json.dumps({"event": "transfer", "from": from_id, "to": to_id, "amount_micro": amount_micro}))
-            return True
+            committed = False
+            try:
+                self.ensure_user(to_id, None, commit=False)
+                cur = self._conn.execute(
+                    "UPDATE users SET balance = balance - %s WHERE tg_id = %s AND balance >= %s",
+                    (amount_micro, from_id, amount_micro),
+                )
+                if cur.rowcount == 0:
+                    self._conn.rollback()
+                    return False
+                self._conn.execute(
+                    "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
+                    (amount_micro, to_id),
+                )
+                self._conn.execute(
+                    "INSERT INTO tx_log (kind, tg_id, counterparty, amount) VALUES ('tip', %s, %s, %s)",
+                    (from_id, str(to_id), amount_micro),
+                )
+                self._conn.commit()
+                committed = True
+                audit_log.info(json.dumps({"event": "transfer", "from": from_id, "to": to_id, "amount_micro": amount_micro}))
+                return True
+            finally:
+                if not committed:
+                    try:
+                        self._conn.rollback()
+                    except Exception:
+                        pass
 
     def debit(self, tg_id: int, amount_micro: int) -> bool:
         # NOTE: unlike transfer(), debit() leaves its transaction open on the
@@ -1538,16 +1547,19 @@ class Ledger:
 
     def total_liabilities(self) -> int:
         """Sum of all internal liabilities the hot wallet must be able to cover,
-        in micro-units. Four categories:
+        in micro-units. Six categories:
 
           1. user balances (users.balance)
           2. AMM market escrows of open markets (markets.escrow_micro)
           3. parimutuel bet pools of open bets (sum of bet_positions)
           4. community treasury balances (community_treasuries.balance)
+          5. x402 credits already booked but not yet swept to the hot wallet
+          6. pending deposits seen on-chain but not yet claimed/credited
 
         Only counting user balances would understate real obligations: escrowed
-        market funds, open bet pools and treasury deposits are all money the bot
-        still owes even though they are not currently on a user's balance.
+        market funds, open bet pools, treasury deposits, x402 reserves and
+        pending deposits are all money the bot still owes even though they are
+        not currently on a user's balance.
         """
         with self._lock:
             row = self._conn.execute(
@@ -1568,6 +1580,8 @@ class Ledger:
             + int(row["market_escrow"])
             + int(row["bet_pool"])
             + int(row["treasury_bal"])
+            + self.x402_unswept_credit_total()
+            + self.pending_deposit_total()
         )
 
     def pending_deposit_total(self) -> int:
@@ -2147,7 +2161,11 @@ class Ledger:
             # Atomic: all balance updates + the status flip commit together.
             # A crash before this single commit rolls everything back (no
             # partial payout), and after it the status guard blocks re-entry.
+            credited_users = set()
             for tg_id, net in payouts:
+                if tg_id not in credited_users:
+                    self.ensure_user(tg_id, None, commit=False)
+                    credited_users.add(tg_id)
                 self._conn.execute(
                     "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                     (net, tg_id),
@@ -2158,6 +2176,7 @@ class Ledger:
                     (tg_id, str(bet_id), net, bet["question"]),
                 )
             if creator_income > 0:
+                self.ensure_user(bet["creator"], None, commit=False)
                 self._conn.execute(
                     "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                     (creator_income, bet["creator"]),
@@ -2194,8 +2213,12 @@ class Ledger:
             refunded_by_creator = bet["creator"] == resolver_id
             # Atomic: refunds + status flip commit together so a crash can't
             # leave backers credited but the bet still 'open' (double refund).
+            refunded_users = set()
             for p in self._bet_positions(bet_id):
                 tg_id = int(p["tg_id"])
+                if tg_id not in refunded_users:
+                    self.ensure_user(tg_id, None, commit=False)
+                    refunded_users.add(tg_id)
                 amt = int(p["amount"])
                 self._conn.execute(
                     "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
@@ -2231,6 +2254,8 @@ class Ledger:
         if subsidy_micro < 0:
             raise ValueError(f"market subsidy must be non-negative (got {subsidy_micro})")
         n = len(options)
+        if n < 2:
+            raise ValueError(f"market must have at least 2 options (got {n})")
         with localcontext() as ctx:
             ctx.prec = _LMSR_PREC
             b = int((_d(subsidy_micro) / _d(n).ln()).to_integral_value(rounding=ROUND_FLOOR))
@@ -2548,11 +2573,15 @@ class Ledger:
                 self._conn.rollback()
                 return "toosmall", {}
             new_cost = pos[option_idx]["cost"] - value  # realized profit lowers basis
-            self._conn.execute(
+            cur = self._conn.execute(
                 "UPDATE market_shares SET shares = shares - %s, cost_micro = %s "
-                "WHERE market_id = %s AND tg_id = %s AND option_idx = %s",
-                (shares, new_cost, market_id, tg_id, option_idx),
+                "WHERE market_id = %s AND tg_id = %s AND option_idx = %s AND shares >= %s",
+                (shares, new_cost, market_id, tg_id, option_idx, shares),
             )
+            if cur.rowcount == 0:
+                # Another transaction sold/closed the position between read and write.
+                self._conn.rollback()
+                return "noshare", {}
             self._conn.execute(
                 "UPDATE markets SET escrow_micro = escrow_micro - %s WHERE id = %s",
                 (value, market_id),
@@ -2656,6 +2685,7 @@ class Ledger:
             payouts: list[dict] = []
             weights: list[tuple[int, int]] = []  # (tg_id, gross) for leftover math
             distributed = 0
+            credited_users = set()
             for w in winner_rows:
                 gross = int(w["s"])
                 if distributed + gross > payout_total:
@@ -2664,6 +2694,9 @@ class Ledger:
                     continue
                 distributed += gross
                 tg = int(w["tg_id"])
+                if tg not in credited_users:
+                    self.ensure_user(tg, None, commit=False)
+                    credited_users.add(tg)
                 weights.append((tg, gross))
                 self._conn.execute(
                     "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
@@ -2686,6 +2719,7 @@ class Ledger:
                     leftover,
                 )
                 if creator_fee > 0:
+                    self.ensure_user(int(m["creator"]), None, commit=False)
                     self._conn.execute(
                         "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                         (creator_fee, int(m["creator"])),
@@ -2713,6 +2747,9 @@ class Ledger:
                     for tg, amt in extra.items():
                         if amt <= 0:
                             continue
+                        if tg not in credited_users:
+                            self.ensure_user(tg, None, commit=False)
+                            credited_users.add(tg)
                         self._conn.execute(
                             "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                             (amt, tg),
@@ -2768,12 +2805,16 @@ class Ledger:
                 reverse=True,
             )
             available = escrow
+            refunded_users = set()
             for r in rows:
                 refund = min(max(int(r["cost_micro"]), 0), available)
                 if refund <= 0:
                     continue
                 available -= refund
                 tg = int(r["tg_id"])
+                if tg not in refunded_users:
+                    self.ensure_user(tg, None, commit=False)
+                    refunded_users.add(tg)
                 self._conn.execute(
                     "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                     (refund, tg),
@@ -2784,6 +2825,7 @@ class Ledger:
                     (tg, str(market_id), refund, m["question"]),
                 )
             if available > 0:
+                self.ensure_user(int(m["creator"]), None, commit=False)
                 self._conn.execute(
                     "UPDATE users SET balance = balance + %s WHERE tg_id = %s",
                     (available, int(m["creator"])),

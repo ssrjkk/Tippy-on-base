@@ -691,11 +691,16 @@ async def metrics(request: Request) -> Response:
 
     from .metrics import collect_metrics
 
-    if config.METRICS_TOKEN:
-        import hmac as _hmac
-        auth = request.headers.get("Authorization", "")
-        if not _hmac.compare_digest(auth.encode(), f"Bearer {config.METRICS_TOKEN}".encode()):
-            return PlainTextResponse("unauthorized", status_code=401)
+    # Metrics are operational data: closed by default. Set METRICS_TOKEN or
+    # explicitly opt into loopback-only access with METRICS_ALLOW_LOOPBACK=1.
+    if request.client and request.client.host in ('127.0.0.1', '::1') and os.environ.get('METRICS_ALLOW_LOOPBACK') == '1':
+        return PlainTextResponse(await collect_metrics())
+    if not config.METRICS_TOKEN:
+        return PlainTextResponse("metrics disabled: set METRICS_TOKEN", status_code=401)
+    import hmac as _hmac
+    auth = request.headers.get("Authorization", "")
+    if not _hmac.compare_digest(auth.encode(), f"Bearer {config.METRICS_TOKEN}".encode()):
+        return PlainTextResponse("unauthorized", status_code=401)
     return PlainTextResponse(await collect_metrics())
 
 app.mount('/', StaticFiles(directory=str(STATIC), html=True), name='static')

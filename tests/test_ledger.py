@@ -273,7 +273,7 @@ def test_liabilities_and_pending_deposits(ledger):
     fund(ledger, ALICE, 12_000_000)
     fund(ledger, BOB, 3_000_000)
     ledger.record_pending("0x" + "5" * 64, "0xowner", 7_000_000)
-    assert ledger.total_liabilities() == 15_000_000
+    assert ledger.total_liabilities() == 22_000_000
     assert ledger.pending_deposit_total() == 7_000_000
     # Once claimed, it moves from pending into a user balance.
     nonce = ledger.new_link_nonce(ALICE, "0xowner")

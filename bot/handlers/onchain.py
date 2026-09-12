@@ -200,10 +200,6 @@ async def cmd_oc_create(message: types.Message) -> None:
     if subsidy > common._to_micro(common.config.MARKET_MAX_SUBSIDY_USDC):
         await message.answer(i18n.t(lang, 'market_max_bank', n=f'{common.config.MARKET_MAX_SUBSIDY_USDC:.0f}'))
         return
-    daily_cap = common._to_micro(common.config.MARKET_SUBSIDY_DAILY_MAX_USDC)
-    if not await common.ledger.try_book_subsidy(subsidy, daily_cap):
-        await message.answer(i18n.t(lang, 'oc_subsidy_cap', amount=f'{common.config.MARKET_SUBSIDY_DAILY_MAX_USDC:.0f}'))
-        return
     question = head[1].strip()
     options = segs[1:][:MAX_ONCHAIN_OUTCOMES]
     close_at = int(time.time()) + 7 * 86400
@@ -225,6 +221,12 @@ async def cmd_oc_create(message: types.Message) -> None:
         addr, key = await _wallet_key(tg_id)
     except Exception:
         await message.answer(i18n.t(lang, 'oc_wallet_error'))
+        return
+    # Book the daily subsidy cap only after all input/wallet validation:
+    # a malformed request or missing wallet must not consume the budget.
+    daily_cap = common._to_micro(common.config.MARKET_SUBSIDY_DAILY_MAX_USDC)
+    if not await common.ledger.try_book_subsidy(subsidy, daily_cap):
+        await message.answer(i18n.t(lang, 'oc_subsidy_cap', amount=f'{common.config.MARKET_SUBSIDY_DAILY_MAX_USDC:.0f}'))
         return
     status = await message.answer(i18n.t(lang, 'oc_pending'))
     try:
@@ -305,7 +307,7 @@ async def _sell_core(tg_id: int, mid: int, outcome: int, pct: int, lang: str) ->
     value = lmsr_sell_value(list(q), b_micro, outcome, shares)
     if value <= 0:
         return False, i18n.t(lang, 'market_trade_toosmall')
-    min_proceeds = int(Decimal(value) * SELL_SLIPPAGE)
+    min_proceeds = max(1, int(Decimal(value) * SELL_SLIPPAGE))
     try:
         tx_hash = await om.sell(mid, outcome, shares, min_proceeds, key)
     except Exception as e:

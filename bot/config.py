@@ -1,4 +1,3 @@
-import hashlib
 import os
 import re
 from decimal import Decimal
@@ -16,13 +15,17 @@ BASE_RPC_URL: str = os.environ.get("BASE_RPC_URL", "https://mainnet.base.org")
 BASE_RPC_FALLBACK_URLS: str = os.environ.get("BASE_RPC_FALLBACK_URLS", "")
 HOT_WALLET_KEY: str = os.environ["HOT_WALLET_KEY"]
 
-# Signing key for web login sessions (/login -> /me). Empty -> derived from
-# BOT_TOKEN, so it never needs to be provisioned separately and never leaves
-# the server. Set SECRET_KEY explicitly to rotate sessions independently.
-SECRET_KEY: str = (
-    os.environ.get("SECRET_KEY", "").strip()
-    or hashlib.sha256(f"tippy-session:{BOT_TOKEN}".encode()).hexdigest()
-)
+# Signing key for web/Mini-App login sessions. MUST be set explicitly and be
+# independent of BOT_TOKEN: anyone who sees BOT_TOKEN could otherwise forge a
+# session for any user and drain funds. There is no fallback.
+_secret_raw = os.environ.get("SECRET_KEY", "").strip()
+if not _secret_raw:
+    raise RuntimeError(
+        "SECRET_KEY is required. Generate one with:\n"
+        '    python -c "import secrets; print(secrets.token_hex(32))"\n'
+        "and set it in the environment (do NOT commit it)."
+    )
+SECRET_KEY: str = _secret_raw
 # Deny-by-default real-client-IP resolution for the rate limiter. The web
 # server binds 0.0.0.0 and, unless a trusted reverse proxy is guaranteed in
 # front, an attacker can forge X-Forwarded-For to rotate identities and bypass
@@ -49,11 +52,7 @@ TELEGRAM_API_PROXY: str = os.environ.get("TELEGRAM_API_PROXY", "").strip()
 # RPC request timeout in seconds (guards watchers/web against a hung provider)
 RPC_TIMEOUT_SECONDS: int = int(os.environ.get("RPC_TIMEOUT_SECONDS", "10"))
 
-DATABASE_URL: str = os.environ.get(
-    # 5433: the compose db service maps to 5433 so it never collides with a
-    # locally installed postgres on 5432. In compose this is overridden to db:5432.
-    "DATABASE_URL", "postgresql://tipbot:tipbot@localhost:5433/tipbot"
-)
+DATABASE_URL: str = os.environ.get("DATABASE_URL", "")
 
 # Web dashboard
 WEB_HOST: str = os.environ.get("WEB_HOST", "0.0.0.0")
@@ -372,8 +371,38 @@ def validate() -> None:
         )
     if not BASE_RPC_URL.startswith(("http://", "https://")):
         raise ValueError(f"BASE_RPC_URL is not a valid http(s) URL: {BASE_RPC_URL!r}")
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL is required")
     if WEBHOOK_URL and not re.fullmatch(r"https://[^\s/]+[^\s]*", WEBHOOK_URL):
         raise ValueError(f"WEBHOOK_URL must be a public https URL: {WEBHOOK_URL!r}")
+    if WEBHOOK_URL and not os.environ.get("WEBHOOK_SECRET", "").strip():
+        raise ValueError(
+            "WEBHOOK_SECRET is required when WEBHOOK_URL is set. "
+            "Do not derive it from BOT_TOKEN. Generate with: "
+            'python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+
+    if not re.fullmatch(r"0x[0-9a-fA-F]{40}", USDC_ADDRESS):
+        raise ValueError(f"USDC_ADDRESS is not a valid Ethereum address: {USDC_ADDRESS!r}")
+
+    if ORACLE_PRIVATE_KEY and not re.fullmatch(r"0x[0-9a-fA-F]{64}", ORACLE_PRIVATE_KEY):
+        raise ValueError("ORACLE_PRIVATE_KEY must be 0x + 64 hex chars")
+
+    for rk in [k.strip() for k in (RELAYER_PRIVATE_KEYS or "").split(",") if k.strip()]:
+        if not re.fullmatch(r"0x[0-9a-fA-F]{64}", rk):
+            raise ValueError(f"RELAYER_PRIVATE_KEYS contains an invalid key: {rk[:16]}…")
+
+    if SMART_WALLET_ENABLED:
+        if not SMART_WALLET_FACTORY_ADDRESS or not re.fullmatch(r"0x[0-9a-fA-F]{40}", SMART_WALLET_FACTORY_ADDRESS):
+            raise ValueError("SMART_WALLET_ENABLED=1 requires a valid SMART_WALLET_FACTORY_ADDRESS")
+        if not SMART_WALLET_PAYMASTER_ADDRESS or not re.fullmatch(r"0x[0-9a-fA-F]{40}", SMART_WALLET_PAYMASTER_ADDRESS):
+            raise ValueError("SMART_WALLET_ENABLED=1 requires a valid SMART_WALLET_PAYMASTER_ADDRESS")
+
+    if CREATE2_SAFE_DEPOSITS:
+        if not CREATE2_FACTORY_ADDRESS or not re.fullmatch(r"0x[0-9a-fA-F]{40}", CREATE2_FACTORY_ADDRESS):
+            raise ValueError("CREATE2_SAFE_DEPOSITS=1 requires a valid CREATE2_FACTORY_ADDRESS")
+        if not CREATE2_FACTORY_FORWARDER or not re.fullmatch(r"0x[0-9a-fA-F]{40}", CREATE2_FACTORY_FORWARDER):
+            raise ValueError("CREATE2_SAFE_DEPOSITS=1 requires a valid CREATE2_FACTORY_FORWARDER")
 
     # A dedicated, random SECRET_KEY is REQUIRED in production. Without it the
     # session HMAC key is derived from BOT_TOKEN; anyone who ever sees BOT_TOKEN

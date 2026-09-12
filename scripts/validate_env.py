@@ -55,7 +55,18 @@ require("BASE_RPC_URL", msg="Base mainnet RPC endpoint")
 # --- Web (SECRET_KEY is required: independent of BOT_TOKEN for session security) ---
 require("SECRET_KEY", min_len=32, msg="must be >= 32 chars, independent of BOT_TOKEN")
 optional("WEBHOOK_URL", r"https://.*", msg="should be an https URL")
-optional("WEBHOOK_SECRET", min_len=16, msg="should be >= 16 chars if set")
+webhook_url = os.environ.get("WEBHOOK_URL", "").strip()
+webhook_secret = os.environ.get("WEBHOOK_SECRET", "").strip()
+if webhook_url and not webhook_secret:
+    ERRORS.append("WEBHOOK_SECRET is required when WEBHOOK_URL is set (do not derive it from BOT_TOKEN)")
+if webhook_secret and len(webhook_secret) < 16:
+    ERRORS.append("WEBHOOK_SECRET must be >= 16 chars")
+
+# --- Operational monitoring ---
+metrics_token = os.environ.get("METRICS_TOKEN", "").strip()
+metrics_loopback = os.environ.get("METRICS_ALLOW_LOOPBACK", "").strip() == "1"
+if not metrics_token and not metrics_loopback:
+    ERRORS.append("METRICS_TOKEN is required (or set METRICS_ALLOW_LOOPBACK=1 for loopback-only)")
 
 # --- Cross-checks ---
 if enc == os.environ.get("SECRET_KEY", "").strip():
@@ -136,6 +147,31 @@ if rg:
         float(rg)
     except ValueError:
         ERRORS.append("RELAYER_FEE_GAS_GWEI must be numeric (gas price in Gwei)")
+
+# --- Base/USDC sanity ---
+usdc = os.environ.get("USDC_ADDRESS", "").strip()
+if not usdc:
+    ERRORS.append("USDC_ADDRESS is required")
+elif not re.fullmatch(r"0x[0-9a-fA-F]{40}", usdc):
+    ERRORS.append(f"USDC_ADDRESS {usdc!r} is not a valid Ethereum address")
+
+# --- Feature-gated contract addresses ---
+smart_enabled = os.environ.get("SMART_WALLET_ENABLED", "").strip() == "1"
+if smart_enabled:
+    for name in ("SMART_WALLET_FACTORY_ADDRESS", "SMART_WALLET_PAYMASTER_ADDRESS"):
+        val = os.environ.get(name, "").strip()
+        if not re.fullmatch(r"0x[0-9a-fA-F]{40}", val):
+            ERRORS.append(f"SMART_WALLET_ENABLED=1 requires a valid {name}")
+    smart_relayer = os.environ.get("SMART_WALLET_RELAYER_KEY", "").strip()
+    if smart_relayer and not re.fullmatch(r"0x[0-9a-fA-F]{64}", smart_relayer):
+        ERRORS.append("SMART_WALLET_RELAYER_KEY must be 0x + 64 hex chars if set")
+
+create2_enabled = os.environ.get("CREATE2_SAFE_DEPOSITS", "").strip() == "1"
+if create2_enabled:
+    for name in ("CREATE2_FACTORY_ADDRESS", "CREATE2_FACTORY_FORWARDER"):
+        val = os.environ.get(name, "").strip()
+        if not re.fullmatch(r"0x[0-9a-fA-F]{40}", val):
+            ERRORS.append(f"CREATE2_SAFE_DEPOSITS=1 requires a valid {name}")
 
 # --- Report ---
 if ERRORS:

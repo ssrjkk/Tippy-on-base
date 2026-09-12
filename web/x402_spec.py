@@ -429,7 +429,7 @@ def find_settlement_by_nonce(payer: str, nonce: bytes, pay_to: str,
             "toBlock": latest,
             "address": Web3.to_checksum_address(config.USDC_ADDRESS),
             "topics": [
-                w3.solidity_keccak(["string"], ["AuthorizationUsed(address,address,bytes32)"]).hex(),
+                w3.solidity_keccak(["string"], ["AuthorizationUsed(address,bytes32)"]).hex(),
                 payer_topic,
                 nonce_topic,
             ],
