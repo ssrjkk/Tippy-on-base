@@ -91,3 +91,5 @@ contracts/lib/*
 # Foundry build artifacts
 out/
 cache/
+artifacts/
+.benchmarks/
