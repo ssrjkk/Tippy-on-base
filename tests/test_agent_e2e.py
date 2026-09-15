@@ -13,13 +13,19 @@ import pytest
 
 from agent.tools import _agent_markets
 
+# Agent state files live in STATE_DIR (agent/ by default, AGENT_STATE_DIR in
+# read-only containers) — see agent/config.py.
+from agent.config import STATE_DIR
+
+_STATE_DIR = Path(STATE_DIR)
+
 
 @pytest.fixture(autouse=True)
 def _clean_state():
     """Clean agent state before and after each test."""
-    state = Path("agent/.agent_state.json")
-    audit = Path("agent_audit.jsonl")
-    attest = Path("agent_attestations.jsonl")
+    state = _STATE_DIR / ".agent_state.json"
+    audit = _STATE_DIR / "agent_audit.jsonl"
+    attest = _STATE_DIR / "agent_attestations.jsonl"
     if state.exists():
         state.unlink()
     yield
@@ -114,7 +120,7 @@ class TestE2EAgentCycle:
         mock_ledger.create_paywall.assert_called_once()
 
         # Verify local audit trail
-        audit_file = Path("agent_audit.jsonl")
+        audit_file = _STATE_DIR / "agent_audit.jsonl"
         assert audit_file.exists()
         entries = [json.loads(l) for l in audit_file.read_text().splitlines() if l.strip()]
         assert len(entries) == 1

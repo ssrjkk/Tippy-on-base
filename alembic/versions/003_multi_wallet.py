@@ -16,26 +16,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add id column as new primary key
+    # 001's SCHEMA_DDL already creates user_wallets in the modern shape
+    # (id BIGSERIAL PK, slot, active) on fresh installs; this migration must
+    # only patch the LEGACY shape (tg_id PK, no id/slot/active). Every step
+    # is guarded so the migration is a no-op on modern tables — otherwise a
+    # fresh database crashes here with DuplicateColumn.
     op.execute("""
-        ALTER TABLE user_wallets ADD COLUMN id BIGSERIAL;
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'user_wallets' AND column_name = 'id'
+            ) THEN
+                ALTER TABLE user_wallets ADD COLUMN id BIGSERIAL;
+                ALTER TABLE user_wallets DROP CONSTRAINT IF EXISTS user_wallets_pkey;
+                ALTER TABLE user_wallets ADD PRIMARY KEY (id);
+            END IF;
+        END $$;
     """)
 
-    # Make tg_id non-unique (allow multiple wallets per user)
-    # Drop old PK constraint (name varies by how it was created)
+    # Add slot and active columns (no-ops when they already exist)
     op.execute("""
-        ALTER TABLE user_wallets DROP CONSTRAINT IF EXISTS user_wallets_pkey;
-    """)
-
-    # Add new PK on id
-    op.execute("""
-        ALTER TABLE user_wallets ADD PRIMARY KEY (id);
-    """)
-
-    # Add slot and active columns
-    op.execute("""
-        ALTER TABLE user_wallets ADD COLUMN slot INT NOT NULL DEFAULT 1;
-        ALTER TABLE user_wallets ADD COLUMN active BOOLEAN NOT NULL DEFAULT true;
+        ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS slot INT NOT NULL DEFAULT 1;
+        ALTER TABLE user_wallets ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true;
     """)
 
     # Unique index: one wallet per slot per user

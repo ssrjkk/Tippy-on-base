@@ -23,4 +23,4 @@ USER tipbot
 
 EXPOSE 8000
 
-ENTRYPOINT ["deploy/entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/python", "/app/deploy/entrypoint.py"]

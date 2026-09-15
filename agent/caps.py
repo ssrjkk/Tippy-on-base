@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import config
 
-_STATE_FILE = Path(__file__).resolve().parent / ".agent_state.json"
+_STATE_FILE = Path(config.STATE_DIR) / ".agent_state.json"
 
 _state_lock = threading.Lock()
 
@@ -45,9 +45,15 @@ def _default_state() -> dict:
 
 
 def _save_state(state: dict) -> None:
-    tmp = _STATE_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2))
-    os.replace(tmp, _STATE_FILE)
+    try:
+        _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _STATE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, indent=2))
+        os.replace(tmp, _STATE_FILE)
+    except OSError:
+        # Read-only filesystem: reservations still hold in memory for the
+        # life of the process; the counter simply cannot survive a restart.
+        pass
 
 
 def _today() -> str:

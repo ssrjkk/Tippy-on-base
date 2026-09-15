@@ -39,6 +39,8 @@ from .ai import (
     AI_BOT_COMMAND,
     cmd_ask,
 )
+from .agent import cmd_agent
+from .basename import cb_basename, cmd_basename
 from .bets import (
     _bet_card,
     _bet_create,
@@ -165,6 +167,10 @@ __all__ = [
     "SIG_RE",
     "TX_HASH_RE",
     "USDC_ADDR_RE",
+    "cb_basename",
+    "cmd_agent",
+    "cmd_ask",
+    "cmd_basename",
     "_balance_text",
     "_bet_card",
     "_bet_create",

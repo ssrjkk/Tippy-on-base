@@ -10,5 +10,5 @@ cryptography==50.0.1
 Pillow==12.2.0
 alembic==1.19.1
 python-json-logger==4.2.0
-mcp==1.30.0
+mcp==1.9.4
 aiohttp-socks==0.12.0

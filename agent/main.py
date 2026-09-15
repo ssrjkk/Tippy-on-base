@@ -9,8 +9,9 @@ Usage:
 import argparse
 import asyncio
 import json
+import logging
+import os
 import time
-from pathlib import Path
 
 from . import caps, config
 from .decision import decide
@@ -19,38 +20,42 @@ from .news import fetch_news
 from .signals import sell_signal
 from .tools import create_market, get_balance, place_bet
 
+log = logging.getLogger("agent")
+
+_AUDIT_FILE = os.path.join(config.STATE_DIR, "agent_audit.jsonl")
+
 
 async def single_cycle() -> bool:
     """Run one perceive → decide → act → attest cycle. Returns True if action taken."""
-    print(f"[{time.strftime('%H:%M:%S')}] === Agent cycle ===")
+    log.info("=== Agent cycle ===")
 
     # 1. Check circuit breaker
     status = caps.get_status()
     if status["cooldown_active"]:
-        print("  Circuit breaker active, skipping cycle")
+        log.info("Circuit breaker active, skipping cycle")
         return False
 
     # 2. Perceive — fetch news
     news = await asyncio.to_thread(fetch_news, max_items=3)
     if not news:
-        print("  No new relevant news found")
+        log.info("No new relevant news found")
         return False
-    print(f"  Found {len(news)} news items:")
+    log.info("Found %d news item(s)", len(news))
     for n in news:
-        print(f"    [{n.relevance:.1f}] {n.title[:80]}")
+        log.info("  [%.1f] %s", n.relevance, n.title[:80])
 
     # 3. Decide — LLM analysis
     balance = await get_balance()
     news_prompts = [n.to_prompt() for n in news]
     decision = await asyncio.to_thread(decide, news_prompts, balance)
     if decision is None:
-        print("  LLM decided: no market to create")
+        log.info("LLM decided: no market to create")
         return False
-    print(f"  Decision: {decision.question}")
-    print(f"    Options: {decision.options}")
-    print(f"    Bet: ${decision.bet_amount_usdc:.2f} on outcome {decision.bet_outcome}")
-    print(f"    Confidence: {decision.confidence:.0%}")
-    print(f"    Reasoning: {decision.reasoning[:120]}")
+    log.info("Decision: %s", decision.question)
+    log.info("  Options: %s", decision.options)
+    log.info("  Bet: $%.2f on outcome %s", decision.bet_amount_usdc, decision.bet_outcome)
+    log.info("  Confidence: %.0f%%", decision.confidence * 100)
+    log.info("  Reasoning: %s", decision.reasoning[:120])
 
     # 4. Act — create market
     market_result = await create_market(
@@ -60,11 +65,11 @@ async def single_cycle() -> bool:
         subsidy_usdc=10.0,
     )
     if "error" in market_result:
-        print(f"  ERROR creating market: {market_result['error']}")
+        log.error("ERROR creating market: %s", market_result["error"])
         return False
 
     market_id = market_result["market_id"]
-    print(f"  Market created: #{market_id}")
+    log.info("Market created: #%s", market_id)
 
     # 5. Attest — EAS on-chain attestation for market creation
     await _attest_action("create_market", market_id, 10_000_000, decision.confidence, decision.reasoning)
@@ -77,9 +82,9 @@ async def single_cycle() -> bool:
             amount_usdc=decision.bet_amount_usdc,
         )
         if "error" in bet_result:
-            print(f"  ERROR placing bet: {bet_result['error']}")
+            log.error("ERROR placing bet: %s", bet_result["error"])
         else:
-            print(f"  Bet placed! New balance: ${bet_result.get('new_balance_usdc', 0):.2f}")
+            log.info("Bet placed! New balance: $%.2f", bet_result.get("new_balance_usdc", 0))
             await _attest_action(
                 "place_bet",
                 market_id,
@@ -95,15 +100,15 @@ async def single_cycle() -> bool:
         price_usdc=1.0,
     )
     if "error" not in signal_result:
-        print(f"  Signal sold: paywall item #{signal_result['item_id']}")
+        log.info("Signal sold: paywall item #%s", signal_result["item_id"])
         await _attest_action("sell_signal", market_id, 1_000_000, decision.confidence, decision.reasoning)
     else:
-        print(f"  Signal creation failed: {signal_result['error']}")
+        log.info("Signal creation failed: %s", signal_result["error"])
 
     # 8. Log local audit trail
     _log_audit(market_id, decision)
 
-    print(f"  Cycle complete. Market #{market_id} live.")
+    log.info("Cycle complete. Market #%s live.", market_id)
     return True
 
 
@@ -122,13 +127,12 @@ async def _attest_action(action_type: str, market_id: int, amount_micro: int, co
     )
     tx_hash = await asyncio.to_thread(attest_action, data)
     if tx_hash:
-        print(f"    EAS attestation: {tx_hash}")
+        log.info("EAS attestation: %s", tx_hash)
     # Local audit trail always written by eas.py
 
 
 def _log_audit(market_id: int, decision) -> None:
     """Log full cycle to local audit trail."""
-    log_file = Path("agent_audit.jsonl")
     entry = {
         "ts": time.time(),
         "market_id": market_id,
@@ -139,27 +143,44 @@ def _log_audit(market_id: int, decision) -> None:
         "confidence": decision.confidence,
         "reasoning": decision.reasoning,
     }
-    with open(log_file, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    try:
+        os.makedirs(os.path.dirname(_AUDIT_FILE), exist_ok=True)
+        with open(_AUDIT_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        log.warning("audit trail write failed (read-only filesystem?)")
 
 
-async def run_loop() -> None:
-    """Continuous agent loop with configurable interval."""
-    print(f"Agent loop starting (interval={config.NEWS_CHECK_INTERVAL}s)")
-    print(f"  Daily cap: ${config.DAILY_SPEND_CAP_USDC}")
-    print(f"  Per-tx cap: ${config.PER_TX_CAP_USDC}")
-    print(f"  Max actions/hour: {config.MAX_ACTIONS_PER_HOUR}")
-    print(f"  Model: {config.LLM_MODEL}")
+async def run_loop(stop: asyncio.Event | None = None) -> None:
+    """Continuous agent loop with configurable interval.
+
+    When `stop` is given, the loop wakes up on it instead of a fixed sleep so
+    a graceful container shutdown (SIGTERM → stop.set) exits promptly instead
+    of waiting out the whole interval.
+    """
+    log.info("Agent loop starting (interval=%ss)", config.NEWS_CHECK_INTERVAL)
+    log.info("  Daily cap: $%s", config.DAILY_SPEND_CAP_USDC)
+    log.info("  Per-tx cap: $%s", config.PER_TX_CAP_USDC)
+    log.info("  Max actions/hour: %s", config.MAX_ACTIONS_PER_HOUR)
+    log.info("  Model: %s", config.LLM_MODEL)
 
     cycle = 0
     while True:
         cycle += 1
-        print(f"\n--- Cycle {cycle} ---")
+        log.info("--- Agent cycle %d ---", cycle)
         try:
             await single_cycle()
         except Exception as e:
             caps.record_error()
-            print(f"  UNHANDLED ERROR: {e}")
+            log.error("UNHANDLED ERROR in agent cycle: %s", e, exc_info=True)
+
+        if stop is not None:
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=config.NEWS_CHECK_INTERVAL)
+                log.info("Agent loop stopped (stop event)")
+                return
+            except asyncio.TimeoutError:
+                continue
         await asyncio.sleep(config.NEWS_CHECK_INTERVAL)
 
 
@@ -167,12 +188,14 @@ def main() -> None:
     cfg_errors = config.validate()
     if cfg_errors:
         for e in cfg_errors:
-            print(f"  [CONFIG ERROR] {e}")
+            log.error("[CONFIG ERROR] %s", e)
         raise SystemExit(1)
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--loop", action="store_true", help="Run continuous loop")
     ap.add_argument("--status", action="store_true", help="Show agent status")
     args = ap.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
     if args.status:
         s = caps.get_status()

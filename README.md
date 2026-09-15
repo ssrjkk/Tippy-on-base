@@ -80,6 +80,16 @@ accounting backed by public proof-of-reserves.
   full auto-refund for stuck/reverted transactions
 - `/tx <hash>` — look up any Base transaction and decode its USDC transfer
 
+### 🏷 Basenames (on-chain identity on Base)
+- `/basename` — your on-chain name (ENSIP-19 reverse resolution of your deposit
+  address against the Base L2 resolver); shows in `/wallet` and the public
+  donate page automatically
+- `/basename <name>.base.eth` — on-chain availability check: free (with a
+  registration hint), taken (owner address), or **confirmed yours** when it
+  resolves to your linked/custodial wallet
+- Tips by name: `/tip <name>.base.eth` resolves the basename to its on-chain
+  owner — the chain is the source of truth, nothing is stored bot-side
+
 ### 🔐 Paid content & channels
 - `/paywall create 5 Title` → sell posts for USDC (buyers read instantly)
 - `/paywall channel 5` → paid Telegram channel access, 5 USDC / 30 days,
@@ -90,11 +100,20 @@ accounting backed by public proof-of-reserves.
 ### 🤖 Autonomous agent (fail-closed)
 - Perceives crypto news → LLM filters noise → creates markets, bets, sells
   analysis as paywall posts — **every action EAS-attested on Base**
+- News sources: CryptoPanic (with `CRYPTOPANIC_TOKEN`) plus free RSS fallbacks
+  (CoinDesk, CoinTelegraph); deduplication and relevance scoring built in
+- Runs inside the main process (`deploy/run.py`) when `AGENT_TG_ID > 0` and the
+  cap set validates — no separate service needed; a silent agent death stops
+  the process like any other watcher (fail-fast)
+- State (caps counters, seen-news, audit trail) lives in `AGENT_STATE_DIR`
+  (default: the `agent/` package dir) so a restart never resets the daily cap
 - Spend is capped in code (never in the prompt): daily + per-tx caps, actions
   per hour, circuit breaker with cooldown; caps are validated at startup and
   the agent refuses to run on a misconfigured set
 - LLM failure = no action (fail-closed); the agent can never trade on its own
   markets (DB-level guard)
+- `/agent` (admin-only) — live caps state, circuit-breaker status and the
+  agent's recent actions straight in Telegram, no web dashboard needed
 
 ### 🖥 Web dashboard (public transparency)
 - Live stats, volume chart, markets with odds/backers, leaderboards, user profiles

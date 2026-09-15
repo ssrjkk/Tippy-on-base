@@ -295,7 +295,9 @@ STRINGS: dict[str, dict[str, str]] = {
             "• /donate — твоя страница донатов с QR\n"
             "• /deposit — QR + адрес для пополнения\n"
             "• /link &lt;адрес&gt; — привязать кошелёк (авто-зачисление)\n"
-            "• /withdraw &lt;адрес&gt; &lt;сумма&gt; — вывод (комиссия 1%, мин. 1 USDC)\n\n"
+            "• /withdraw &lt;адрес&gt; &lt;сумма&gt; — вывод (комиссия 1%, мин. 1 USDC)\n"
+            "• /tx &lt;hash&gt; — проверить транзакцию в Base\n"
+            "• /basename — твоё ончейн-имя на Base 🏷 (получай чаевые по имени)\n\n"
             "📊 <b>Ещё</b>\n"
             "• /menu — меню · /balance · /stats · /top · /history\n"
             "• /settings — уведомления и реакции ⚙️\n\n"
@@ -334,7 +336,9 @@ STRINGS: dict[str, dict[str, str]] = {
             "• /donate — your donate page with QR\n"
             "• /deposit — QR + address to top up\n"
             "• /link &lt;address&gt; — link a wallet (auto-credits)\n"
-            "• /withdraw &lt;address&gt; &lt;amount&gt; — withdraw (1% fee, min 1 USDC)\n\n"
+            "• /withdraw &lt;address&gt; &lt;amount&gt; — withdraw (1% fee, min 1 USDC)\n"
+            "• /tx &lt;hash&gt; — look up a Base transaction\n"
+            "• /basename — your on-chain Base name 🏷 (receive tips by name)\n\n"
             "📊 <b>More</b>\n"
             "• /menu — menu · /balance · /stats · /top · /history\n"
             "• /settings — notifications and reactions ⚙️\n\n"
@@ -373,7 +377,9 @@ STRINGS: dict[str, dict[str, str]] = {
             "• /donate —— 带二维码的捐赠页\n"
             "• /deposit —— 充值二维码与地址\n"
             "• /link &lt;地址&gt; —— 绑定钱包（自动到账）\n"
-            "• /withdraw &lt;地址&gt; &lt;金额&gt; —— 提现（手续费 1%，最低 1 USDC）\n\n"
+            "• /withdraw &lt;地址&gt; &lt;金额&gt; —— 提现（手续费 1%，最低 1 USDC）\n"
+            "• /tx &lt;hash&gt; —— 查询 Base 交易\n"
+            "• /basename —— 你在 Base 上的链上名字 🏷（可用名字接收打赏）\n\n"
             "📊 <b>更多</b>\n"
             "• /menu —— 菜单 · /balance · /stats · /top · /history\n"
             "• /settings —— 通知与表情打赏 ⚙️\n\n"
@@ -2089,6 +2095,98 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Какую часть долей «{label}» (рынок #{mid}) продать?",
         "en": "What share of “{label}” (market #{mid}) to sell?",
         "zh": "卖出「{label}」（市场 #{mid}）的多大比例？",
+    },
+    # ----- basenames (on-chain identity on Base) -----
+    "basename_mine": {
+        "ru": "🏷 Твой ончейн-нейм: <b>{name}</b>\n\nЭто имя твоего кошелька на Base — по нему тебе можно слать чаевые: /tip {name}",
+        "en": "🏷 Your on-chain name: <b>{name}</b>\n\nIt belongs to your wallet on Base — anyone can tip you by it: /tip {name}",
+        "zh": "🏷 你的链上名字：<b>{name}</b>\n\n它属于你在 Base 上的钱包——别人可以用它给你打赏：/tip {name}",
+    },
+    "basename_none": {
+        "ru": "У твоего кошелька пока нет Basename (имени вида <b>name.base.eth</b>).\n\nЗарегистрируй на basenames.app и он появится здесь автоматически — по нему можно получать чаевые.",
+        "en": "Your wallet has no Basename (a name like <b>name.base.eth</b>) yet.\n\nRegister one on basenames.app and it will show here automatically — you can receive tips by it.",
+        "zh": "你的钱包还没有 Basename（形如 <b>name.base.eth</b> 的名字）。\n\n在 basenames.app 注册后会自动显示在这里——别人可以用它给你打赏。",
+    },
+    # ----- /agent (operator visibility, admin-only) -----
+    "agent_admin_only": {
+        "ru": "Команда доступна только администратору.",
+        "en": "This command is admin-only.",
+        "zh": "该命令仅管理员可用。",
+    },
+    "agent_disabled": {
+        "ru": "Агент выключен (AGENT_TG_ID=0). Включи в окружении — и он начнёт работать на автомате.",
+        "en": "Agent is disabled (AGENT_TG_ID=0). Enable it in the environment and it will run autonomously.",
+        "zh": "代理已禁用（AGENT_TG_ID=0）。在环境中启用后即可自主运行。",
+    },
+    "agent_header": {
+        "ru": "🤖 <b>Агент Tippy</b> (tg_id {tg_id})",
+        "en": "🤖 <b>Tippy agent</b> (tg_id {tg_id})",
+        "zh": "🤖 <b>Tippy 代理</b>（tg_id {tg_id}）",
+    },
+    "agent_spend": {
+        "ru": "💸 Расход за сутки: <b>${spent}</b> из ${cap}",
+        "en": "💸 Spent today: <b>${spent}</b> of ${cap}",
+        "zh": "💸 今日支出：<b>${spent}</b> / ${cap}",
+    },
+    "agent_actions": {
+        "ru": "⚡ Действий за час: {done} из {cap}",
+        "en": "⚡ Actions this hour: {done} of {cap}",
+        "zh": "⚡ 本小时动作：{done} / {cap}",
+    },
+    "agent_errors": {
+        "ru": "🛡 Ошибок подряд: {n} · автомат-предохранитель: {cb}",
+        "en": "🛡 Consecutive errors: {n} · circuit breaker: {cb}",
+        "zh": "🛡 连续错误：{n} · 熔断器：{cb}",
+    },
+    "agent_caps_line": {
+        "ru": "Капы: ${daily}/день, ${per_tx}/транзакция (зашиты в код)",
+        "en": "Caps: ${daily}/day, ${per_tx}/tx (hard-coded)",
+        "zh": "上限：${daily}/天，${per_tx}/笔（代码内置）",
+    },
+    "agent_recent": {
+        "ru": "<b>Последние действия:</b>",
+        "en": "<b>Recent actions:</b>",
+        "zh": "<b>最近动作：</b>",
+    },
+    "agent_no_audit": {
+        "ru": "Пока тихо — агент ещё не создавал рынки (или аудит-файл пуст).",
+        "en": "Quiet so far — the agent hasn't created markets yet (or the audit trail is empty).",
+        "zh": "暂时安静——代理尚未创建市场（或审计日志为空）。",
+    },
+    "agent_status_error": {
+        "ru": "Не удалось прочитать состояние агента: {err}",
+        "en": "Failed to read agent state: {err}",
+        "zh": "无法读取代理状态：{err}",
+    },
+    "btn_basename": {
+        "ru": "🏷 Мой Basename",
+        "en": "🏷 My Basename",
+        "zh": "🏷 我的 Basename",
+    },
+    "basename_invalid": {
+        "ru": "Непохоже на Basename. Формат: <b>/basename myname.base.eth</b>",
+        "en": "That doesn't look like a Basename. Format: <b>/basename myname.base.eth</b>",
+        "zh": "看起来不像 Basename。格式：<b>/basename myname.base.eth</b>",
+    },
+    "basename_free": {
+        "ru": "✅ <b>{name}</b> — свободно!\n\nЗарегистрируй на basenames.app — и имя автоматически появится у тебя в /basename.",
+        "en": "✅ <b>{name}</b> is free!\n\nRegister it on basenames.app and it will automatically appear in /basename.",
+        "zh": "✅ <b>{name}</b> 可注册！\n\n在 basenames.app 注册后它会自动出现在 /basename 中。",
+    },
+    "basename_taken": {
+        "ru": "❌ <b>{name}</b> занято.\nВладелец: <code>{addr}</code>",
+        "en": "❌ <b>{name}</b> is taken.\nOwner: <code>{addr}</code>",
+        "zh": "❌ <b>{name}</b> 已被注册。\n所有者：<code>{addr}</code>",
+    },
+    "basename_owned": {
+        "ru": "🏷 <b>{name}</b> — подтверждено, это твой кошелек!\n\nТебе можно слать чаевые по имени: /tip {name}",
+        "en": "🏷 <b>{name}</b> — confirmed, it's your wallet!\n\nPeople can tip you by name: /tip {name}",
+        "zh": "🏷 <b>{name}</b> — 已确认，是你的钱包！\n\n别人可以用这个名字给你打赏：/tip {name}",
+    },
+    "basename_rpc_error": {
+        "ru": "Не удалось проверить имя (RPC недоступен). Попробуй позже.",
+        "en": "Couldn't check the name (RPC unavailable). Try again later.",
+        "zh": "无法检查该名字（RPC 不可用）。请稍后再试。",
     },
 }
 

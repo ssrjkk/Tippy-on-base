@@ -248,13 +248,23 @@ async def cmd_wallet(message: types.Message) -> None:
             callback_data="wallet_new"
         )])
 
+    text = i18n.t(lang, 'wallet_list',
+                  count=len(wallets),
+                  max=common.config.MAX_WALLETS_PER_USER,
+                  slots='\n'.join(slot_lines),
+                  active_slot=active['slot'],
+                  active_addr=active['address'])
+    # On-chain identity: show the active wallet's Basename, if it has one.
+    try:
+        from bot.tip_targets import display_name_for
+        bname = await display_name_for(message.from_user.id)
+        if bname:
+            text += f"\n\n🏷 <b>{common._esc(bname)}</b>"
+    except Exception:
+        pass  # RPC down — wallet view must not break
+
     await message.answer(
-        i18n.t(lang, 'wallet_list',
-               count=len(wallets),
-               max=common.config.MAX_WALLETS_PER_USER,
-               slots='\n'.join(slot_lines),
-               active_slot=active['slot'],
-               active_addr=active['address']),
+        text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb) if kb else None
     )
 

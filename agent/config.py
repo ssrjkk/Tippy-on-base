@@ -4,6 +4,13 @@ All limits are enforced in code, never in the LLM prompt.
 """
 
 import os
+from pathlib import Path
+
+# Writable state directory (caps counters, seen-news, audit trail). Defaults
+# to the agent package dir; override with AGENT_STATE_DIR when the container
+# filesystem is read-only (then point it at a mounted volume so restarts do
+# not reset the daily spend cap).
+STATE_DIR = os.environ.get("AGENT_STATE_DIR", str(Path(__file__).resolve().parent))
 
 # --- Spend caps (USDC, not micro) ---------------------------------------------------
 DAILY_SPEND_CAP_USDC = float(os.environ.get("AGENT_DAILY_CAP", "50"))
@@ -20,7 +27,6 @@ TIPPY_BASE_URL = os.environ.get("TIPPY_BASE_URL", "http://localhost:8000")
 AGENT_TG_ID = int(os.environ.get("AGENT_TG_ID", "0"))  # 0 = unauthenticated demo
 
 # --- News sources -------------------------------------------------------------------
-CRYPTOPANIC_RSS = "https://cryptopanic.com/api/free/v1/posts/?auth_token=&public=true"
 NEWS_CHECK_INTERVAL = int(os.environ.get("AGENT_NEWS_INTERVAL", "300"))  # seconds
 
 # --- LLM ---------------------------------------------------------------------------

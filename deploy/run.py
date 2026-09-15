@@ -92,6 +92,33 @@ WATCHERS = (
 )
 
 
+def _agent_enabled() -> bool:
+    """True when the autonomous agent should run in this process.
+
+    Gated on AGENT_TG_ID > 0 (a real, funded bot user) AND a valid caps set.
+    A misconfigured agent (zero caps, per-tx > daily) must never start: the
+    agent refuses to run on such a set anyway (fail-closed).
+    """
+    try:
+        from agent import config as agent_config
+        return agent_config.AGENT_TG_ID > 0 and not agent_config.validate()
+    except Exception:
+        return False
+
+
+async def _agent_watcher(bot, ledger, stop: asyncio.Event | None = None) -> None:
+    """Autonomous agent loop (news → LLM → markets/bets → EAS attestations).
+
+    Runs only when `_agent_enabled()`; the caller is responsible for gating
+    (an early return here would look like a watcher death and stop the whole
+    process via the done-callback).
+    """
+    from agent.main import run_loop
+
+    log.info("autonomous agent watcher starting")
+    await run_loop(stop)
+
+
 def _watcher_done(name: str, task: asyncio.Task, stop: asyncio.Event | None) -> None:
     """Done-callback: surface a silent watcher death and request shutdown.
 
@@ -137,38 +164,9 @@ async def _start_bot_polling(stop: asyncio.Event | None = None) -> None:
 
     try:
         from bot.handlers import AI_BOT_COMMAND
-        await tg_bot.set_my_commands([
-            AI_BOT_COMMAND,
-            types.BotCommand(command='menu', description='Главное меню'),
-            types.BotCommand(command='balance', description='Баланс кошелька'),
-            types.BotCommand(command='deposit', description='Пополнить USDC'),
-            types.BotCommand(command='withdraw', description='Вывести USDC'),
-            types.BotCommand(command='tip', description='Чаевые USDC'),
-            types.BotCommand(command='rain', description='Дождь: раздать USDC в чате'),
-            types.BotCommand(command='markets', description='Рынки предсказаний'),
-            types.BotCommand(command='market', description='Открыть рынок по id'),
-            types.BotCommand(command='trade', description='Купить доли на рынке'),
-            types.BotCommand(command='sell', description='Продать доли'),
-            types.BotCommand(command='positions', description='Мои позиции и PnL'),
-            types.BotCommand(command='bet', description='Ставка-пул: создать/поставить'),
-            types.BotCommand(command='bets', description='Открытые ставки-пулы'),
-            types.BotCommand(command='mybets', description='Мои ставки'),
-            types.BotCommand(command='resolve', description='Закрыть ставку (создатель)'),
-            types.BotCommand(command='cancel', description='Отменить свою ставку'),
-            types.BotCommand(command='stats', description='Статистика бота'),
-            types.BotCommand(command='top', description='Топ пользователей'),
-            types.BotCommand(command='history', description='История операций'),
-            types.BotCommand(command='donate', description='Твоя страница донатов'),
-            types.BotCommand(command='link', description='Привязать внешний кошелёк'),
-            types.BotCommand(command='confirm', description='Подтвердить привязку'),
-            types.BotCommand(command='claim', description='Забрать с внешнего адреса'),
-            types.BotCommand(command='wallet', description='Кошелёк: адрес и ключи'),
-            types.BotCommand(command='import', description='Импорт по сид-фразе'),
-            types.BotCommand(command='export', description='Выгрузить ключ и сид'),
-            types.BotCommand(command='tx', description='Проверить транзакцию в Base'),
-            types.BotCommand(command='paywall', description='Платный контент'),
-            types.BotCommand(command='ask', description='AI-помощник'),
-        ])
+        from bot.main import BOT_COMMANDS
+        # Single source of truth for the command menu: bot.main.BOT_COMMANDS.
+        await tg_bot.set_my_commands([AI_BOT_COMMAND] + BOT_COMMANDS)
     except Exception as e:
         log.warning("set_my_commands failed: %s", e)
 
@@ -179,6 +177,16 @@ async def _start_bot_polling(stop: asyncio.Event | None = None) -> None:
             lambda task=task, name=name: _watcher_done(name, task, stop)
         )
         tasks.append(task)
+
+    # Autonomous agent — optional, gated on AGENT_TG_ID > 0 + valid caps.
+    # Not part of WATCHERS (that set must mirror bot.main exactly); its task
+    # gets the same done-callback so a silent agent death stops the process.
+    if _agent_enabled():
+        agent_task = asyncio.create_task(_agent_watcher(tg_bot, ledger, stop))
+        agent_task.add_done_callback(
+            lambda task=agent_task: _watcher_done("agent", task, stop)
+        )
+        tasks.append(agent_task)
 
     log.info("bot polling starting")
     try:

@@ -277,6 +277,7 @@ def _menu_kb(lang: str = "ru") -> InlineKeyboardMarkup:
             [b("donate"), b("top")],
             [b("hist"), b("stats")],
             [b("wallet"), b("paywall")],
+            [b("basename")],
             [b("settings")],
             [b("about")],
             [InlineKeyboardButton(text=i18n.t(lang, "btn_mini_app"), callback_data="miniapp")],

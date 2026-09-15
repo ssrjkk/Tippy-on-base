@@ -27,6 +27,21 @@ if db_url:
     if db_url.startswith("postgresql://"):
         db_url = "postgresql+psycopg://" + db_url.split("://", 1)[1]
     config.set_main_option("sqlalchemy.url", db_url)
+else:
+    # No DATABASE_URL: fail loudly instead of silently migrating the stale
+    # alembic.ini fallback database (wrong host = wrong schema, silent drift).
+    raise SystemExit(
+        "alembic: DATABASE_URL is not set; refusing to fall back to alembic.ini's "
+        "sqlalchemy.url (it may point at a different server than the app uses)"
+    )
+
+# Operator visibility: log WHICH database is being migrated (credentials
+# masked). Migrating the wrong host silently is far worse than a loud marker.
+import re as _re
+import sys as _sys
+
+_safe_url = _re.sub(r"://([^:@/]+):[^@/]+@", r"://\1:***@", db_url)
+print(f"[alembic] migrating {_safe_url}", file=_sys.stderr)
 
 # Alembic serializes concurrent `upgrade head` runs with a session-level
 # advisory lock. When a second process/thread starts migrations at the same
@@ -66,6 +81,13 @@ def run_migrations_online() -> None:
         context.configure(connection=connection)
         with context.begin_transaction():
             context.run_migrations()
+        # SQLAlchemy 2.0 "commit as you go": the Connection context manager
+        # ROLLS BACK whatever the with-block left open on close. Depending on
+        # driver/version interplay alembic's internal commit is not always the
+        # one that lands — an explicit commit here is idempotent and guarantees
+        # the migrated schema actually persists (verified: without it a fresh
+        # database ends up empty while alembic still exits 0).
+        connection.commit()
 
 
 if context.is_offline_mode():
